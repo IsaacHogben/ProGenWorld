@@ -1,0 +1,4 @@
+# Use Unity Smart Merge (YAML Merge) for Unity files
+*.unity merge=unityyamlmerge eol=lf
+*.prefab merge=unityyamlmerge eol=lf
+*.asset merge=unityyamlmerge eol=lf

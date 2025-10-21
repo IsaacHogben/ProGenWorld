@@ -60,7 +60,7 @@ public class ChunkProfiler : MonoBehaviour
         float fps = 1f / Time.deltaTime;
         float frameTime = Time.deltaTime * 1000f;
 
-        GUILayout.BeginArea(new Rect(10, 10, 420, 320), "Chunk Profiler", GUI.skin.window);
+        GUILayout.BeginArea(new Rect(10, 10, 300, 520), "Chunk Profiler", GUI.skin.window);
 
         GUILayout.Label($"<b>Performance</b>", labelStyle);
         GUILayout.Label($"FPS: {fps:F1}");

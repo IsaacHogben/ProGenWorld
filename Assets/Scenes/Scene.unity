@@ -429,7 +429,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  viewDistance: 13
+  viewDistance: 2
   chunkSize: 64
   isoLevel: 0
   chunkMaterial: {fileID: 2100000, guid: 57b3d6497c16c37458f4dbf5965cf68b, type: 2}

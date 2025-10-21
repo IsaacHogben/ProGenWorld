@@ -33,6 +33,7 @@ public class ChunkManager : MonoBehaviour
 
     // Internal state
     readonly Dictionary<int3, Chunk> chunks = new();
+    readonly HashSet<int3> emptyChunks = new();
     readonly HashSet<int3> generating = new(); // coords reserved for generation or meshing
 
     // Threading/queues
@@ -114,7 +115,6 @@ public class ChunkManager : MonoBehaviour
 
             if (frontier.Count > 0) 
                 ScheduleVisibleChunksFloodFill();
-            // else ScheduleVisibleChunksThrottled(); // Normal radius chunk spawner
         }
 
         // --- Flood-fill activation when entering new chunk ---
@@ -224,50 +224,6 @@ public class ChunkManager : MonoBehaviour
         }
     }
 
-    // Schedules chunk generation around player (sphere) if frontier is empty
-    void ScheduleVisibleChunksThrottled()
-    {
-        var playerPos = player.transform.position;
-        int3 playerChunk = WorldToChunkCoord(playerPos);
-
-        float sqrViewDist = viewDistance * viewDistance;
-        int spawnedThisTick = 0;
-        int maxSpawnThisTick = Math.Max(1, maxConcurrentNoiseTasks);
-
-        // Collect all potential coords first, sorted by distance
-        List<int3> coordsToSpawn = new();
-        for (int x = -viewDistance; x <= viewDistance; x++)
-            for (int y = -viewDistance; y <= viewDistance; y++)
-                for (int z = -viewDistance; z <= viewDistance; z++)
-                {
-                    float distSqr = x * x + y * y + z * z;
-                    if (distSqr > sqrViewDist) continue; // outside sphere
-                    coordsToSpawn.Add(playerChunk + new int3(x, y, z));
-                }
-
-        // Sort by distance to player (closest chunks first)
-        coordsToSpawn.Sort((a, b) =>
-        {
-            float da = math.lengthsq((float3)(a - playerChunk));
-            float db = math.lengthsq((float3)(b - playerChunk));
-            return da.CompareTo(db);
-        });
-
-        // Spawn nearest first
-        foreach (var coord in coordsToSpawn)
-        {
-            if (spawnedThisTick >= maxSpawnThisTick)
-                break;
-
-            if (chunks.ContainsKey(coord) || generating.Contains(coord))
-                continue;
-
-            generating.Add(coord);
-            spawnedThisTick++;
-            ScheduleNoiseTask(coord);
-        }
-    }
-
     void ExpandFrontierFromFaces(int3 coord, OpenFaces faces)
     {
         if (faces == OpenFaces.None) return;
@@ -333,22 +289,6 @@ public class ChunkManager : MonoBehaviour
         }
     }
 
-
-    // Force initial scheduling (sphere around player) — kept for convenience, but flood-fill is preferred
-    void ScheduleAroundPlayerImmediate()
-    {
-        var playerPos = player.transform.position;
-        int3 playerChunk = WorldToChunkCoord(playerPos);
-        for (int x = -viewDistance; x <= viewDistance; x++)
-            for (int y = -viewDistance; y <= viewDistance; y++)
-                for (int z = -viewDistance; z <= viewDistance; z++)
-                {
-                    float distSqr = x * x + y * y + z * z;
-                    if (distSqr > viewDistance * viewDistance) continue; // outside sphere
-                    ScheduleNoiseTask(playerChunk + new int3(x, y, z));
-                }
-    }
-
     void ScheduleNoiseTask(int3 coord)
     {
         lock (activeNoiseTasks)
@@ -398,6 +338,38 @@ public class ChunkManager : MonoBehaviour
             }
         });
     }
+
+    void ScheduleBlockAssignment(int3 coord, NativeArray<float> density)
+    {
+        /*// Prepare output array for block IDs
+        var blockIds = new NativeArray<byte>(density.Length, Allocator.Persistent);
+
+        // Prepare ranges from the database
+        var dbRanges = new NativeArray<BlockAssignmentJob.BlockRange>(
+            blockDatabase.blocks.Length, Allocator.TempJob);
+
+        for (int i = 0; i < blockDatabase.blocks.Length; i++)
+        {
+            var b = blockDatabase.blocks[i];
+            dbRanges[i] = new BlockAssignmentJob.BlockRange
+            {
+                minDensity = b.minDensity,
+                maxDensity = b.maxDensity,
+                id = b.id
+            };
+        }
+
+        var job = new BlockAssignmentJob
+        {
+            density = density,
+            blockRanges = dbRanges,
+            blockIds = blockIds
+        };
+
+        JobHandle handle = job.Schedule(density.Length, 64);
+        pendingBlockJobs.Add((coord, handle, density, blockIds, dbRanges));*/
+    }
+
 
     // face scan on +1 density buffer
     OpenFaces DetectOpenFaces(NativeArray<float> density)
@@ -479,60 +451,60 @@ public class ChunkManager : MonoBehaviour
     {
         ChunkProfiler.UploadStart(); // PROFILER: start upload
 
-        // Validate input
-        if (!meshData.vertices.IsCreated || !meshData.triangles.IsCreated)
+        bool chunkEmpty = false;
+        if (!meshData.vertices.IsCreated || meshData.vertices.Length == 0)
         {
-            Debug.LogWarning($"MeshData for {meshData.coord} is invalid or already disposed.");
-            return;
+            chunkEmpty = true;
         }
 
-        // Find or create the target chunk
-        if (!chunks.TryGetValue(meshData.coord, out var chunk))
+        // Find or create the target chunk if it does not exist
+        chunks.TryGetValue(meshData.coord, out var chunk);
+        if (chunk == null) // Try get value failed
         {
-            GameObject go;
-
-            // Either get from pool or create new
-            if (chunkGoPool.Count > 0)
+            if (!chunkEmpty) // Skips chunk object creation if the mesh is empty
             {
-                go = chunkGoPool.Pop();
-                if (go == null) go = new GameObject();
+                GameObject go;
+
+                // Either get from pool or create new
+                if (chunkGoPool.Count > 0)
+                {
+                    go = chunkGoPool.Pop();
+                    if (go == null) go = new GameObject();
+                }
+                else
+                {
+                    go = new GameObject();
+                }
+
+                go.name = $"Chunk_{meshData.coord.x}_{meshData.coord.y}_{meshData.coord.z}";
+                go.transform.position = ChunkToWorld(meshData.coord);
+                go.transform.parent = this.gameObject.transform;
+
+                chunk = go.GetComponent<Chunk>() ?? go.AddComponent<Chunk>();
+                chunk.chunkMaterial = chunkMaterial;
+
+                chunks[meshData.coord] = chunk;
             }
             else
             {
-                go = new GameObject();
+                chunks[meshData.coord] = null; // Still add coords to chunks dictionary because it has been calculated
             }
-
-            go.name = $"Chunk_{meshData.coord.x}_{meshData.coord.y}_{meshData.coord.z}";
-            go.transform.position = ChunkToWorld(meshData.coord);
-            go.transform.parent = this.gameObject.transform;
-
-            chunk = go.GetComponent<Chunk>() ?? go.AddComponent<Chunk>();
-            chunk.chunkMaterial = chunkMaterial;
-
-            chunks[meshData.coord] = chunk;
         }
 
-        // Apply mesh first — ensures the MeshFilter exists and mesh is valid before assigning material
-        chunk.ApplyMesh(meshData);
-
-        // Assign material
-        var mrFinal = chunk.GetComponent<MeshRenderer>();
-        if (mrFinal != null)
-        {
-            if (chunkMaterial != null)
-                mrFinal.sharedMaterial = chunkMaterial;
-            else
-                Debug.LogWarning("ChunkManager: chunkMaterial not assigned!");
-        }
-        else
-        {
-            Debug.LogError($"MeshRenderer missing after ApplyMesh on {meshData.coord}");
-        }
+        // Apply mesh
+        if (chunk != null)
+            chunk.ApplyMesh(meshData);
 
         generating.Remove(meshData.coord);
-        
+
+        // Dispose mesh native lists (if not already disposed by ApplyMesh)
+        if (meshData.vertices.IsCreated) meshData.vertices.Dispose();
+        if (meshData.triangles.IsCreated) meshData.triangles.Dispose();
+        if (meshData.normals.IsCreated) meshData.normals.Dispose();
+
         ChunkProfiler.UploadEnd(); // PROFILER: end upload
     }
+
 
     // Make this public for debug visualizers
     public Vector3 ChunkToWorld(int3 coord) =>

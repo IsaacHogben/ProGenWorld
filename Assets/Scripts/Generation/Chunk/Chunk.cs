@@ -16,6 +16,10 @@ public class Chunk : MonoBehaviour
         if (mr == null)
             mr = gameObject.AddComponent<MeshRenderer>();
 
+        var mc = GetComponent<MeshCollider>();
+        if (mc == null)
+            mc = gameObject.AddComponent<MeshCollider>();
+
         if (mr.sharedMaterial == null)
             mr.sharedMaterial = chunkMaterial;
 
@@ -26,10 +30,11 @@ public class Chunk : MonoBehaviour
         mesh.RecalculateNormals();
 
         mf.sharedMesh = mesh;
+        mc.sharedMesh = mesh;
 
-        // Dispose native containers
+        /*// Dispose native containers
         if (meshData.vertices.IsCreated) meshData.vertices.Dispose();
         if (meshData.triangles.IsCreated) meshData.triangles.Dispose();
-        if (meshData.normals.IsCreated) meshData.normals.Dispose();
+        if (meshData.normals.IsCreated) meshData.normals.Dispose();*/
     }
 }

@@ -15,8 +15,9 @@ public class ChunkManager : MonoBehaviour
     public int viewDistance = 3;
     public int chunkSize = 32;                  // Logical voxel count per axis (mesh uses chunkSize)
     public float isoLevel = 0f;
-    public Material chunkMaterial;
+    //public Material chunkMaterial;
     public GameObject player;
+    [SerializeField] private BlockDatabase blockDatabase;
 
     [Header("Performance tuning")]
     public int maxConcurrentNoiseTasks = 4;     // How many noise tasks to allow concurrently - Increase until CPU saturates or frame drops.
@@ -44,8 +45,11 @@ public class ChunkManager : MonoBehaviour
     // NativeArray pool for densities (Allocator.Persistent)
     readonly Stack<NativeArray<float>> densityPool = new();
 
-    // Pending mesh jobs: handle -> meshData -> associated density (from pool) & mask (if used)
-    List<(JobHandle handle, MeshData meshData, NativeArray<float> density, NativeArray<FMask> mask)> pendingJobs = new();
+    // Jobs waiting for block IDs to finish computing
+    private readonly List<(int3 coord, JobHandle handle, NativeArray<float> density, NativeArray<byte> blockIds)> pendingBlock = new();
+
+    // Mesh jobs now track blockIds instead of density
+    private readonly List<(JobHandle handle, MeshData meshData, NativeArray<byte> blockIds, NativeArray<GreedyMeshJob.FMask> mask)> pendingMeshJobs = new();
 
     // Mesh queue to apply on main thread
     readonly Queue<MeshData> meshQueue = new();
@@ -73,11 +77,14 @@ public class ChunkManager : MonoBehaviour
     public IReadOnlyDictionary<int3, OpenFaces> GetOpenFaceMap() => openFaceMap;
     public HashSet<int3> GetDeferredFrontier() => deferredFrontier;
 
-
     // --- Adaptive performance control ---
     float avgFrameTime = 16.6f;
     float lastPerfAdjustTime = 0f;
-
+    // Load the blockDatabase
+    private NativeArray<BlockDatabase.BlockInfoUnmanaged> nativeBlocks;
+    // Texturing
+    public BlockTextureArrayBuilder textureArrayBuilder;
+    public Material voxelMaterial;
 
     void Awake()
     {
@@ -86,6 +93,14 @@ public class ChunkManager : MonoBehaviour
 
         // create noise generator
         noiseGen = new NoiseGenerator(111); // adjust constructor if needed
+        // create blockDatabase Native
+        nativeBlocks = blockDatabase.ToNative(Allocator.Persistent);
+        // load texture array
+        voxelMaterial.SetTexture("_Textures", textureArrayBuilder.GetTextureArray());
+        /*if (textureArrayBuilder.generatedArray != null)
+            voxelMaterial.SetTexture("_Textures", textureArrayBuilder.generatedArray);
+        else
+            Debug.LogWarning("Could not find generated texture array");*/
 
         // prewarm density pool
         for (int i = 0; i < initialPoolSize; i++)
@@ -106,7 +121,7 @@ public class ChunkManager : MonoBehaviour
         ChunkProfiler.ReportNoiseCount(maxConcurrentNoiseTasks - noiseLimiter.CurrentCount);
         ChunkProfiler.ReportUploadQueue(meshQueue.Count + generating.Count);
         ChunkProfiler.ReportChunkCount(chunks.Count);
-        ChunkProfiler.ReportMeshCount(pendingJobs.Count);
+        ChunkProfiler.ReportMeshCount(pendingMeshJobs.Count);
 
         // Periodic scheduling (throttled)
         if (Time.time - lastScheduleTime >= scheduleInterval)
@@ -131,60 +146,66 @@ public class ChunkManager : MonoBehaviour
             ScheduleVisibleChunksFloodFill();
         }
 
-        // Consume completed noise tasks (background threads put float[] here)
         while (completedNoise.TryDequeue(out var data))
         {
-            // obtain a pooled NativeArray (or allocate if pool empty)
+            // pull an array from pool
             NativeArray<float> nativeDensity;
             lock (densityPool)
             {
-                if (densityPool.Count > 0)
-                    nativeDensity = densityPool.Pop();
-                else
-                    nativeDensity = new NativeArray<float>(densityCount, Allocator.Persistent);
+                nativeDensity = densityPool.Count > 0
+                    ? densityPool.Pop()
+                    : new NativeArray<float>(densityCount, Allocator.Persistent);
             }
 
-            // copy managed -> native on main thread (fast memcpy)
             nativeDensity.CopyFrom(data.density);
 
-            // detect open faces BEFORE meshing
-            var faces = DetectOpenFaces(nativeDensity);
-            openFaceMap[data.coord] = faces;
+            // schedule block assignment async and track it
+            var (handle, blockIds) = ScheduleBlockAssignmentAsync(nativeDensity);
+            pendingBlock.Add((data.coord, handle, nativeDensity, blockIds));
 
-            // immediately expand frontier based on faces
-            ExpandFrontierFromFaces(data.coord, faces);
-
-            // schedule greedy mesh job using the pooled nativeDensity; job will produce MeshData
-            ScheduleGreedyMeshJob(data.coord, nativeDensity);
-
-            // allow scheduling that coord again in the future if needed
-            lock (activeNoiseTasks)
-            {
-                activeNoiseTasks.Remove(data.coord);
-            }
+            // allow scheduling that coord again later
+            lock (activeNoiseTasks) activeNoiseTasks.Remove(data.coord);
         }
 
-        // Check pending jobs for completion (non-blocking)
-        for (int i = pendingJobs.Count - 1; i >= 0; i--)
+        // Check block assignment jobs
+        for (int i = pendingBlock.Count - 1; i >= 0; i--)
         {
-            var entry = pendingJobs[i];
-            if (entry.handle.IsCompleted)
+            var it = pendingBlock[i];
+            if (!it.handle.IsCompleted) continue;
+
+            it.handle.Complete();
+
+            // Optional: you can now detect open faces using blockIds instead of density
+            var faces = DetectOpenFacesFromBlocks(it.blockIds);  // new helper below
+            openFaceMap[it.coord] = faces;
+            ExpandFrontierFromFaces(it.coord, faces);
+
+            // Mesh scheduling now uses blockIds
+            ScheduleGreedyMeshJob(it.coord, it.blockIds);
+
+            // Return density to pool
+            if (it.density.IsCreated)
             {
-                // Complete and enqueue
-                entry.handle.Complete();
-
-                // Dispose mask
-                if (entry.mask.IsCreated)
-                    entry.mask.Dispose();
-
-                // density we can return to pool now (mesher job already used it)
-                lock (densityPool) { densityPool.Push(entry.density); }
-
-                // Enqueue meshdata for main-thread upload; meshData.NativeLists are still valid (allocated TempJob)
-                meshQueue.Enqueue(entry.meshData);
-                pendingJobs.RemoveAt(i);
+                lock (densityPool) densityPool.Push(it.density);
             }
+
+            pendingBlock.RemoveAt(i);
         }
+
+        for (int i = pendingMeshJobs.Count - 1; i >= 0; i--)
+        {
+            var entry = pendingMeshJobs[i];
+            if (!entry.handle.IsCompleted) continue;
+
+            entry.handle.Complete();
+
+            if (entry.mask.IsCreated) entry.mask.Dispose();
+            if (entry.blockIds.IsCreated) entry.blockIds.Dispose(); // << dispose blockIds
+
+            meshQueue.Enqueue(entry.meshData);
+            pendingMeshJobs.RemoveAt(i);
+        }
+
 
         // Apply a limited number of meshes to Unity per frame
         int uploads = 0;
@@ -339,113 +360,86 @@ public class ChunkManager : MonoBehaviour
         });
     }
 
-    void ScheduleBlockAssignment(int3 coord, NativeArray<float> density)
+    private (JobHandle handle, NativeArray<byte> blockIds) ScheduleBlockAssignmentAsync(NativeArray<float> nativeDensity)
     {
-        /*// Prepare output array for block IDs
-        var blockIds = new NativeArray<byte>(density.Length, Allocator.Persistent);
-
-        // Prepare ranges from the database
-        var dbRanges = new NativeArray<BlockAssignmentJob.BlockRange>(
-            blockDatabase.blocks.Length, Allocator.TempJob);
-
-        for (int i = 0; i < blockDatabase.blocks.Length; i++)
-        {
-            var b = blockDatabase.blocks[i];
-            dbRanges[i] = new BlockAssignmentJob.BlockRange
-            {
-                minDensity = b.minDensity,
-                maxDensity = b.maxDensity,
-                id = b.id
-            };
-        }
+        int voxelCount = (chunkSize + 1) * (chunkSize + 1) * (chunkSize + 1);
+        var blockIds = new NativeArray<byte>(voxelCount, Allocator.Persistent);
 
         var job = new BlockAssignmentJob
         {
-            density = density,
-            blockRanges = dbRanges,
-            blockIds = blockIds
+            density = nativeDensity,
+            blockIds = blockIds,
+            isoLevel = isoLevel,
+            chunkSize = chunkSize,
+            //solidBlockId = 1, // change if you want (e.g. Stone)
+            //airBlockId = 0 // Air
         };
 
-        JobHandle handle = job.Schedule(density.Length, 64);
-        pendingBlockJobs.Add((coord, handle, density, blockIds, dbRanges));*/
+        var handle = job.Schedule(voxelCount, 64); // async, no Complete()
+        return (handle, blockIds);
     }
 
 
     // face scan on +1 density buffer
-    OpenFaces DetectOpenFaces(NativeArray<float> density)
+    private OpenFaces DetectOpenFacesFromBlocks(NativeArray<byte> blockIds)
     {
         OpenFaces flags = OpenFaces.None;
-        int s = chunkSize + 1; // because we store a 1-voxel border
+        int s = chunkSize + 1;
 
-        // +X (x = s-1)
-        for (int y = 0; y < s; y++)
-            for (int z = 0; z < s; z++)
-                if (density[(s - 1) + y * s + z * s * s] > isoLevel) { flags |= OpenFaces.PosX; goto NEG_X; }
+        bool Solid(int x, int y, int z) => blockIds[x + y * s + z * s * s] == 0;
 
+        // +X
+        for (int y = 0; y < s; y++) for (int z = 0; z < s; z++) if (Solid(s - 1, y, z)) { flags |= OpenFaces.PosX; goto NEG_X; }
             NEG_X:
-        // -X (x = 0)
-        for (int y = 0; y < s; y++)
-            for (int z = 0; z < s; z++)
-                if (density[0 + y * s + z * s * s] > isoLevel) { flags |= OpenFaces.NegX; goto POS_Y; }
-
+        // -X
+        for (int y = 0; y < s; y++) for (int z = 0; z < s; z++) if (Solid(0, y, z)) { flags |= OpenFaces.NegX; goto POS_Y; }
             POS_Y:
-        // +Y (y = s-1)
-        for (int x = 0; x < s; x++)
-            for (int z = 0; z < s; z++)
-                if (density[x + (s - 1) * s + z * s * s] > isoLevel) { flags |= OpenFaces.PosY; goto NEG_Y; }
-
+        // +Y
+        for (int x = 0; x < s; x++) for (int z = 0; z < s; z++) if (Solid(x, s - 1, z)) { flags |= OpenFaces.PosY; goto NEG_Y; }
             NEG_Y:
-        // -Y (y = 0)
-        for (int x = 0; x < s; x++)
-            for (int z = 0; z < s; z++)
-                if (density[x + 0 * s + z * s * s] > isoLevel) { flags |= OpenFaces.NegY; goto POS_Z; }
-
+        // -Y
+        for (int x = 0; x < s; x++) for (int z = 0; z < s; z++) if (Solid(x, 0, z)) { flags |= OpenFaces.NegY; goto POS_Z; }
             POS_Z:
-        // +Z (z = s-1)
-        for (int x = 0; x < s; x++)
-            for (int y = 0; y < s; y++)
-                if (density[x + y * s + (s - 1) * s * s] > isoLevel) { flags |= OpenFaces.PosZ; goto NEG_Z; }
-
+        // +Z
+        for (int x = 0; x < s; x++) for (int y = 0; y < s; y++) if (Solid(x, y, s - 1)) { flags |= OpenFaces.PosZ; goto NEG_Z; }
             NEG_Z:
-        // -Z (z = 0)
-        for (int x = 0; x < s; x++)
-            for (int y = 0; y < s; y++)
-                if (density[x + y * s + 0 * s * s] > isoLevel) { flags |= OpenFaces.NegZ; }
+        // -Z
+        for (int x = 0; x < s; x++) for (int y = 0; y < s; y++) if (Solid(x, y, 0)) { flags |= OpenFaces.NegZ; }
 
         return flags;
     }
 
-    void ScheduleGreedyMeshJob(int3 coord, NativeArray<float> nativeDensity)
+    void ScheduleGreedyMeshJob(int3 coord, NativeArray<byte> blockIds)
     {
-        ChunkProfiler.MeshStart(); // profiler hook
+        ChunkProfiler.MeshStart();
 
-        // MeshData using Persistent allocator (safe beyond 4 frames)
         var meshData = new MeshData
         {
             coord = coord,
             vertices = new NativeList<float3>(Allocator.Persistent),
             triangles = new NativeList<int>(Allocator.Persistent),
-            normals = new NativeList<float3>(Allocator.Persistent)
+            normals = new NativeList<float3>(Allocator.Persistent),
+            colors = new NativeList<float4>(Allocator.Persistent),
+            UV0s = new NativeList<float2>(Allocator.Persistent)
         };
 
-        // Scratch buffer (short-lived)
         var scratch = new NativeArray<FMask>(chunkSize * chunkSize, Allocator.TempJob);
 
         var job = new GreedyMeshJob
         {
-            density = nativeDensity,
+            blockArray = blockIds,   // << now using blocks
+            blocks = nativeBlocks,
             chunkSize = chunkSize,
-            isoLevel = isoLevel,
             meshData = meshData,
             mask = scratch
         };
 
-        // schedule async
-        JobHandle handle = job.Schedule();
-        pendingJobs.Add((handle, meshData, nativeDensity, scratch));
+        JobHandle handle = job.Schedule(); // async
+        pendingMeshJobs.Add((handle, meshData, blockIds, scratch));
 
         ChunkProfiler.MeshEnd();
     }
+
 
     void ApplyMeshDataToChunk(MeshData meshData)
     {
@@ -453,9 +447,7 @@ public class ChunkManager : MonoBehaviour
 
         bool chunkEmpty = false;
         if (!meshData.vertices.IsCreated || meshData.vertices.Length == 0)
-        {
             chunkEmpty = true;
-        }
 
         // Find or create the target chunk if it does not exist
         chunks.TryGetValue(meshData.coord, out var chunk);
@@ -481,7 +473,7 @@ public class ChunkManager : MonoBehaviour
                 go.transform.parent = this.gameObject.transform;
 
                 chunk = go.GetComponent<Chunk>() ?? go.AddComponent<Chunk>();
-                chunk.chunkMaterial = chunkMaterial;
+                chunk.chunkMaterial = voxelMaterial;
 
                 chunks[meshData.coord] = chunk;
             }
@@ -501,6 +493,8 @@ public class ChunkManager : MonoBehaviour
         if (meshData.vertices.IsCreated) meshData.vertices.Dispose();
         if (meshData.triangles.IsCreated) meshData.triangles.Dispose();
         if (meshData.normals.IsCreated) meshData.normals.Dispose();
+        if (meshData.colors.IsCreated) meshData.colors.Dispose();
+        if (meshData.UV0s.IsCreated) meshData.UV0s.Dispose();
 
         ChunkProfiler.UploadEnd(); // PROFILER: end upload
     }
@@ -522,29 +516,31 @@ public class ChunkManager : MonoBehaviour
     void OnDestroy()
     {
         // Complete and dispose pending jobs safely
-        for (int i = pendingJobs.Count - 1; i >= 0; i--)
+        for (int i = pendingMeshJobs.Count - 1; i >= 0; i--)
         {
-            var (handle, meshData, density, scratch) = pendingJobs[i];
+            var (handle, meshData, blockIds, scratch) = pendingMeshJobs[i];
             if (!handle.IsCompleted) handle.Complete();
 
-            // dispose scratch
+            // Dispose scratch
             if (scratch.IsCreated) scratch.Dispose();
 
-            // density: return to pool or dispose
-            if (density.IsCreated)
+            // Dispose blockIds — no density arrays here anymore
+            if (blockIds.IsCreated)
             {
-                lock (densityPool) { densityPool.Push(density); }
+                blockIds.Dispose();
             }
 
             // Dispose mesh native lists (if not already disposed by ApplyMesh)
             if (meshData.vertices.IsCreated) meshData.vertices.Dispose();
             if (meshData.triangles.IsCreated) meshData.triangles.Dispose();
             if (meshData.normals.IsCreated) meshData.normals.Dispose();
+            if (meshData.colors.IsCreated) meshData.colors.Dispose();
+            if (meshData.UV0s.IsCreated) meshData.UV0s.Dispose();
 
-            pendingJobs.RemoveAt(i);
+            pendingMeshJobs.RemoveAt(i);
         }
 
-        // Dispose any leftover pooled arrays
+        // Dispose any leftover pooled density arrays
         lock (densityPool)
         {
             while (densityPool.Count > 0)
@@ -566,8 +562,10 @@ public class ChunkManager : MonoBehaviour
             var go = chunkGoPool.Pop();
             if (go != null) DestroyImmediate(go);
         }
-    }
 
+        if (nativeBlocks.IsCreated)
+            nativeBlocks.Dispose();
+    }
 
     void AdaptivePerformanceControl()
     {

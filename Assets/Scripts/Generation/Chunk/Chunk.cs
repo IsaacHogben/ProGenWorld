@@ -27,6 +27,9 @@ public class Chunk : MonoBehaviour
         var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
         mesh.SetVertices(meshData.vertices.AsArray());
         mesh.SetTriangles(meshData.triangles.AsArray().ToArray(), 0);
+        //mesh.SetNormals(meshData.triangles.AsArray()); // Not using vectors
+        mesh.SetColors(meshData.colors.AsArray());
+        mesh.SetUVs(0, meshData.UV0s.AsArray());
         mesh.RecalculateNormals();
 
         mf.sharedMesh = mesh;

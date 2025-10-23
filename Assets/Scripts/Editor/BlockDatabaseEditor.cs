@@ -50,21 +50,24 @@ public class BlockDatabaseEditor : Editor
             EditorGUILayout.BeginVertical("box");
 
             var typeProp = element.FindPropertyRelative("type");
-            var nameProp = element.FindPropertyRelative("name");
-            var matProp = element.FindPropertyRelative("material");
+            //var nameProp = element.FindPropertyRelative("name");
+            var matProp = element.FindPropertyRelative("texture");
             var solidProp = element.FindPropertyRelative("isSolid");
             var collProp = element.FindPropertyRelative("hasCollision");
             var transpProp = element.FindPropertyRelative("isTransparent");
 
             EditorGUILayout.PropertyField(typeProp, new GUIContent("Type"));
-            EditorGUILayout.PropertyField(nameProp, new GUIContent("Name"));
-            EditorGUILayout.PropertyField(matProp, new GUIContent("Material"));
+            //EditorGUILayout.PropertyField(nameProp, new GUIContent("Name"));
+            EditorGUILayout.PropertyField(matProp, new GUIContent("Texture"));
 
             EditorGUILayout.BeginHorizontal();
             solidProp.boolValue = EditorGUILayout.ToggleLeft("Solid", solidProp.boolValue);
             collProp.boolValue = EditorGUILayout.ToggleLeft("Collision", collProp.boolValue);
-            transpProp.boolValue = EditorGUILayout.ToggleLeft("Transparent", transpProp.boolValue);
             EditorGUILayout.EndHorizontal();
+
+            transpProp.boolValue = EditorGUILayout.ToggleLeft("Transparent", transpProp.boolValue);
+
+
 
             EditorGUILayout.EndVertical();
         }

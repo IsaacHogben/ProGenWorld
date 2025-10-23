@@ -13,16 +13,18 @@ using static UnityEngine.EventSystems.EventTrigger;
 [BurstCompile]
 public struct GreedyMeshJob : IJob
 {
-    [NonSerialized] [ReadOnly] public NativeArray<float> density;
+    //[NonSerialized] [ReadOnly] public NativeArray<float> density;
+    [NonSerialized] [ReadOnly] public NativeArray<byte> blockArray;
+    [ReadOnly] public NativeArray<BlockDatabase.BlockInfoUnmanaged> blocks;
     public int chunkSize;
-    public float isoLevel;
+    //public float isoLevel;
     public MeshData meshData;
     public int vertexCount;
 
     [NonSerialized] public NativeArray<FMask> mask;
     public struct FMask
     {
-        //public BlockData BlockData; // Assuming BlockData is a predefined class
+        public byte Block;
         public Int16 Normal;
     }
     public void Execute()
@@ -30,18 +32,15 @@ public struct GreedyMeshJob : IJob
         AGenerateMesh();
     }
 
-    bool IsSolid(int x, int y, int z)
+    bool IsSolid(byte block)
     {
-        if (x < 0 || y < 0 || z < 0 || x >= chunkSize || y >= chunkSize || z >= chunkSize)
-            return false;
-        int i = x + y * (chunkSize + 1) + z * (chunkSize + 1) * (chunkSize + 1);
-        return density[i] > isoLevel;
+        return blocks[block].isSolid;
     }
 
-    bool GetBlock(int3 coord)
+    byte GetBlock(int3 coord)
     {
         int i = coord.x + coord.y * (chunkSize + 1) + coord.z * (chunkSize + 1) * (chunkSize + 1);
-        return density[i] > isoLevel ? true : false;
+        return blockArray[i];
     }
 
     bool CompareMask(FMask current, FMask compare)
@@ -87,11 +86,11 @@ public struct GreedyMeshJob : IJob
                     {
                         var currentBlock = GetBlock(chunkItr);
                         var compareBlock = GetBlock(chunkItr + axisMask);
-                        //var currentBlockData = ChunkManager.GetBlockData(currentBlock);
-                        //var compareBlockData = ChunkManager.GetBlockData(compareBlock);
+                        var currentBlockData = blocks[currentBlock];
+                        var compareBlockData = blocks[compareBlock];
 
-                        bool currentBlockOpaque = currentBlock != false;
-                        bool compareBlockOpaque = compareBlock != false;
+                        bool currentBlockOpaque = currentBlockData.isTransparent == false;
+                        bool compareBlockOpaque = compareBlockData.isTransparent == false;
 
 
                         // Standard Block draw
@@ -101,11 +100,11 @@ public struct GreedyMeshJob : IJob
                         }
                         else if (currentBlockOpaque)
                         {
-                            mask[n++] = new FMask { Normal = 1 };
+                            mask[n++] = new FMask {Block = currentBlock, Normal = -1 };
                         }
                         else
                         {
-                            mask[n++] = new FMask { Normal = -1 };
+                            mask[n++] = new FMask {Block = compareBlock, Normal = 1 };
                         }
                     }
                 }
@@ -193,7 +192,7 @@ public struct GreedyMeshJob : IJob
             //return;
 
         // apply vertex colour here if able 
-        //FColor color = new FColor(0, mask.BlockData.OpacityMask, mask.BlockData.Face_WPO, GetTextureIndex(mask.BlockData.Block, normal));
+        float4 color = new float4(mask.Block, 0, 0, 1);
 
         // Append vertices
         meshData.vertices.Add(v1);
@@ -216,26 +215,26 @@ public struct GreedyMeshJob : IJob
         }
 
         // Append colors
-        /*for (int i = 0; i < 4; i++)
+        for (int i = 0; i < 4; i++)
         {
-            meshData.Colors.Add(color);
-        }*/
+            meshData.colors.Add(color);
+        }
 
         // Append UV coordinates
-        /*if (normal.x == 1 || normal.y == -1)
+        if (normal.x == 1 || normal.y == -1)
         {
-            meshData.UV0.Add(new int2(width, height));
-            meshData.UV0.Add(new FVector2D(0, height));
-            meshData.UV0.Add(new FVector2D(width, 0));
-            meshData.UV0.Add(new FVector2D(0, 0));
+            meshData.UV0s.Add(new float2(width, height));
+            meshData.UV0s.Add(new float2(0, height));
+            meshData.UV0s.Add(new float2(width, 0));
+            meshData.UV0s.Add(new float2(0, 0));
         }
         else
         {
-            meshData.UV0.Add(new FVector2D(height, width));
-            meshData.UV0.Add(new FVector2D(height, 0));
-            meshData.UV0.Add(new FVector2D(0, width));
-            meshData.UV0.Add(new FVector2D(0, 0));
-        }*/
+            meshData.UV0s.Add(new float2(height, width));
+            meshData.UV0s.Add(new float2(height, 0));
+            meshData.UV0s.Add(new float2(0, width));
+            meshData.UV0s.Add(new float2(0, 0));
+        }
 
         vertexCount += 4;
     }

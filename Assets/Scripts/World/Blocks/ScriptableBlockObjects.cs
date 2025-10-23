@@ -1,5 +1,6 @@
-using UnityEngine;
 using System;
+using Unity.Collections;
+using UnityEngine;
 
 [CreateAssetMenu(fileName = "BlockDatabase", menuName = "World/Block Table", order = 1)]
 public class BlockDatabase : ScriptableObject
@@ -9,7 +10,7 @@ public class BlockDatabase : ScriptableObject
     {
         public BlockType type;
         public string name;
-        public Material material;
+        public Texture2D texture;
 
         [Header("Properties")]
         public bool isSolid;
@@ -21,11 +22,18 @@ public class BlockDatabase : ScriptableObject
         {
             type = t;
             name = t.ToString();
-            material = null;
+            texture = null;
             isSolid = true;
             hasCollision = true;
             isTransparent = false;
         }
+    }
+    public struct BlockInfoUnmanaged
+    {
+        public byte id;
+        public bool isSolid;
+        public bool hasCollision;
+        public bool isTransparent;
     }
 
     [Header("All Block Types")]
@@ -43,4 +51,21 @@ public class BlockDatabase : ScriptableObject
     {
         return Get((BlockType)id);
     }
+
+    public NativeArray<BlockInfoUnmanaged> ToNative(Allocator allocator)
+    {
+        var arr = new NativeArray<BlockInfoUnmanaged>(blocks.Length, allocator);
+        for (int i = 0; i < blocks.Length; i++)
+        {
+            arr[i] = new BlockInfoUnmanaged
+            {
+                id = (byte)i,
+                isSolid = blocks[i].isSolid,
+                hasCollision = blocks[i].hasCollision,
+                isTransparent = blocks[i].isTransparent
+            };
+        }
+        return arr;
+    }
+
 }

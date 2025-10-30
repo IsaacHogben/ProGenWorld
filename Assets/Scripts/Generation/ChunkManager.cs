@@ -11,80 +11,108 @@ using static GreedyMeshJob;
 
 public class ChunkManager : MonoBehaviour
 {
+    // =============================
+    // === WORLD CONFIGURATION ====
+    // =============================
+
     [Header("World")]
-    public int viewDistance = 3;
-    public int chunkSize = 32;                  // Logical voxel count per axis (mesh uses chunkSize)
-    public float isoLevel = 0f;
-    //public Material chunkMaterial;
     public GameObject player;
     [SerializeField] private BlockDatabase blockDatabase;
 
+    public int viewDistance = 3;
+    public int chunkSize = 32;          // Logical voxel count per axis (mesh uses chunkSize)
+    public float isoLevel = 0f;
+    //public Material chunkMaterial;
+
+    // Derived values
+    int densityCount => (chunkSize + 1) * (chunkSize + 1) * (chunkSize + 1); // using +1 border pattern
+
+    // References
+    NoiseGenerator noiseGen;
+
+    // =============================
+    // === PERFORMANCE TUNING =====
+    // =============================
+
     [Header("Performance tuning")]
-    public int maxConcurrentNoiseTasks = 4;     // How many noise tasks to allow concurrently - Increase until CPU saturates or frame drops.
-    public int maxMeshUploadsPerFrame = 2;      // How many mesh uploads (Mesh.SetVertices/SetTriangles) per frame - Increase until GPU upload hitching appears.
-    public float scheduleInterval = 0.1f;       // Seconds between scheduling passes - Lower until chunk popping delay is acceptable.
-    public int initialPoolSize = 8;             // Initial pooled native arrays - Increase initialPoolSize if allocations appear in Profiler. Reduce if memory stays flat but half the pool never gets used.
+    public int maxConcurrentNoiseTasks = 4;   // How many noise tasks to allow concurrently - Increase until CPU saturates or frame drops.
+    public int maxMeshUploadsPerFrame = 2;    // How many mesh uploads (Mesh.SetVertices/SetTriangles) per frame - Increase until GPU upload hitching appears.
+    public float scheduleInterval = 1f;       // Seconds between scheduling passes - Lower until chunk popping delay is acceptable.                                            
+
+    // Configurable pool sizes (tweakable)
+    [SerializeField] int prewarmDensity = 8;  // Initial pooled native arrays - Increase if allocations appear in Profiler. Reduce if memory stays flat but half the pool never gets used.
+    [SerializeField] int prewarmChunks = 200;
+    [SerializeField] int prewarmMeshes = 400;
+
+    // --- Adaptive performance control ---
+    float avgFrameTime = 16.6f;
+    float lastPerfAdjustTime = 0f;
 
     // --- Performance diagnostics ---
     public float AvgFrameTime => avgFrameTime;
     public int CurrentNoiseTasks => maxConcurrentNoiseTasks;
     public int CurrentMeshUploads => maxMeshUploadsPerFrame;
     public float CurrentScheduleInterval => scheduleInterval;
-    public int CurrentPoolSize => initialPoolSize;
+    public int CurrentPoolSize => prewarmDensity;
 
-    // Internal state
+    // =============================
+    // === DATA STRUCTURES / STATE =
+    // =============================
+
+    // Internal chunk tracking
     readonly Dictionary<int3, Chunk> chunks = new();
     readonly HashSet<int3> emptyChunks = new();
-    readonly HashSet<int3> generating = new(); // coords reserved for generation or meshing
+    readonly HashSet<int3> generating = new();   // coords reserved for generation or meshing
 
-    // Threading/queues
+    // Threading / queues
     readonly ConcurrentQueue<(int3 coord, float[] density)> completedNoise = new();
     SemaphoreSlim noiseLimiter = null;
     readonly HashSet<int3> activeNoiseTasks = new();
 
-    // NativeArray pool for densities (Allocator.Persistent)
-    readonly Stack<NativeArray<float>> densityPool = new();
+    // Job handles and pending work
+    private readonly List<(int3 coord, JobHandle handle, NativeArray<float> density, NativeArray<byte> blockIds)> pendingBlock = new(); // Waiting for block ID generation
+    private readonly List<(JobHandle handle, MeshData meshData, NativeArray<byte> blockIds, NativeArray<GreedyMeshJob.FMask> mask)> pendingMeshJobs = new(); // Waiting for mesh completion
+    readonly Queue<MeshData> meshQueue = new();  // Meshes ready to apply on main thread
 
-    // Jobs waiting for block IDs to finish computing
-    private readonly List<(int3 coord, JobHandle handle, NativeArray<float> density, NativeArray<byte> blockIds)> pendingBlock = new();
+    // =============================
+    // === FLOOD-FILL SYSTEM =======
+    // =============================
 
-    // Mesh jobs now track blockIds instead of density
-    private readonly List<(JobHandle handle, MeshData meshData, NativeArray<byte> blockIds, NativeArray<GreedyMeshJob.FMask> mask)> pendingMeshJobs = new();
-
-    // Mesh queue to apply on main thread
-    readonly Queue<MeshData> meshQueue = new();
-
-    // Chunk GameObject pool
-    readonly Stack<GameObject> chunkGoPool = new();
-
-    // Timing
-    float lastScheduleTime = -999f;
-
-    // References
-    NoiseGenerator noiseGen;
-
-    // Derived
-    int densityCount => (chunkSize + 1) * (chunkSize + 1) * (chunkSize + 1); // using +1 border pattern
-
-    // ==== NEW: flood-fill state ====
-    readonly Queue<int3> frontier = new();                          // chunks waiting to be expanded
-    readonly Dictionary<int3, OpenFaces> openFaceMap = new();       // what faces were open for each coord
-    readonly HashSet<int3> deferredFrontier = new();                // neighbors we wanted to expand to, but were out of range
-    // Flood fill test
+    readonly Queue<int3> frontier = new();                    // chunks waiting to be expanded
+    readonly Dictionary<int3, OpenFaces> openFaceMap = new();  // what faces were open for each coord
+    readonly HashSet<int3> deferredFrontier = new();           // neighbors to expand later (out of range)
     private int3 lastPlayerChunk = int3.zero;
     private bool firstFloodTriggered = false;
-    // Expose for debug visualizers
+
+    // Debug visualization accessors
     public IReadOnlyDictionary<int3, OpenFaces> GetOpenFaceMap() => openFaceMap;
     public HashSet<int3> GetDeferredFrontier() => deferredFrontier;
 
-    // --- Adaptive performance control ---
-    float avgFrameTime = 16.6f;
-    float lastPerfAdjustTime = 0f;
-    // Load the blockDatabase
-    private NativeArray<BlockDatabase.BlockInfoUnmanaged> nativeBlocks;
-    // Texturing
+    // =============================
+    // === RESOURCES / MATERIALS ===
+    // =============================
+
+    private NativeArray<BlockDatabase.BlockInfoUnmanaged> nativeBlockDatabase;
     public BlockTextureArrayBuilder textureArrayBuilder;
     public Material voxelMaterial;
+    private OpenFaceDetector faceDetector;  // kernel
+
+    // =============================
+    // === POOLING SYSTEM =========
+    // =============================
+
+    readonly Stack<NativeArray<float>> densityPool = new();
+    readonly Stack<GameObject> chunkGoPool = new();
+    Stack<Mesh> meshPool = new();
+
+    // =============================
+    // === TIMING =================
+    // =============================
+
+    float lastScheduleTime = -999f;
+
+    // TODO: Consider adding explanation on how scheduling interacts with async job flow and prewarming logic.
+
 
     void Awake()
     {
@@ -94,17 +122,12 @@ public class ChunkManager : MonoBehaviour
         // create noise generator
         noiseGen = new NoiseGenerator(111); // adjust constructor if needed
         // create blockDatabase Native
-        nativeBlocks = blockDatabase.ToNative(Allocator.Persistent);
+        nativeBlockDatabase = blockDatabase.ToNative(Allocator.Persistent);
         // load texture array
         voxelMaterial.SetTexture("_Textures", textureArrayBuilder.GetTextureArray());
-        /*if (textureArrayBuilder.generatedArray != null)
-            voxelMaterial.SetTexture("_Textures", textureArrayBuilder.generatedArray);
-        else
-            Debug.LogWarning("Could not find generated texture array");*/
-
-        // prewarm density pool
-        for (int i = 0; i < initialPoolSize; i++)
-            densityPool.Push(new NativeArray<float>(densityCount, Allocator.Persistent));
+        // create openfacedetector (Can be moved to a computeShaderManager when we are using more)
+        faceDetector = new OpenFaceDetector(ref nativeBlockDatabase);
+        PrewarmPools();
     }
 
     void Start()
@@ -112,7 +135,8 @@ public class ChunkManager : MonoBehaviour
         // Seed frontier at the player's current chunk
         var playerPos = player.transform.position;
         int3 playerChunk = WorldToChunkCoord(playerPos);
-        frontier.Enqueue(playerChunk);
+        //frontier.Enqueue(playerChunk);
+        ReSeedFloodFrontier(playerChunk, 3);
     }
 
     void Update()
@@ -145,7 +169,7 @@ public class ChunkManager : MonoBehaviour
             // Kick a scheduling tick immediately so promoted items start right away
             ScheduleVisibleChunksFloodFill();
         }
-
+        // Manage completed noise tasks, schedules block assignment
         while (completedNoise.TryDequeue(out var data))
         {
             // pull an array from pool
@@ -160,7 +184,7 @@ public class ChunkManager : MonoBehaviour
             nativeDensity.CopyFrom(data.density);
 
             // schedule block assignment async and track it
-            var (handle, blockIds) = ScheduleBlockAssignmentAsync(nativeDensity);
+            var (handle, blockIds) = ScheduleBlockAssignmentAsync(nativeDensity, data.coord);
             pendingBlock.Add((data.coord, handle, nativeDensity, blockIds));
 
             // allow scheduling that coord again later
@@ -175,9 +199,16 @@ public class ChunkManager : MonoBehaviour
 
             it.handle.Complete();
 
-            // Optional: you can now detect open faces using blockIds instead of density
-            var faces = DetectOpenFacesFromBlocks(it.blockIds);  // new helper below
+            // Testing chunk flood fill system with compute shaders and other approaches
+            //var sw = System.Diagnostics.Stopwatch.StartNew();             // Stopwatch      
+            //var faces = DetectOpenFacesFromBlocks(it.blockIds);           // CPU VERSION
+            var faces = DetectTerrainFlowFromBlocks(it.blockIds);           // CPU VERSION Flow Fill system
+            //var faces = faceDetector.DetectGPU(it.blockIds, chunkSize);   // GPU VERSION
+
             openFaceMap[it.coord] = faces;
+            //sw.Stop();
+            //Debug.Log($"GPU FaceScan: {sw.Elapsed.TotalMilliseconds:F3}ms");
+
             ExpandFrontierFromFaces(it.coord, faces);
 
             // Mesh scheduling now uses blockIds
@@ -360,7 +391,7 @@ public class ChunkManager : MonoBehaviour
         });
     }
 
-    private (JobHandle handle, NativeArray<byte> blockIds) ScheduleBlockAssignmentAsync(NativeArray<float> nativeDensity)
+    private (JobHandle handle, NativeArray<byte> blockIds) ScheduleBlockAssignmentAsync(NativeArray<float> nativeDensity, int3 coord)
     {
         int voxelCount = (chunkSize + 1) * (chunkSize + 1) * (chunkSize + 1);
         var blockIds = new NativeArray<byte>(voxelCount, Allocator.Persistent);
@@ -371,6 +402,8 @@ public class ChunkManager : MonoBehaviour
             blockIds = blockIds,
             isoLevel = isoLevel,
             chunkSize = chunkSize,
+            startingCoord = coord,
+            voxelCount = voxelCount,
             //solidBlockId = 1, // change if you want (e.g. Stone)
             //airBlockId = 0 // Air
         };
@@ -409,9 +442,64 @@ public class ChunkManager : MonoBehaviour
         return flags;
     }
 
+    // face scan on +1 density buffer
+    private OpenFaces DetectTerrainFlowFromBlocks(NativeArray<byte> blockIds)
+    {
+        OpenFaces flags = OpenFaces.None;
+        int s = chunkSize + 1;
+
+        bool IsSolid(int x, int y, int z) =>
+            blockIds[x + y * s + z * s * s] != 0; // non-air = solid
+
+        bool FaceExposed(Func<int, int, bool> test)
+        {
+            bool sawSolid = false;
+            bool sawAir = false;
+
+            for (int i = 0; i < s; i++)
+            {
+                for (int j = 0; j < s; j++)
+                {
+                    bool solid = test(i, j);
+                    if (solid) sawSolid = true; else sawAir = true;
+
+                    if (sawSolid && sawAir) return true; // ? mixed ? exposed
+                }
+            }
+            return false; // fully solid or fully air ? not exposed
+        }
+
+        // +X: (s-1, y, z)
+        if (FaceExposed((y, z) => IsSolid(s - 1, y, z)))
+            flags |= OpenFaces.PosX;
+
+        // -X: (0, y, z)
+        if (FaceExposed((y, z) => IsSolid(0, y, z)))
+            flags |= OpenFaces.NegX;
+
+        // +Y: (x, s-1, z)
+        if (FaceExposed((x, z) => IsSolid(x, s - 1, z)))
+            flags |= OpenFaces.PosY;
+
+        // -Y: (x, 0, z)
+        if (FaceExposed((x, z) => IsSolid(x, 0, z)))
+            flags |= OpenFaces.NegY;
+
+        // +Z: (x, y, s-1)
+        if (FaceExposed((x, y) => IsSolid(x, y, s - 1)))
+            flags |= OpenFaces.PosZ;
+
+        // -Z: (x, y, 0)
+        if (FaceExposed((x, y) => IsSolid(x, y, 0)))
+            flags |= OpenFaces.NegZ;
+
+        return flags;
+    }
+
+
     void ScheduleGreedyMeshJob(int3 coord, NativeArray<byte> blockIds)
     {
-        ChunkProfiler.MeshStart();
+        ChunkProfiler.MeshStart(); // Wont track an async job. Add handle.Complete() to profile
 
         var meshData = new MeshData
         {
@@ -423,80 +511,75 @@ public class ChunkManager : MonoBehaviour
             UV0s = new NativeList<float2>(Allocator.Persistent)
         };
 
-        var scratch = new NativeArray<FMask>(chunkSize * chunkSize, Allocator.TempJob);
+        var scratch = new NativeArray<FMask>(chunkSize * chunkSize, Allocator.Persistent);
 
         var job = new GreedyMeshJob
         {
-            blockArray = blockIds,   // << now using blocks
-            blocks = nativeBlocks,
+            blockArray = blockIds,
+            blocks = nativeBlockDatabase,
             chunkSize = chunkSize,
             meshData = meshData,
             mask = scratch
         };
 
-        JobHandle handle = job.Schedule(); // async
+        JobHandle handle = job.Schedule();
         pendingMeshJobs.Add((handle, meshData, blockIds, scratch));
-
+        //handle.Complete();
         ChunkProfiler.MeshEnd();
     }
 
 
     void ApplyMeshDataToChunk(MeshData meshData)
     {
-        ChunkProfiler.UploadStart(); // PROFILER: start upload
+        ChunkProfiler.UploadStart();
 
-        bool chunkEmpty = false;
-        if (!meshData.vertices.IsCreated || meshData.vertices.Length == 0)
-            chunkEmpty = true;
-
-        // Find or create the target chunk if it does not exist
+        bool chunkEmpty = !meshData.vertices.IsCreated || meshData.vertices.Length == 0;
         chunks.TryGetValue(meshData.coord, out var chunk);
-        if (chunk == null) // Try get value failed
+
+        if (chunk == null)
         {
-            if (!chunkEmpty) // Skips chunk object creation if the mesh is empty
+            if (!chunkEmpty)
             {
                 GameObject go;
-
-                // Either get from pool or create new
                 if (chunkGoPool.Count > 0)
                 {
                     go = chunkGoPool.Pop();
-                    if (go == null) go = new GameObject();
+                    go.SetActive(true);
                 }
                 else
                 {
                     go = new GameObject();
+                    go.AddComponent<Chunk>();
                 }
 
                 go.name = $"Chunk_{meshData.coord.x}_{meshData.coord.y}_{meshData.coord.z}";
                 go.transform.position = ChunkToWorld(meshData.coord);
-                go.transform.parent = this.gameObject.transform;
+                go.transform.parent = transform;
 
-                chunk = go.GetComponent<Chunk>() ?? go.AddComponent<Chunk>();
+                chunk = go.GetComponent<Chunk>();
                 chunk.chunkMaterial = voxelMaterial;
 
                 chunks[meshData.coord] = chunk;
             }
             else
             {
-                chunks[meshData.coord] = null; // Still add coords to chunks dictionary because it has been calculated
+                chunks[meshData.coord] = null;
             }
         }
 
-        // Apply mesh
         if (chunk != null)
-            chunk.ApplyMesh(meshData);
+            chunk.ApplyMesh(meshData, meshPool);
 
         generating.Remove(meshData.coord);
 
-        // Dispose mesh native lists (if not already disposed by ApplyMesh)
+        // Dispose job data after use
         if (meshData.vertices.IsCreated) meshData.vertices.Dispose();
         if (meshData.triangles.IsCreated) meshData.triangles.Dispose();
         if (meshData.normals.IsCreated) meshData.normals.Dispose();
         if (meshData.colors.IsCreated) meshData.colors.Dispose();
         if (meshData.UV0s.IsCreated) meshData.UV0s.Dispose();
 
-        ChunkProfiler.UploadEnd(); // PROFILER: end upload
+        ChunkProfiler.UploadEnd();
     }
 
 
@@ -511,6 +594,126 @@ public class ChunkManager : MonoBehaviour
             Mathf.FloorToInt(pos.y / chunkSize),
             Mathf.FloorToInt(pos.z / chunkSize)
         );
+    }
+
+    void AdaptivePerformanceControl()
+    {
+        avgFrameTime = Mathf.Lerp(avgFrameTime, Time.deltaTime * 1000f, 0.1f);
+
+        // Adaptive performance adjustion frequency
+        if (Time.time - lastPerfAdjustTime < 0.1f)
+            return;
+
+        lastPerfAdjustTime = Time.time;
+
+        const float dangerFrameTime = 18f;     // ~?60 FPS
+        const float safeFrameTime = 8.3333f; // ?120 FPS
+
+        bool adjusted = false;
+
+        if (avgFrameTime > dangerFrameTime)
+        {
+            // Decrease load
+            maxConcurrentNoiseTasks = Mathf.Max(1, maxConcurrentNoiseTasks - 1);
+            maxMeshUploadsPerFrame = Mathf.Max(1, maxMeshUploadsPerFrame - 1);
+            scheduleInterval = Mathf.Min(scheduleInterval * 1.15f, 0.4f);
+            adjusted = true;
+        }
+        else if (avgFrameTime < safeFrameTime)
+        {
+            // Increase load
+            maxConcurrentNoiseTasks = Mathf.Min(maxConcurrentNoiseTasks + 1, SystemInfo.processorCount);
+            maxMeshUploadsPerFrame = Mathf.Min(maxMeshUploadsPerFrame + 1, 8);
+            scheduleInterval = Mathf.Max(scheduleInterval * 0.85f, 0.05f);
+            adjusted = true;
+        }
+
+        lock (densityPool)
+        {
+            if (densityPool.Count < 2)
+            {
+                var extra = new NativeArray<float>(densityCount, Allocator.Persistent);
+                densityPool.Push(extra);
+                prewarmDensity++;
+                adjusted = true;
+            }
+        }
+
+        if (adjusted)
+        {
+            //Debug.Log($"[PerfTuner] {avgFrameTime:F1}ms ? Noise={maxConcurrentNoiseTasks}, Uploads={maxMeshUploadsPerFrame}, Interval={scheduleInterval:F2}");
+        }
+    }
+
+    // Create an initial zone around the player from which the flood fill can start
+    void ReSeedFloodFrontier(int3 centerChunk, short radius)
+    {
+        float sqrViewDist = radius * radius;
+
+        for (int x = -radius; x <= radius; x++)
+            for (int y = -radius; y <= radius; y++)
+                for (int z = -radius; z <= radius; z++)
+                {
+                    float distSqr = x * x + y * y + z * z;
+                    if (distSqr > sqrViewDist)
+                        continue;
+
+                    int3 coord = centerChunk + new int3(x, y, z);
+
+                    // skip if chunk already exists or is generating
+                    if (chunks.ContainsKey(coord) || generating.Contains(coord))
+                        continue;
+
+                    // skip if already in frontier
+                    if (frontier.Contains(coord))
+                        continue;
+
+                    frontier.Enqueue(coord);
+                }
+
+        // Immediately run a flood-fill tick (respects throttling)
+        ScheduleVisibleChunksFloodFill();
+    }
+    void ReleaseChunk(int3 coord)
+    {
+        if (!chunks.TryGetValue(coord, out var chunk) || chunk == null)
+            return;
+
+        var mf = chunk.GetComponent<MeshFilter>();
+        if (mf && mf.sharedMesh != null)
+        {
+            meshPool.Push(mf.sharedMesh);
+            mf.sharedMesh = null;
+        }
+
+        chunk.gameObject.SetActive(false);
+        chunkGoPool.Push(chunk.gameObject);
+
+        chunks.Remove(coord);
+    }
+
+    void PrewarmPools()
+    {
+        for (int i = 0; i < prewarmChunks; i++)
+        {
+            var go = new GameObject($"PooledChunk_{i}");
+            go.SetActive(false);
+            go.transform.parent = transform;
+
+            var chunk = go.AddComponent<Chunk>();
+            chunk.chunkMaterial = voxelMaterial;
+            chunkGoPool.Push(go);
+        }
+
+        for (int i = 0; i < prewarmMeshes; i++)
+        {
+            var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+            mesh.MarkDynamic(); // helps when reusing buffer content
+            meshPool.Push(mesh);
+        }
+
+        for (int i = 0; i < prewarmDensity; i++)
+            densityPool.Push(new NativeArray<float>(densityCount, Allocator.Persistent));
     }
 
     void OnDestroy()
@@ -563,86 +766,10 @@ public class ChunkManager : MonoBehaviour
             if (go != null) DestroyImmediate(go);
         }
 
-        if (nativeBlocks.IsCreated)
-            nativeBlocks.Dispose();
-    }
-
-    void AdaptivePerformanceControl()
-    {
-        avgFrameTime = Mathf.Lerp(avgFrameTime, Time.deltaTime * 1000f, 0.1f);
-
-        // Adaptive performance adjustion frequency
-        if (Time.time - lastPerfAdjustTime < 0.1f)
-            return;
-
-        lastPerfAdjustTime = Time.time;
-
-        const float dangerFrameTime = 17f;     // ~?60 FPS
-        const float safeFrameTime = 8.3333f; // ?120 FPS
-
-        bool adjusted = false;
-
-        if (avgFrameTime > dangerFrameTime)
-        {
-            // Decrease load
-            maxConcurrentNoiseTasks = Mathf.Max(1, maxConcurrentNoiseTasks - 1);
-            maxMeshUploadsPerFrame = Mathf.Max(1, maxMeshUploadsPerFrame - 1);
-            scheduleInterval = Mathf.Min(scheduleInterval * 1.15f, 0.4f);
-            adjusted = true;
-        }
-        else if (avgFrameTime < safeFrameTime)
-        {
-            // Increase load
-            maxConcurrentNoiseTasks = Mathf.Min(maxConcurrentNoiseTasks + 1, SystemInfo.processorCount);
-            maxMeshUploadsPerFrame = Mathf.Min(maxMeshUploadsPerFrame + 1, 8);
-            scheduleInterval = Mathf.Max(scheduleInterval * 0.85f, 0.05f);
-            adjusted = true;
-        }
-
-        lock (densityPool)
-        {
-            if (densityPool.Count < 2)
-            {
-                var extra = new NativeArray<float>(densityCount, Allocator.Persistent);
-                densityPool.Push(extra);
-                initialPoolSize++;
-                adjusted = true;
-            }
-        }
-
-        if (adjusted)
-        {
-            //Debug.Log($"[PerfTuner] {avgFrameTime:F1}ms ? Noise={maxConcurrentNoiseTasks}, Uploads={maxMeshUploadsPerFrame}, Interval={scheduleInterval:F2}");
-        }
-    }
-
-    void ReSeedFloodFrontier(int3 centerChunk)
-    {
-        float sqrViewDist = viewDistance * viewDistance;
-
-        for (int x = -viewDistance; x <= viewDistance; x++)
-            for (int y = -viewDistance; y <= viewDistance; y++)
-                for (int z = -viewDistance; z <= viewDistance; z++)
-                {
-                    float distSqr = x * x + y * y + z * z;
-                    if (distSqr > sqrViewDist)
-                        continue;
-
-                    int3 coord = centerChunk + new int3(x, y, z);
-
-                    // skip if chunk already exists or is generating
-                    if (chunks.ContainsKey(coord) || generating.Contains(coord))
-                        continue;
-
-                    // skip if already in frontier
-                    if (frontier.Contains(coord))
-                        continue;
-
-                    frontier.Enqueue(coord);
-                }
-
-        // Immediately run a flood-fill tick (respects throttling)
-        ScheduleVisibleChunksFloodFill();
+        // Remaining Clean-up
+        if (nativeBlockDatabase.IsCreated)
+            nativeBlockDatabase.Dispose();
+        faceDetector?.Dispose();
     }
 
 }

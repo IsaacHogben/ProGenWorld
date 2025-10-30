@@ -1,13 +1,16 @@
+using System.Collections.Generic;
 using Unity.Collections;
+using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 public class Chunk : MonoBehaviour
 {
     public Material chunkMaterial;
 
-    public void ApplyMesh(MeshData meshData)
+    public void ApplyMesh(MeshData meshData, Stack<Mesh> meshPool)
     {
-        // Ensure required components exist
+        // Ensure required components
         var mf = GetComponent<MeshFilter>();
         if (mf == null)
             mf = gameObject.AddComponent<MeshFilter>();
@@ -23,21 +26,46 @@ public class Chunk : MonoBehaviour
         if (mr.sharedMaterial == null)
             mr.sharedMaterial = chunkMaterial;
 
-        // Build mesh
-        var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
-        mesh.SetVertices(meshData.vertices.AsArray());
-        mesh.SetTriangles(meshData.triangles.AsArray().ToArray(), 0);
-        //mesh.SetNormals(meshData.triangles.AsArray()); // Not using vectors
-        mesh.SetColors(meshData.colors.AsArray());
-        mesh.SetUVs(0, meshData.UV0s.AsArray());
-        mesh.RecalculateNormals();
+        // Get or reuse mesh
+        Mesh mesh;
+        if (mf.sharedMesh == null)
+        {
+            mesh = meshPool.Count > 0 ? meshPool.Pop() : new Mesh { indexFormat = IndexFormat.UInt32 };
+            mf.sharedMesh = mesh;
+        }
+        else
+        {
+            mesh = mf.sharedMesh;
+            mesh.Clear();
+        }
 
-        mf.sharedMesh = mesh;
+        // Allocate writable MeshData and copy directly
+        var meshArray = Mesh.AllocateWritableMeshData(1);
+        Mesh.MeshData dst = meshArray[0];
+
+        dst.SetVertexBufferParams(meshData.vertices.Length,
+            new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3, stream: 0),
+            new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3, stream: 1),
+            new VertexAttributeDescriptor(VertexAttribute.Color, VertexAttributeFormat.Float32, 4, stream: 2),
+            new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 2, stream: 3));
+
+        dst.SetIndexBufferParams(meshData.triangles.Length, IndexFormat.UInt32);
+
+        // Copy vertex data to writable buffers
+        meshData.vertices.AsArray().CopyTo(dst.GetVertexData<float3>(0));
+        meshData.normals.AsArray().CopyTo(dst.GetVertexData<float3>(1));
+        meshData.colors.AsArray().CopyTo(dst.GetVertexData<float4>(2));
+        meshData.UV0s.AsArray().CopyTo(dst.GetVertexData<float2>(3));
+        meshData.triangles.AsArray().CopyTo(dst.GetIndexData<int>());
+
+        dst.subMeshCount = 1;
+        dst.SetSubMesh(0, new SubMeshDescriptor(0, meshData.triangles.Length));
+
+        // Apply to mesh (auto-disposes MeshDataArray)
+        Mesh.ApplyAndDisposeWritableMeshData(meshArray, mesh);
+        mesh.RecalculateBounds();
+
+        // Assign mesh to collider
         mc.sharedMesh = mesh;
-
-        /*// Dispose native containers
-        if (meshData.vertices.IsCreated) meshData.vertices.Dispose();
-        if (meshData.triangles.IsCreated) meshData.triangles.Dispose();
-        if (meshData.normals.IsCreated) meshData.normals.Dispose();*/
     }
 }

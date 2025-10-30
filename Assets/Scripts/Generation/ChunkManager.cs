@@ -111,7 +111,7 @@ public class ChunkManager : MonoBehaviour
 
     float lastScheduleTime = -999f;
 
-    // TODO: Consider adding explanation on how scheduling interacts with async job flow and prewarming logic.
+    // TODO: Consider adding explanation on how scheduling interacts with async job flow and prewarming logic
 
 
     void Awake()

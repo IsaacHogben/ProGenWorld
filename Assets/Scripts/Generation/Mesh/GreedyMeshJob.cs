@@ -47,11 +47,6 @@ public struct GreedyMeshJob : IJob
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static bool CompareMask(FMask a, FMask b) => a.Normal == b.Normal && a.Block == b.Block;
 
-    bool CompareMaskold(FMask current, FMask compare)
-    {
-        return current.Normal.Equals(compare.Normal) && current.Block.Equals(compare.Block);
-    }
-
     public void AGenerateMesh()
     {
         // Debug.Log($"Blocks array accessed. Num elements: {Blocks[99]}");

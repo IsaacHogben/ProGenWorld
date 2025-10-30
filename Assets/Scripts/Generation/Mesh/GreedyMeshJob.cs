@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -10,7 +11,7 @@ using UnityEngine.UIElements;
 using static Unity.Collections.AllocatorManager;
 using static UnityEngine.EventSystems.EventTrigger;
 
-[BurstCompile]
+[BurstCompile(FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low, OptimizeFor = OptimizeFor.Performance)]
 public struct GreedyMeshJob : IJob
 {
     //[NonSerialized] [ReadOnly] public NativeArray<float> density;
@@ -43,9 +44,12 @@ public struct GreedyMeshJob : IJob
         return blockArray[i];
     }
 
-    bool CompareMask(FMask current, FMask compare)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    static bool CompareMask(FMask a, FMask b) => a.Normal == b.Normal && a.Block == b.Block;
+
+    bool CompareMaskold(FMask current, FMask compare)
     {
-        return current.Normal.Equals(compare.Normal);
+        return current.Normal.Equals(compare.Normal) && current.Block.Equals(compare.Block);
     }
 
     public void AGenerateMesh()
@@ -89,8 +93,8 @@ public struct GreedyMeshJob : IJob
                         var currentBlockData = blocks[currentBlock];
                         var compareBlockData = blocks[compareBlock];
 
-                        bool currentBlockOpaque = currentBlockData.isTransparent == false;
-                        bool compareBlockOpaque = compareBlockData.isTransparent == false;
+                        bool currentBlockOpaque = currentBlock != 0;
+                        bool compareBlockOpaque = compareBlock != 0;
 
 
                         // Standard Block draw
@@ -211,7 +215,7 @@ public struct GreedyMeshJob : IJob
         // Append normals
         for (int i = 0; i < 4; i++)
         {
-            meshData.normals.Add(normal);
+            meshData.normals.Add(normal * -1);
         }
 
         // Append colors
@@ -221,7 +225,7 @@ public struct GreedyMeshJob : IJob
         }
 
         // Append UV coordinates
-        if (normal.x == 1 || normal.y == -1)
+        if (normal.x == 1 || normal.x == -1)
         {
             meshData.UV0s.Add(new float2(width, height));
             meshData.UV0s.Add(new float2(0, height));

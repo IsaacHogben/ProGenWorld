@@ -20,6 +20,7 @@ public class ChunkManager : MonoBehaviour
     [SerializeField] private BlockDatabase blockDatabase;
 
     public int viewDistance = 3;
+    [SerializeField] private RenderShape renderShape = RenderShape.Sphere;
     public int chunkSize = 32;          // Logical voxel count per axis (mesh uses chunkSize)
 
     // Derived values
@@ -253,9 +254,6 @@ public class ChunkManager : MonoBehaviour
     {
         if (player == null || frontier.Count == 0) return;
 
-        int3 playerChunk = WorldToChunkCoord(player.transform.position);
-        float maxDistSqr = viewDistance * viewDistance;
-
         int spawnedThisTick = 0;
         int cap = Math.Max(1, maxConcurrentNoiseTasks);
 
@@ -278,7 +276,6 @@ public class ChunkManager : MonoBehaviour
         if (faces == OpenFaces.None) return;
 
         var center = WorldToChunkCoord(player.transform.position);
-        float maxDistSqr = viewDistance * viewDistance;
 
         Span<(OpenFaces face, int3 d)> dirs = stackalloc (OpenFaces, int3)[]
         {
@@ -299,8 +296,7 @@ public class ChunkManager : MonoBehaviour
             if (chunks.ContainsKey(n) || generating.Contains(n))
                 continue;
 
-            float d2 = math.lengthsq((float3)(n - center));
-            if (d2 <= maxDistSqr)
+            if (IsChunkWithinRenderRange(n, center, viewDistance))
             {
                 if (!frontier.Contains(n))
                     frontier.Enqueue(n);
@@ -316,8 +312,6 @@ public class ChunkManager : MonoBehaviour
     // Player changed chunk — promote deferred coords that are now in range
     void PromoteDeferredToFrontier(int3 center)
     {
-        float maxDistSqr = viewDistance * viewDistance;
-
         // promote any deferred chunks now within view distance
         List<int3> toPromote = new(32);
 
@@ -325,9 +319,8 @@ public class ChunkManager : MonoBehaviour
         {
             if (chunks.ContainsKey(c) || generating.Contains(c))
                 continue;
-
-            float d2 = math.lengthsq((float3)(c - center));
-            if (d2 <= maxDistSqr)
+     
+            if (IsChunkWithinRenderRange(c, center, viewDistance))
                 toPromote.Add(c);
         }
 
@@ -575,7 +568,6 @@ public class ChunkManager : MonoBehaviour
         ChunkProfiler.UploadEnd();
     }
 
-
     // Make this public for debug visualizers
     public Vector3 ChunkToWorld(int3 coord) =>
         new Vector3(coord.x, coord.y, coord.z) * chunkSize;
@@ -709,6 +701,32 @@ public class ChunkManager : MonoBehaviour
             densityPool.Push(new NativeArray<float>(densityCount, Allocator.Persistent));
     }
 
+    public bool IsChunkWithinRenderRange(int3 chunkCoord, float3 playerPos, float viewDistance)
+    {
+        //float3 chunkWorldPos = ChunkToWorld(chunkCoord);
+
+        switch (renderShape)
+        {
+            case RenderShape.Cylinder:
+                {
+                    // 2D distance (XZ only)
+                    float2 flatPlayer = playerPos.xz;
+                    float2 flatChunk = chunkCoord.xz;
+                    float dist2D = math.distance(flatPlayer, flatChunk);
+                    float verticalDelta = math.abs(chunkCoord.y - playerPos.y);
+
+                    // Allow full vertical range, only check XZ radius
+                    return dist2D <= viewDistance;
+                }
+
+            case RenderShape.Sphere:
+            default:
+                {
+                    float dist3D = math.distance(playerPos, chunkCoord);
+                    return dist3D <= viewDistance;
+                }
+        }
+    }
     void OnDestroy()
     {
         // Complete and dispose pending jobs safely
@@ -761,5 +779,4 @@ public class ChunkManager : MonoBehaviour
             nativeBlockDatabase.Dispose();
         faceDetector?.Dispose();
     }
-
 }

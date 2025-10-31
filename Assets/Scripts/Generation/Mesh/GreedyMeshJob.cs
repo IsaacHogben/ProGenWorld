@@ -14,15 +14,12 @@ using static UnityEngine.EventSystems.EventTrigger;
 [BurstCompile(FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low, OptimizeFor = OptimizeFor.Performance)]
 public struct GreedyMeshJob : IJob
 {
-    //[NonSerialized] [ReadOnly] public NativeArray<float> density;
     [NonSerialized] [ReadOnly] public NativeArray<byte> blockArray;
     [ReadOnly] public NativeArray<BlockDatabase.BlockInfoUnmanaged> blocks;
     public int chunkSize;
-    //public float isoLevel;
     public MeshData meshData;
     public int vertexCount;
 
-    [NonSerialized] public NativeArray<FMask> mask;
     public struct FMask
     {
         public byte Block;
@@ -30,7 +27,9 @@ public struct GreedyMeshJob : IJob
     }
     public void Execute()
     {
-        AGenerateMesh();
+        var mask = new NativeArray<FMask>(chunkSize * chunkSize, Allocator.Temp);
+        AGenerateMesh(mask);
+        mask.Dispose();
     }
 
     bool IsSolid(byte block)
@@ -47,7 +46,7 @@ public struct GreedyMeshJob : IJob
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static bool CompareMask(FMask a, FMask b) => a.Normal == b.Normal && a.Block == b.Block;
 
-    public void AGenerateMesh()
+    public void AGenerateMesh(NativeArray<FMask> mask)
     {
         // Debug.Log($"Blocks array accessed. Num elements: {Blocks[99]}");
         int Lod = 1;

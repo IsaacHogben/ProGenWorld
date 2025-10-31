@@ -21,8 +21,6 @@ public class ChunkManager : MonoBehaviour
 
     public int viewDistance = 3;
     public int chunkSize = 32;          // Logical voxel count per axis (mesh uses chunkSize)
-    public float isoLevel = 0f;
-    //public Material chunkMaterial;
 
     // Derived values
     int densityCount => (chunkSize + 1) * (chunkSize + 1) * (chunkSize + 1); // using +1 border pattern
@@ -71,7 +69,7 @@ public class ChunkManager : MonoBehaviour
 
     // Job handles and pending work
     private readonly List<(int3 coord, JobHandle handle, NativeArray<float> density, NativeArray<byte> blockIds)> pendingBlock = new(); // Waiting for block ID generation
-    private readonly List<(JobHandle handle, MeshData meshData, NativeArray<byte> blockIds, NativeArray<GreedyMeshJob.FMask> mask)> pendingMeshJobs = new(); // Waiting for mesh completion
+    private readonly List<(JobHandle handle, MeshData meshData, NativeArray<byte> blockIds)> pendingMeshJobs = new(); // Waiting for mesh completion
     readonly Queue<MeshData> meshQueue = new();  // Meshes ready to apply on main thread
 
     // =============================
@@ -230,7 +228,6 @@ public class ChunkManager : MonoBehaviour
 
             entry.handle.Complete();
 
-            if (entry.mask.IsCreated) entry.mask.Dispose();
             if (entry.blockIds.IsCreated) entry.blockIds.Dispose(); // << dispose blockIds
 
             meshQueue.Enqueue(entry.meshData);
@@ -400,7 +397,6 @@ public class ChunkManager : MonoBehaviour
         {
             density = nativeDensity,
             blockIds = blockIds,
-            isoLevel = isoLevel,
             chunkSize = chunkSize,
             startingCoord = coord,
             voxelCount = voxelCount,
@@ -511,19 +507,16 @@ public class ChunkManager : MonoBehaviour
             UV0s = new NativeList<float2>(Allocator.Persistent)
         };
 
-        var scratch = new NativeArray<FMask>(chunkSize * chunkSize, Allocator.Persistent);
-
         var job = new GreedyMeshJob
         {
             blockArray = blockIds,
             blocks = nativeBlockDatabase,
             chunkSize = chunkSize,
             meshData = meshData,
-            mask = scratch
         };
 
         JobHandle handle = job.Schedule();
-        pendingMeshJobs.Add((handle, meshData, blockIds, scratch));
+        pendingMeshJobs.Add((handle, meshData, blockIds));
         //handle.Complete();
         ChunkProfiler.MeshEnd();
     }
@@ -721,11 +714,8 @@ public class ChunkManager : MonoBehaviour
         // Complete and dispose pending jobs safely
         for (int i = pendingMeshJobs.Count - 1; i >= 0; i--)
         {
-            var (handle, meshData, blockIds, scratch) = pendingMeshJobs[i];
+            var (handle, meshData, blockIds) = pendingMeshJobs[i];
             if (!handle.IsCompleted) handle.Complete();
-
-            // Dispose scratch
-            if (scratch.IsCreated) scratch.Dispose();
 
             // Dispose blockIds — no density arrays here anymore
             if (blockIds.IsCreated)

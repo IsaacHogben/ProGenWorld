@@ -14,7 +14,6 @@ public struct BlockAssignmentJob : IJobParallelFor
 {
     [ReadOnly] public NativeArray<float> density;     // Input: noise density field
     [WriteOnly] public NativeArray<byte> blockIds;    // Output: block ID field
-    [ReadOnly] public float isoLevel;                 // Threshold for solid/air
     [ReadOnly] public int chunkSize;               // 
     [ReadOnly] public int voxelCount;               // (chunkSize + 1)^3 typically
     [ReadOnly] public int3 startingCoord;             // x,y,z of chunk
@@ -24,12 +23,12 @@ public struct BlockAssignmentJob : IJobParallelFor
         float blockDensity = density[i];
         float aboveBlockDensity = GetAboveDensity(i);
 
-        if (blockDensity > isoLevel)
+        if (blockDensity > 0)
         {
             blockIds[i] = (byte)BlockType.Air;
         }
 
-        else if (aboveBlockDensity > isoLevel)
+        else if (aboveBlockDensity > 0)
         {
             blockIds[i] = (byte)BlockType.Grass;
         }

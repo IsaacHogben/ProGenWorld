@@ -430,15 +430,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  viewDistance: 24
-  chunkSize: 32
-  isoLevel: 0
   player: {fileID: 2024416877}
   blockDatabase: {fileID: 11400000, guid: f9b2a5fcc2fa09d4caac36b7d550818c, type: 2}
+  viewDistance: 30
+  chunkSize: 32
+  isoLevel: 0
   maxConcurrentNoiseTasks: 8
   maxMeshUploadsPerFrame: 12
   scheduleInterval: 1
-  initialPoolSize: 8
+  prewarmDensity: 24
+  prewarmChunks: 3600
+  prewarmMeshes: 4200
   textureArrayBuilder: {fileID: 11400000, guid: 3f71b64aadbc3bf498224a3efb12f316, type: 2}
   voxelMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
 --- !u!114 &695623965

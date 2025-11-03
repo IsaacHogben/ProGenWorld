@@ -11,17 +11,9 @@ public class Chunk : MonoBehaviour
     public void ApplyMesh(MeshData meshData, Stack<Mesh> meshPool)
     {
         // Ensure required components
-        var mf = GetComponent<MeshFilter>();
-        if (mf == null)
-            mf = gameObject.AddComponent<MeshFilter>();
-
-        var mr = GetComponent<MeshRenderer>();
-        if (mr == null)
-            mr = gameObject.AddComponent<MeshRenderer>();
-
-        var mc = GetComponent<MeshCollider>();
-        if (mc == null)
-            mc = gameObject.AddComponent<MeshCollider>();
+        var mf = GetComponent<MeshFilter>(); if (mf == null) mf = gameObject.AddComponent<MeshFilter>(); 
+        var mr = GetComponent<MeshRenderer>(); if (mr == null) mr = gameObject.AddComponent<MeshRenderer>(); 
+        var mc = GetComponent<MeshCollider>(); if (mc == null) mc = gameObject.AddComponent<MeshCollider>();
 
         if (mr.sharedMaterial == null)
             mr.sharedMaterial = chunkMaterial;
@@ -38,6 +30,9 @@ public class Chunk : MonoBehaviour
             mesh = mf.sharedMesh;
             mesh.Clear();
         }
+
+        // Reset collider before reassigning
+        //mc.sharedMesh = null;
 
         // Allocate writable MeshData and copy directly
         var meshArray = Mesh.AllocateWritableMeshData(1);
@@ -65,7 +60,26 @@ public class Chunk : MonoBehaviour
         Mesh.ApplyAndDisposeWritableMeshData(meshArray, mesh);
         mesh.RecalculateBounds();
 
-        // Assign mesh to collider
+        // Assign to collider last (this binds physics)
         mc.sharedMesh = mesh;
+    }
+
+    public void Release(Stack<Mesh> meshPool)
+    {
+        var mf = GetComponent<MeshFilter>();
+        var mc = GetComponent<MeshCollider>();
+
+        if (mf && mf.sharedMesh)
+        {
+            // Return to pool or destroy
+            mf.sharedMesh.Clear();
+            meshPool.Push(mf.sharedMesh);
+            mf.sharedMesh = null;
+        }
+
+        if (mc)
+            mc.sharedMesh = null;
+
+        gameObject.SetActive(false);
     }
 }

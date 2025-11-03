@@ -432,15 +432,20 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
   player: {fileID: 2024416877}
   blockDatabase: {fileID: 11400000, guid: f9b2a5fcc2fa09d4caac36b7d550818c, type: 2}
-  viewDistance: 30
+  viewDistance: 12
+  maxDistanceBeforeUnload: 24
+  renderShape: 1
   chunkSize: 32
-  isoLevel: 0
-  maxConcurrentNoiseTasks: 8
+  maxChunks: 1200
+  chunkUnloadBuffer: 100
+  maxConcurrentNoiseTasks: 24
   maxMeshUploadsPerFrame: 12
-  scheduleInterval: 1
-  prewarmDensity: 24
-  prewarmChunks: 3600
-  prewarmMeshes: 4200
+  minConcurrentNoiseTasks: 2
+  minMeshUploadsPerFrame: 2
+  scheduleInterval: 0.05
+  prewarmDensity: 17
+  prewarmChunks: 1000
+  prewarmMeshes: 1000
   textureArrayBuilder: {fileID: 11400000, guid: 3f71b64aadbc3bf498224a3efb12f316, type: 2}
   voxelMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
 --- !u!114 &695623965
@@ -459,6 +464,8 @@ MonoBehaviour:
   logInterval: 60
   showOnScreen: 1
   detailed: 1
+  showMeshStats: 1
+  logMeshStats: 0
 --- !u!114 &695623966
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -724,7 +731,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a762154b5432d5d48b1a5189f4af8fc3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SpectatorController
-  moveSpeed: 30
+  moveSpeed: 90
   sprintMultiplier: 1.5
   lookSensitivity: 0.1
   verticalLookLimit: 85

@@ -21,22 +21,25 @@ public struct BlockAssignmentJob : IJobParallelFor
     public void Execute(int i)
     {
         float blockDensity = density[i];
-        float aboveBlockDensity = GetAboveDensity(i);
+        int3 index = IndexToXYZ(i);
+        float aboveBlockDensity = GetAboveDensity(index);
+        byte block;
 
         if (blockDensity > 0)
         {
-            blockIds[i] = (byte)BlockType.Air;
+            block = (byte)BlockType.Air;
         }
 
         else if (aboveBlockDensity > 0)
         {
-            blockIds[i] = (byte)BlockType.Grass;
+            block = (byte)BlockType.Grass;
         }
         else if (blockDensity < aboveBlockDensity)
-            blockIds[i] = (byte)BlockType.Dirt;
+            block = (byte)BlockType.Dirt;
         else
-            blockIds[i] = (byte)BlockType.Stone;
+            block = (byte)BlockType.Stone;
 
+        blockIds[i] = block;
     }
 
     int CoordToIndex(int x, int y, int z)
@@ -44,9 +47,8 @@ public struct BlockAssignmentJob : IJobParallelFor
         return voxelCount >= (x + y * (chunkSize + 1) + z * (chunkSize + 1) * (chunkSize + 1)) ? voxelCount : (x + y * (chunkSize + 1) + z * (chunkSize + 1) * (chunkSize + 1));
     }
 
-    float GetAboveDensity(int i)
+    float GetAboveDensity(int3 v)
     {
-        int3 v = IndexToXYZ(i);
         int r;
         if (TryGetIndex(v.x, v.y + 1, v.z, out r))
             return density[r];

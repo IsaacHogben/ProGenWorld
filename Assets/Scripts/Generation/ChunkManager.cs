@@ -83,13 +83,13 @@ public class ChunkManager : MonoBehaviour
     // =============================
 
     readonly Queue<int3> frontier = new();                    // chunks waiting to be expanded
-    readonly Dictionary<int3, OpenFaces> openFaceMap = new();  // what faces were open for each coord
+    //readonly Dictionary<int3, OpenFaces> openFaceMap = new();  // what faces were open for each coord
     readonly HashSet<int3> deferredFrontier = new();           // neighbors to expand later (out of range)
     private int3 lastPlayerChunk = int3.zero;
     private bool firstFloodTriggered = false;
 
     // Debug visualization accessors
-    public IReadOnlyDictionary<int3, OpenFaces> GetOpenFaceMap() => openFaceMap;
+    //public IReadOnlyDictionary<int3, OpenFaces> GetOpenFaceMap() => openFaceMap;
     public HashSet<int3> GetDeferredFrontier() => deferredFrontier;
 
     // =============================
@@ -209,7 +209,7 @@ public class ChunkManager : MonoBehaviour
             var faces = DetectTerrainFlowFromBlocks(it.blockIds);           // CPU VERSION Flow Fill system
             //var faces = faceDetector.DetectGPU(it.blockIds, chunkSize);   // GPU VERSION
 
-            openFaceMap[it.coord] = faces;
+            //openFaceMap[it.coord] = faces;
             //sw.Stop();
             //Debug.Log($"GPU FaceScan: {sw.Elapsed.TotalMilliseconds:F3}ms");
 
@@ -597,11 +597,11 @@ public class ChunkManager : MonoBehaviour
 
         lock (densityPool)
         {
-            if (densityPool.Count < 2 && prewarmDensity < prewarmDensity * 2)
+            if (densityPool.Count < prewarmDensity)
             {
                 var extra = new NativeArray<float>(densityCount, Allocator.Persistent);
                 densityPool.Push(extra);
-                prewarmDensity++;
+                //prewarmDensity++;
                 adjusted = true;
             }
         }
@@ -777,6 +777,41 @@ public class ChunkManager : MonoBehaviour
                 }
         }
     }
+
+    void CompleteAllJobs()
+    {
+        foreach (var (coord, handle, density, blockIds) in pendingBlockJobs.ToArray())
+        {
+            handle.Complete();
+            if (density.IsCreated) density.Dispose();
+            if (blockIds.IsCreated) blockIds.Dispose();
+        }
+        pendingBlockJobs.Clear();
+
+        // Complete and dispose pending jobs safely
+        for (int i = pendingMeshJobs.Count - 1; i >= 0; i--)
+        {
+            var (handle, meshData, blockIds) = pendingMeshJobs[i];
+            if (!handle.IsCompleted) handle.Complete();
+
+            // Dispose blockIds — no density arrays here anymore
+            if (blockIds.IsCreated)
+            {
+                blockIds.Dispose();
+            }
+
+            // Dispose mesh native lists (if not already disposed by ApplyMesh)
+            if (meshData.vertices.IsCreated) meshData.vertices.Dispose();
+            if (meshData.triangles.IsCreated) meshData.triangles.Dispose();
+            if (meshData.normals.IsCreated) meshData.normals.Dispose();
+            if (meshData.colors.IsCreated) meshData.colors.Dispose();
+            if (meshData.UV0s.IsCreated) meshData.UV0s.Dispose();
+
+            pendingMeshJobs.RemoveAt(i);
+        }
+        pendingMeshJobs.Clear();
+    }
+
     void OnDestroy()
     {
         // Complete and dispose pending jobs safely

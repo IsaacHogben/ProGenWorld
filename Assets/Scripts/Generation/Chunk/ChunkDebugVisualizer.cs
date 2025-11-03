@@ -21,24 +21,6 @@ public class ChunkDebugVisualizer : MonoBehaviour
 
         Gizmos.matrix = Matrix4x4.identity;
 
-        if (showOpenFaces)
-        foreach (var kvp in chunkManager.GetOpenFaceMap())
-        {
-            int3 coord = kvp.Key;
-            OpenFaces faces = kvp.Value;
-            Vector3 pos = chunkManager.ChunkToWorld(coord);
-            float size = chunkManager.chunkSize;
-
-            if (showChunkBounds)
-            {
-                Gizmos.color = boundsColor;
-                Gizmos.DrawWireCube(pos + Vector3.one * (size / 2f), Vector3.one * size);
-            }
-
-            Gizmos.color = faceColor;
-            DrawOpenFaces(pos, size, faces);
-        }
-
         if (showDeferredChunks)
         foreach (var c in chunkManager.GetDeferredFrontier())
         {

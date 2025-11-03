@@ -78,6 +78,9 @@ public class ChunkManager : MonoBehaviour
     private readonly List<(JobHandle handle, MeshData meshData, NativeArray<byte> blockIds)> pendingMeshJobs = new(); // Waiting for mesh completion
     readonly Queue<MeshData> meshQueue = new();  // Meshes ready to apply on main thread
 
+    // Tokens
+    CancellationTokenSource cts;
+
     // =============================
     // === FLOOD-FILL SYSTEM =======
     // =============================
@@ -119,9 +122,9 @@ public class ChunkManager : MonoBehaviour
 
     void Awake()
     {
+        cts = new CancellationTokenSource();
         // Throttle the number of concurrent noise tasks:
         noiseLimiter = new SemaphoreSlim(Math.Max(1, maxConcurrentNoiseTasks), Math.Max(1, maxConcurrentNoiseTasks));
-
         // create noise generator
         noiseGen = new NoiseGenerator(111); // adjust constructor if needed
         // create blockDatabase Native
@@ -221,7 +224,11 @@ public class ChunkManager : MonoBehaviour
             // Return density to pool
             if (it.density.IsCreated)
             {
-                lock (densityPool) densityPool.Push(it.density);
+                lock (densityPool)
+                    if (densityPool.Count < prewarmDensity)
+                        densityPool.Push(it.density);
+                    else
+                        it.density.Dispose();
             }
 
             pendingBlockJobs.RemoveAt(i);
@@ -343,19 +350,21 @@ public class ChunkManager : MonoBehaviour
             activeNoiseTasks.Add(coord);
         }
 
-        // Report count before starting task (main thread safe)
+        // Report current task count
         ChunkProfiler.ReportNoiseCount(activeNoiseTasks.Count);
 
-        // Launch background noise generation
         Task.Run(async () =>
         {
-            await noiseLimiter.WaitAsync();
-
-            var sw = new System.Diagnostics.Stopwatch();
-            sw.Start();
+            bool acquired = false;
 
             try
             {
+                await noiseLimiter.WaitAsync(cts.Token);
+                acquired = true;
+                if (cts.IsCancellationRequested) return;
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+
                 // Generate the noise — runs on worker thread
                 float[] density = noiseGen.FillDensity(coord, chunkSize, densityCount);
 
@@ -364,11 +373,13 @@ public class ChunkManager : MonoBehaviour
                 // Enqueue for mesh generation (thread-safe)
                 completedNoise.Enqueue((coord, density));
 
-                // Thread-safe store of result time
+                // Record duration for profiling
                 lock (ChunkProfilerTimes.noiseLock)
-                {
                     ChunkProfilerTimes.noiseDurations.Enqueue((float)sw.Elapsed.TotalMilliseconds);
-                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when shutting down — safe to ignore
             }
             catch (Exception ex)
             {
@@ -376,14 +387,15 @@ public class ChunkManager : MonoBehaviour
             }
             finally
             {
-                noiseLimiter.Release();
+                if (acquired)
+                    noiseLimiter.Release(); // Only release if we actually acquired
+
                 lock (activeNoiseTasks)
-                {
                     activeNoiseTasks.Remove(coord);
-                }
             }
         });
     }
+
 
     private (JobHandle handle, NativeArray<byte> blockIds) CreateBlockAssignmentJob(NativeArray<float> nativeDensity, int3 coord)
     {
@@ -777,7 +789,6 @@ public class ChunkManager : MonoBehaviour
                 }
         }
     }
-
     void CompleteAllJobs()
     {
         foreach (var (coord, handle, density, blockIds) in pendingBlockJobs.ToArray())
@@ -814,28 +825,9 @@ public class ChunkManager : MonoBehaviour
 
     void OnDestroy()
     {
-        // Complete and dispose pending jobs safely
-        for (int i = pendingMeshJobs.Count - 1; i >= 0; i--)
-        {
-            var (handle, meshData, blockIds) = pendingMeshJobs[i];
-            if (!handle.IsCompleted) handle.Complete();
-
-            // Dispose blockIds — no density arrays here anymore
-            if (blockIds.IsCreated)
-            {
-                blockIds.Dispose();
-            }
-
-            // Dispose mesh native lists (if not already disposed by ApplyMesh)
-            if (meshData.vertices.IsCreated) meshData.vertices.Dispose();
-            if (meshData.triangles.IsCreated) meshData.triangles.Dispose();
-            if (meshData.normals.IsCreated) meshData.normals.Dispose();
-            if (meshData.colors.IsCreated) meshData.colors.Dispose();
-            if (meshData.UV0s.IsCreated) meshData.UV0s.Dispose();
-
-            pendingMeshJobs.RemoveAt(i);
-        }
-
+        CompleteAllJobs();
+        cts?.Cancel(); // Cancels async task that was not able to be jobified (NoiseGen, )
+        cts?.Dispose();
         // Dispose any leftover pooled density arrays
         lock (densityPool)
         {

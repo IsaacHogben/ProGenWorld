@@ -432,7 +432,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
   player: {fileID: 2024416877}
   blockDatabase: {fileID: 11400000, guid: f9b2a5fcc2fa09d4caac36b7d550818c, type: 2}
-  viewDistance: 20
+  viewDistance: 16
   maxDistanceBeforeUnload: 30
   renderShape: 1
   chunkSize: 32

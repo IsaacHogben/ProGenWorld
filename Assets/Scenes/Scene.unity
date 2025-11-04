@@ -433,16 +433,18 @@ MonoBehaviour:
   player: {fileID: 2024416877}
   blockDatabase: {fileID: 11400000, guid: f9b2a5fcc2fa09d4caac36b7d550818c, type: 2}
   viewDistance: 16
-  maxDistanceBeforeUnload: 30
+  maxDistanceBeforeUnload: 39
   renderShape: 1
   chunkSize: 32
-  maxChunks: 3400
+  unloadAtMaxChunks: 0
+  maxChunks: 4400
   chunkUnloadBuffer: 400
   maxConcurrentNoiseTasks: 24
   maxMeshUploadsPerFrame: 12
   minConcurrentNoiseTasks: 2
   minMeshUploadsPerFrame: 2
   scheduleInterval: 0.05
+  maxDensityPool: 32
   prewarmDensity: 24
   prewarmChunks: 3400
   prewarmMeshes: 3400
@@ -473,7 +475,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 695623961}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: edc89bafeb2d56a46a1706794e2b5353, type: 3}
   m_Name: 
@@ -482,7 +484,7 @@ MonoBehaviour:
   faceOffset: 0.1
   showOpenFaces: 0
   showChunkBounds: 0
-  showDeferredChunks: 0
+  showDeferredChunks: 1
   boundsColor: {r: 0.9920671, g: 1, b: 0, a: 0.4}
   faceColor: {r: 1, g: 0.3, b: 0.3, a: 0.7}
   deferredChunkColor: {r: 0, g: 1, b: 0.94636536, a: 0.7}

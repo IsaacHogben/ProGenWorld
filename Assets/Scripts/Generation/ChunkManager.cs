@@ -23,6 +23,7 @@ public class ChunkManager : MonoBehaviour
     public int maxDistanceBeforeUnload = 3; // Chunk unload fallback - Chunk unloading is mostly determined by max chunks - culls chunks in fringe cases and handles frontier
     [SerializeField] private RenderShape renderShape = RenderShape.Sphere;
     public int chunkSize = 32;              // Logical voxel count per axis (mesh uses chunkSize)
+    public bool unloadAtMaxChunks = false;
     [SerializeField] int maxChunks;         // Max chunks loaded before most distant chunks begin to unload
     [SerializeField] int chunkUnloadBuffer; // How many more chunks than max before chunk unload begins - prevents chunk flicker
 
@@ -45,6 +46,7 @@ public class ChunkManager : MonoBehaviour
 
     [Header("Pre-allocation tuning")]
     // Configurable pool sizes (tweakable)
+    [SerializeField] int maxDensityPool = 32;
     [SerializeField] int prewarmDensity = 8;  // Initial pooled native arrays - Increase if allocations appear in Profiler. Reduce if memory stays flat but half the pool never gets used.
     [SerializeField] int prewarmChunks = 200;
     [SerializeField] int prewarmMeshes = 400;
@@ -85,9 +87,10 @@ public class ChunkManager : MonoBehaviour
     // === FLOOD-FILL SYSTEM =======
     // =============================
 
-    readonly Queue<int3> frontier = new();                    // chunks waiting to be expanded
-    //readonly Dictionary<int3, OpenFaces> openFaceMap = new();  // what faces were open for each coord
-    readonly HashSet<int3> deferredFrontier = new();           // neighbors to expand later (out of range)
+    readonly Queue<int3> frontier = new();                      // chunks waiting to be expanded
+    readonly HashSet<int3> frontierSet = new();                 // hash set for duplication checks
+    //readonly Dictionary<int3, OpenFaces> openFaceMap = new(); // what faces were open for each coord
+    readonly HashSet<int3> deferredFrontier = new();            // neighbors to expand later (out of range)
     private int3 lastPlayerChunk = int3.zero;
     private bool firstFloodTriggered = false;
 
@@ -172,6 +175,8 @@ public class ChunkManager : MonoBehaviour
             firstFloodTriggered = true;
             // Re-prioritize work for the new center
             PromoteDeferredToFrontier(currentPlayerChunk);
+            // Stop any chunk block job that fell out of view range before they could finish
+            CullPendingBlockJobs(currentPlayerChunk);
             // Kick a scheduling tick immediately so promoted items start right away
             ScheduleVisibleChunksFloodFill();
         }
@@ -225,10 +230,12 @@ public class ChunkManager : MonoBehaviour
             if (it.density.IsCreated)
             {
                 lock (densityPool)
-                    if (densityPool.Count < prewarmDensity)
+                {
+                    if (densityPool.Count < Mathf.Min(prewarmDensity, maxDensityPool))
                         densityPool.Push(it.density);
                     else
                         it.density.Dispose();
+                }
             }
 
             pendingBlockJobs.RemoveAt(i);
@@ -256,7 +263,7 @@ public class ChunkManager : MonoBehaviour
             uploads++;
         }
 
-        if (Time.frameCount % 30 == 0) UnloadChunks(currentPlayerChunk);
+        if (Time.frameCount % 120 == 0) UnloadChunks(currentPlayerChunk);
 
         AdaptivePerformanceControl();
     }
@@ -270,13 +277,9 @@ public class ChunkManager : MonoBehaviour
         int cap = Math.Max(1, maxConcurrentNoiseTasks);
 
         // pull up to 'cap' coords from frontier, respecting range/existence
-        while (frontier.Count > 0 && spawnedThisTick < cap)
+        while (spawnedThisTick < cap && TryDequeueFrontier(out var coord))
         {
-            var coord = frontier.Dequeue();
-
-            if (chunks.ContainsKey(coord) || generating.Contains(coord))
-                continue; // already have / in-flight
-
+            if (chunks.ContainsKey(coord) || generating.Contains(coord)) continue;
             generating.Add(coord);
             spawnedThisTick++;
             ScheduleNoiseTask(coord);
@@ -310,8 +313,9 @@ public class ChunkManager : MonoBehaviour
 
             if (IsChunkWithinRenderRange(n, center, viewDistance))
             {
-                if (!frontier.Contains(n))
-                    frontier.Enqueue(n);
+                /*if (!frontier.Contains(n))
+                    frontier.Enqueue(n);*/
+                EnqueueFrontier(n);
             }
             else
             {
@@ -337,7 +341,7 @@ public class ChunkManager : MonoBehaviour
 
         foreach (var c in toPromote)
         {
-            frontier.Enqueue(c);
+            EnqueueFrontier(c);
             deferredFrontier.Remove(c);
         }
     }
@@ -609,13 +613,8 @@ public class ChunkManager : MonoBehaviour
 
         lock (densityPool)
         {
-            if (densityPool.Count < prewarmDensity)
-            {
-                var extra = new NativeArray<float>(densityCount, Allocator.Persistent);
-                densityPool.Push(extra);
-                //prewarmDensity++;
-                adjusted = true;
-            }
+            while (densityPool.Count < Mathf.Min(prewarmDensity, maxDensityPool))
+                densityPool.Push(new NativeArray<float>(densityCount, Allocator.Persistent));
         }
 
         if (adjusted)
@@ -644,10 +643,11 @@ public class ChunkManager : MonoBehaviour
                         continue;
 
                     // skip if already in frontier
-                    if (frontier.Contains(coord))
+                    /*if (frontier.Contains(coord))
                         continue;
 
-                    frontier.Enqueue(coord);
+                    frontier.Enqueue(coord);*/
+                    EnqueueFrontier(coord);
                 }
 
         // Immediately run a flood-fill tick (respects throttling)
@@ -657,7 +657,7 @@ public class ChunkManager : MonoBehaviour
     // Unloads chunks when the number of chunks in play exeeds the maxChunks value. Unloads based on furtheset distance from player
     void UnloadChunks(int3 currentPlayerChunk)
     {
-        if (chunks.Count < maxChunks + chunkUnloadBuffer)
+        if (chunks.Count < maxChunks + chunkUnloadBuffer || unloadAtMaxChunks) 
         {
             bool chunksExistAtMaxDistance = false;
 
@@ -686,13 +686,10 @@ public class ChunkManager : MonoBehaviour
             return; 
         }
 
-        var playerPos = player.transform.position;
-
         // Sort by distance to player
         var sortedChunks = chunks
             .OrderBy(kv => -GetChunkDistanceWithRenderShape(kv.Key, currentPlayerChunk)) // Sort by furtheset from player
             .ToList();
-
 
         foreach (var kvp in sortedChunks)
         {
@@ -710,6 +707,34 @@ public class ChunkManager : MonoBehaviour
     // =============================
     // ===== HELPER FUNCTIONS ======
     // =============================
+    void EnqueueFrontier(int3 c)
+    {
+        if (frontierSet.Add(c)) frontier.Enqueue(c);
+    }
+    bool TryDequeueFrontier(out int3 c)
+    {
+        while (frontier.Count > 0)
+        {
+            c = frontier.Dequeue();
+            if (frontierSet.Remove(c)) return true; // real item
+        }
+        c = default; return false;
+    }
+    void CullPendingBlockJobs(int3 center)
+    {
+        for (int i = pendingBlockJobs.Count - 1; i >= 0; --i)
+        {
+            var it = pendingBlockJobs[i];
+            if (!IsChunkWithinRenderRange(it.coord, center, viewDistance + 1)) // small buffer
+            {
+                it.handle.Complete();
+                if (it.density.IsCreated) it.density.Dispose();
+                if (it.blockIds.IsCreated) it.blockIds.Dispose();
+                pendingBlockJobs.RemoveAt(i);
+                generating.Remove(it.coord);
+            }
+        }
+    }
     void ReleaseChunk(int3 coord)
     {
         deferredFrontier.Add(coord); // If a chunk is removed it must then become a new frontier for terrain generation
@@ -822,7 +847,6 @@ public class ChunkManager : MonoBehaviour
         }
         pendingMeshJobs.Clear();
     }
-
     void OnDestroy()
     {
         CompleteAllJobs();

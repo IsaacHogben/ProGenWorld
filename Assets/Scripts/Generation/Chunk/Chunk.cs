@@ -22,14 +22,23 @@ public class Chunk : MonoBehaviour
         Mesh mesh;
         if (mf.sharedMesh == null)
         {
-            mesh = meshPool.Count > 0 ? meshPool.Pop() : new Mesh { indexFormat = IndexFormat.UInt32 };
+            mesh = (meshPool.Count > 0 ? meshPool.Pop() : null);
+
+            // Guard against accidentally pooled nulls
+            if (mesh == null)
+                mesh = new Mesh { indexFormat = IndexFormat.UInt32 };
+
+            mesh.Clear(false);
+            mesh.UploadMeshData(false); // ensure GPU buffers are ready
             mf.sharedMesh = mesh;
         }
         else
         {
             mesh = mf.sharedMesh;
-            mesh.Clear();
+            mesh.Clear(false);
+            mesh.UploadMeshData(false);
         }
+
 
         // Reset collider before reassigning
         //mc.sharedMesh = null;
@@ -72,13 +81,21 @@ public class Chunk : MonoBehaviour
         if (mf && mf.sharedMesh)
         {
             // Return to pool or destroy
-            mf.sharedMesh.Clear();
-            meshPool.Push(mf.sharedMesh);
-            mf.sharedMesh = null;
+            var mesh = mf.sharedMesh;
+            if (mesh != null)
+            {
+                mesh.Clear(false);          // false = do not keep vertex layout
+                mesh.UploadMeshData(false); // forces release of GPU buffers
+                meshPool.Push(mesh);
+                mf.sharedMesh = null;
+            }
         }
 
-        if (mc)
+        if (mc && mc.sharedMesh != null)
+        {
+            Destroy(mc.sharedMesh);
             mc.sharedMesh = null;
+        }
 
         gameObject.SetActive(false);
     }

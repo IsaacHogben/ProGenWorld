@@ -48,8 +48,7 @@ public struct GreedyMeshJob : IJob
 
     public void AGenerateMesh(NativeArray<FMask> mask)
     {
-        // Debug.Log($"Blocks array accessed. Num elements: {Blocks[99]}");
-        int Lod = 1;
+        chunkSize /= meshData.stride;
         // Sweep over each axis (X, Y, Z)
         for (int axis = 0; axis < 3; ++axis)
         {
@@ -57,9 +56,9 @@ public struct GreedyMeshJob : IJob
             int axis1 = (axis + 1) % 3;
             int axis2 = (axis + 2) % 3;
 
-            int mainAxisLimit = chunkSize / Lod;
-            int axis1Limit = chunkSize / Lod;
-            int axis2Limit = chunkSize / Lod;
+            int mainAxisLimit = chunkSize;
+            int axis1Limit = chunkSize;
+            int axis2Limit = chunkSize;
 
             int3 deltaAxis1 = int3.zero;
             int3 deltaAxis2 = int3.zero;
@@ -69,11 +68,11 @@ public struct GreedyMeshJob : IJob
 
             axisMask[axis] = 1;
 
-            // This change prevents overlapping faces on high lod chunks
-            int lodModifiedi = Lod != 1 ? -1 : 0;
+            // This change prevents overlapping faces on high lod chunks - Incomplete
+            int lodModifiedi = meshData.stride != 1 ? -1 : 0;
 
             // Check each slice of the chunk
-            for (chunkItr[axis] = lodModifiedi; chunkItr[axis] < mainAxisLimit;)
+            for (chunkItr[axis] = 0; chunkItr[axis] < mainAxisLimit;)
             {
                 int n = 0;
 
@@ -191,12 +190,12 @@ public struct GreedyMeshJob : IJob
 
         // apply vertex colour here if able 
         float4 color = new float4(mask.Block, 0, 0, 1);
-
+        float3 s = new float3(meshData.stride);
         // Append vertices
-        meshData.vertices.Add(v1);
-        meshData.vertices.Add(v2);
-        meshData.vertices.Add(v3);
-        meshData.vertices.Add(v4);
+        meshData.vertices.Add(v1 * s);
+        meshData.vertices.Add(v2 * s);
+        meshData.vertices.Add(v3 * s);
+        meshData.vertices.Add(v4 * s);
 
         // Append triangles
         meshData.triangles.Add(vertexCount);

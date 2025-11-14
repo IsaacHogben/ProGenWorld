@@ -6,31 +6,47 @@ using Unity.Mathematics;
 public class NoiseGenerator
 {
     private FastNoise noise;
+    private int seed;
 
-    public NoiseGenerator(int seed = 1337)
+    public NoiseGenerator(int inSeed)
     {
+        seed = inSeed;
         //noise = FastNoise.FromEncodedNodeTree("DQAGAAAAAAAAQBAAAAAAPwcAAJqZmT4AKVwPPwCPwvW+");
-        //noise = FastNoise.FromEncodedNodeTree("EwCamRk/EQACAAAAAAAgQBAAexSuPhkAGQATAB+F6z8lAAAAgD/D9eg/AACAPwAAgD8RAAMAAABI4fo/EAAK12NADQADAAAAAAAAQBAAAAAAPwcAAJqZmT4AKVwPPwDXo3A/AM3MzD0AzcyMPwAUrgdAAQAAj8J1PQEEAAAAAABcj4I/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHsULj8AMzMzPwAAAAA/");
+        noise = FastNoise.FromEncodedNodeTree("HgAEAAAAAAB7FO4/AAAAAAAAAAAAAAAAAAAAvwAAAAAAAAAAARsAEQACAAAAAAAgQBAAAAAAQBkAEwDD9Sg/DQAEAAAAAAAgQAkAAGZmJj8AAAAAPwEEAAAAAAAAAEBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM3MTD4AMzMzPwAfhWtAARoAARMAKVwvQAwABAAAAK5HYT7//wMAAEjhej8A7FG4vg==");
         //noise = new FastNoise("FractalFBm");
-        noise = FastNoise.FromEncodedNodeTree("EwDNzMw+EQACAAAAAAAAQBAAexSuPhkAGQATAB+F6z8lAAAAgD/D9eg/AACAPwAAgD8RAAQAAACuRwFAEAAK12NADQADAAAAAAAAQBAAAAAAPwcAAJqZmT4AKVwPPwDXo3A/AM3MzD0AzcyMPwAUrgdAAQAAj8J1PQEEAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHsULj8AMzMzPwAAAAA/");
+        //noise = FastNoise.FromEncodedNodeTree("EwDNzMw+EQACAAAAAAAAQBAAexSuPhkAGQATAB+F6z8lAAAAgD/D9eg/AACAPwAAgD8RAAQAAACuRwFAEAAK12NADQADAAAAAAAAQBAAAAAAPwcAAJqZmT4AKVwPPwDXo3A/AM3MzD0AzcyMPwAUrgdAAQAAj8J1PQEEAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHsULj8AMzMzPwAAAAA/");
         //noise = FastNoise.FromEncodedNodeTree("IQAZABMArkfhPyUAAACAP8P16D8AAIA/AACAPxEABAAAAK5HAUAQAArXY0ANAAMAAAAAAABAEAAAAAA/BwAAmpmZPgApXA8/ANejcD8AzczMPQDNzIw/ABSuB0ABEwBcj0I/EAB7FK4+JwABAAAA//8BAACuR+FABAAAAAAAuB6FPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACuR+G+");
     }
 
-    public float[] FillDensity(int3 chunkCoord, int chunkSize, int voxelCount)
+    public float[] FillDensity(int3 chunkCoord, int chunkSize, int voxelCount, int stride)
     {
         if (noise == null)
             throw new System.Exception("Noise not initialized");
-        float[] noiseOut = new float[voxelCount];
-        //int index = 0;
 
-        int3 worldPos = (chunkCoord * chunkSize);
-        //density[index++] = noise.GenSingle3D(worldPos.x, worldPos.y, worldPos.z, 1337);
-        noise.GenUniformGrid3D(noiseOut, worldPos.x, worldPos.y, worldPos.z, chunkSize + 1, chunkSize + 1, chunkSize + 1, 0.009f, 1337);
+        // each LOD has fewer samples per axis
+        int scaledSize = (chunkSize / stride);
+        int scaledVoxelCount = (scaledSize + 1) * (scaledSize + 1) * (scaledSize + 1);
+
+        float[] noiseOut = new float[scaledVoxelCount];
+
+        int3 worldPos = (chunkCoord * chunkSize) / stride;
+
+        // scale frequency up to stretch the same area of the noise field
+        // this keeps world alignment consistent between LODs
+        float frequency = 0.002f * stride;
+
+        noise.GenUniformGrid3D(
+            noiseOut,
+            worldPos.x,
+            worldPos.y,
+            worldPos.z,
+            scaledSize + 1,
+            scaledSize + 1,
+            scaledSize + 1,
+            frequency,
+            seed
+        );
+
         return noiseOut;
-        /*for (int i = 0; i < voxelCount; i++) 
-        {
-            density[i] = noiseOut[i]; 
-        }*/
-
     }
 }

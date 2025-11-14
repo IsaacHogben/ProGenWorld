@@ -26,6 +26,16 @@ public class ChunkManager : MonoBehaviour
     public bool unloadAtMaxChunks = false;
     [SerializeField] int maxChunks;         // Max chunks loaded before most distant chunks begin to unload
     [SerializeField] int chunkUnloadBuffer; // How many more chunks than max before chunk unload begins - prevents chunk flicker
+    public int seed = 1337;
+
+    [Header("LOD Settings")]
+    [SerializeField] float nearRange = 4f;
+    [SerializeField] float midRange = 10f;
+    [SerializeField] float farRange = 20f;
+
+    [SerializeField] Material nearMaterial;
+    [SerializeField] Material midMaterial;
+    [SerializeField] Material farMaterial;
 
     // Derived values
     int densityCount => (chunkSize + 1) * (chunkSize + 1) * (chunkSize + 1); // using +1 border pattern
@@ -69,14 +79,15 @@ public class ChunkManager : MonoBehaviour
     // Internal chunk tracking
     readonly Dictionary<int3, Chunk> chunks = new();
     readonly HashSet<int3> generating = new();   // coords reserved for generation or meshing
+    readonly Dictionary<LODLevel, LODSettings> lodConfigs = new();
 
     // Threading / queues
-    readonly ConcurrentQueue<(int3 coord, float[] density)> completedNoise = new();
+    readonly ConcurrentQueue<(int3 coord, float[] density, LODLevel lod)> completedNoise = new();
     SemaphoreSlim noiseLimiter = null;
     readonly HashSet<int3> activeNoiseTasks = new();
 
     // Job handles and pending work
-    private readonly List<(int3 coord, JobHandle handle, NativeArray<float> density, NativeArray<byte> blockIds)> pendingBlockJobs = new(); // Waiting for block ID generation
+    private readonly List<(int3 coord, JobHandle handle, NativeArray<float> density, NativeArray<byte> blockIds, LODLevel lod)> pendingBlockJobs = new(); // Waiting for block ID generation
     private readonly List<(JobHandle handle, MeshData meshData, NativeArray<byte> blockIds)> pendingMeshJobs = new(); // Waiting for mesh completion
     readonly Queue<MeshData> meshQueue = new();  // Meshes ready to apply on main thread
 
@@ -89,6 +100,13 @@ public class ChunkManager : MonoBehaviour
 
     readonly Queue<int3> frontier = new();                      // chunks waiting to be expanded
     readonly HashSet<int3> frontierSet = new();                 // hash set for duplication checks
+    struct LodUpdateToken
+    {
+        public int3 coord;
+        public LODLevel lod;
+    }
+    readonly Queue<LodUpdateToken> lodUpdate = new();           // chunks waiting to have lod updated
+    readonly HashSet<int3> lodUpdateSet = new();                // hash set for duplication checks
     //readonly Dictionary<int3, OpenFaces> openFaceMap = new(); // what faces were open for each coord
     readonly HashSet<int3> deferredFrontier = new();            // neighbors to expand later (out of range)
     private int3 lastPlayerChunk = int3.zero;
@@ -129,7 +147,7 @@ public class ChunkManager : MonoBehaviour
         // Throttle the number of concurrent noise tasks:
         noiseLimiter = new SemaphoreSlim(Math.Max(1, maxConcurrentNoiseTasks), Math.Max(1, maxConcurrentNoiseTasks));
         // create noise generator
-        noiseGen = new NoiseGenerator(111); // adjust constructor if needed
+        noiseGen = new NoiseGenerator(seed);
         // create blockDatabase Native
         nativeBlockDatabase = blockDatabase.ToNative(Allocator.Persistent);
         // load texture array
@@ -137,6 +155,10 @@ public class ChunkManager : MonoBehaviour
         // create openfacedetector (Can be moved to a computeShaderManager when we are using more)
         faceDetector = new OpenFaceDetector(ref nativeBlockDatabase);
         PrewarmPools();
+        //Define LODs
+        lodConfigs[LODLevel.Near] = new LODSettings { stride = 1, detailedBlocks = true, material = voxelMaterial };
+        lodConfigs[LODLevel.Mid] = new LODSettings { stride = 2, detailedBlocks = false, material = midMaterial };
+        lodConfigs[LODLevel.Far] = new LODSettings { stride = 4, detailedBlocks = false, material = farMaterial };
     }
 
     void Start()
@@ -144,8 +166,8 @@ public class ChunkManager : MonoBehaviour
         // Seed frontier at the player's current chunk
         var playerPos = player.transform.position;
         int3 playerChunk = WorldToChunkCoord(playerPos);
-        //frontier.Enqueue(playerChunk);
-        ReSeedFloodFrontier(playerChunk, 3);
+
+        ReSeedFloodFrontier(playerChunk, 2);
     }
 
     void Update()
@@ -162,7 +184,7 @@ public class ChunkManager : MonoBehaviour
             lastScheduleTime = Time.time;
 
             if (frontier.Count > 0) 
-                ScheduleVisibleChunksFloodFill();
+                ScheduleNoiseTask();
         }
 
         // --- Flood-fill activation when entering new chunk ---
@@ -173,34 +195,28 @@ public class ChunkManager : MonoBehaviour
         {
             lastPlayerChunk = currentPlayerChunk;
             firstFloodTriggered = true;
-            // Re-prioritize work for the new center
-            PromoteDeferredToFrontier(currentPlayerChunk);
-            // Stop any chunk block job that fell out of view range before they could finish
-            CullPendingBlockJobs(currentPlayerChunk);
-            // Kick a scheduling tick immediately so promoted items start right away
-            ScheduleVisibleChunksFloodFill();
+            PlayerMovedChunks(currentPlayerChunk);
         }
         // Manage completed noise tasks, schedules block assignment
         while (completedNoise.TryDequeue(out var data))
         {
             // pull an array from pool
-            NativeArray<float> nativeDensity;
-            lock (densityPool)
+            NativeArray<float> nativeDensity = new NativeArray<float>(data.density.Length, Allocator.Persistent);
+            /*lock (densityPool)
             {
                 nativeDensity = densityPool.Count > 0
                     ? densityPool.Pop()
-                    : new NativeArray<float>(densityCount, Allocator.Persistent);
-            }
+                    : new NativeArray<float>(densityCount, Allocator.Persistent); // Doesnt reduce array size at lower LOD!
+            }*/
 
             nativeDensity.CopyFrom(data.density);
 
             // schedule block assignment async and track it
-            var (handle, blockIds) = CreateBlockAssignmentJob(nativeDensity, data.coord);
-            pendingBlockJobs.Add((data.coord, handle, nativeDensity, blockIds));
+            var (handle, blockIds) = CreateBlockAssignmentJob(nativeDensity, data.coord, lodConfigs[data.lod].stride);
+            pendingBlockJobs.Add((data.coord, handle, nativeDensity, blockIds, data.lod));
 
             // allow scheduling that coord again later
             lock (activeNoiseTasks) activeNoiseTasks.Remove(data.coord);
-
         }
 
         // Check block assignment jobs
@@ -214,17 +230,16 @@ public class ChunkManager : MonoBehaviour
             // Testing chunk flood fill system with compute shaders and other approaches
             //var sw = System.Diagnostics.Stopwatch.StartNew();             // Stopwatch      
             //var faces = DetectOpenFacesFromBlocks(it.blockIds);           // CPU VERSION
-            var faces = DetectTerrainFlowFromBlocks(it.blockIds);           // CPU VERSION Flow Fill system
+            var faces = DetectTerrainFlowFromBlocks(it.blockIds, it.lod);           // CPU VERSION Flow Fill system
             //var faces = faceDetector.DetectGPU(it.blockIds, chunkSize);   // GPU VERSION
 
-            //openFaceMap[it.coord] = faces;
             //sw.Stop();
             //Debug.Log($"GPU FaceScan: {sw.Elapsed.TotalMilliseconds:F3}ms");
 
             ExpandFrontierFromFaces(it.coord, faces);
 
             // Mesh scheduling now uses blockIds
-            ScheduleGreedyMeshJob(it.coord, it.blockIds);
+            ScheduleGreedyMeshJob(it.coord, it.blockIds, it.lod);
 
             // Return density to pool
             if (it.density.IsCreated)
@@ -268,22 +283,73 @@ public class ChunkManager : MonoBehaviour
         AdaptivePerformanceControl();
     }
 
-    // flood-fill scheduler (closest-first implicitly due to frontier expansion pattern)
-    void ScheduleVisibleChunksFloodFill()
+    private void PlayerMovedChunks(int3 currentPlayerChunk)
     {
-        if (player == null || frontier.Count == 0) return;
+        Debug.Log(currentPlayerChunk);
+        // Re-prioritize work for the new center
+        PromoteDeferredToFrontier(currentPlayerChunk);
+        // Stop any chunk block job that fell out of view range before they could finish
+        CullPendingBlockJobs(currentPlayerChunk);
+        // lod
+        UpdateChunkLods(currentPlayerChunk, 30);
+        // Kick a scheduling tick immediately so promoted items start right away
+        ScheduleNoiseTask();
+    }
+    void UpdateChunkLods(int3 playerChunk, int maxPromotionsPerFrame)
+    {
+        // priority queue buckets: small to large stride means higher priority
+        List<int3> toPromoteNear = new(32);  // highest priority (stride 2 1)
+        List<int3> toPromoteMid = new(32);  // mid priority (stride 4 2)
+        //List<int3> toPromote3 = new(32);  // lowest
+
+        foreach (var kv in chunks)
+        {
+            var coord = kv.Key;
+            var chunk = kv.Value;
+            if (chunk == null) continue;
+
+            //var lod = ;
+            var desiredLod = GetLODForCoord(coord, playerChunk);
+            var chunkLod = chunk.lod;
+            if (desiredLod == chunkLod)
+                continue;
+
+            // Promote only (never lower LOD) ----------- Change to here if we want LOD's to downgrade as well
+            if (desiredLod < chunkLod)
+            {
+                if (chunkLod == LODLevel.Mid) EnqueueLodUpdate(kv.Key, LODLevel.Near); //toPromoteNear.Add(kv.Key);
+                else if (chunkLod == LODLevel.Far) EnqueueLodUpdate(kv.Key, LODLevel.Mid);
+                //else if (cs == 8) toPromote3.Add(kv.Key);
+            }
+        }
+    }
+
+    // flood-fill scheduler (closest-first implicitly due to frontier expansion pattern)
+    void ScheduleNoiseTask()
+    {
+        if (player == null) return;
 
         int spawnedThisTick = 0;
         int cap = Math.Max(1, maxConcurrentNoiseTasks);
 
-        // pull up to 'cap' coords from frontier, respecting range/existence
-        while (spawnedThisTick < cap && TryDequeueFrontier(out var coord))
-        {
-            if (chunks.ContainsKey(coord) || generating.Contains(coord)) continue;
-            generating.Add(coord);
-            spawnedThisTick++;
-            ScheduleNoiseTask(coord);
-        }
+        if (lodUpdate.Count != 0)
+            while (spawnedThisTick < cap && TryDequeueLodUpdate(out var lodUpdateToken))
+            {
+                if (!chunks.ContainsKey(lodUpdateToken.coord)) continue;
+                generating.Add(lodUpdateToken.coord);
+                spawnedThisTick++;
+                CreateAsyncNoiseTask(lodUpdateToken.coord, lodUpdateToken.lod);
+            }
+        
+        if (frontier.Count != 0)
+            while (spawnedThisTick < cap && TryDequeueFrontier(out var coord))
+            {
+                if (chunks.ContainsKey(coord) || generating.Contains(coord)) continue;
+                generating.Add(coord);
+                spawnedThisTick++;
+                LODLevel lod = GetLODForCoord(coord, WorldToChunkCoord(player.transform.position));
+                CreateAsyncNoiseTask(coord, lod);
+            }
     }
 
     void ExpandFrontierFromFaces(int3 coord, OpenFaces faces)
@@ -345,12 +411,14 @@ public class ChunkManager : MonoBehaviour
             deferredFrontier.Remove(c);
         }
     }
-
-    void ScheduleNoiseTask(int3 coord)
+    void CreateAsyncNoiseTask(int3 coord, LODLevel lod)
     {
-        lock (activeNoiseTasks)
+        LODSettings lodSettings = lodConfigs[lod];
+
+        lock (activeNoiseTasks) // Does not schedual task if it is alread active
         {
-            if (activeNoiseTasks.Contains(coord)) return;
+            if (activeNoiseTasks.Contains(coord))
+                return;
             activeNoiseTasks.Add(coord);
         }
 
@@ -370,12 +438,12 @@ public class ChunkManager : MonoBehaviour
                 var sw = System.Diagnostics.Stopwatch.StartNew();
 
                 // Generate the noise — runs on worker thread
-                float[] density = noiseGen.FillDensity(coord, chunkSize, densityCount);
+                float[] density = noiseGen.FillDensity(coord, chunkSize, densityCount, lodSettings.stride);
 
                 sw.Stop();
 
                 // Enqueue for mesh generation (thread-safe)
-                completedNoise.Enqueue((coord, density));
+                completedNoise.Enqueue((coord, density, lod));
 
                 // Record duration for profiling
                 lock (ChunkProfilerTimes.noiseLock)
@@ -399,29 +467,23 @@ public class ChunkManager : MonoBehaviour
             }
         });
     }
-
-
-    private (JobHandle handle, NativeArray<byte> blockIds) CreateBlockAssignmentJob(NativeArray<float> nativeDensity, int3 coord)
+    private (JobHandle handle, NativeArray<byte> blockIds) CreateBlockAssignmentJob(NativeArray<float> nativeDensity, int3 coord, int stride)
     {
-        int voxelCount = (chunkSize + 1) * (chunkSize + 1) * (chunkSize + 1);
+        int chunkLodSize = chunkSize / stride;
+        int voxelCount = (chunkLodSize + 1) * (chunkLodSize + 1) * (chunkLodSize + 1);
         var blockIds = new NativeArray<byte>(voxelCount, Allocator.Persistent);
 
         var job = new BlockAssignmentJob
         {
             density = nativeDensity,
             blockIds = blockIds,
-            chunkSize = chunkSize,
+            chunkSize = chunkLodSize,
             startingCoord = coord,
-            voxelCount = voxelCount,
-            //solidBlockId = 1, // change if you want (e.g. Stone)
-            //airBlockId = 0 // Air
         };
 
         var handle = job.Schedule(voxelCount, 64); // async, no Complete()
         return (handle, blockIds);
     }
-
-    // face scan on +1 density buffer
     private OpenFaces DetectOpenFacesFromBlocks(NativeArray<byte> blockIds)
     {
         OpenFaces flags = OpenFaces.None;
@@ -449,62 +511,70 @@ public class ChunkManager : MonoBehaviour
 
         return flags;
     }
-
-    // face scan on +1 density buffer
-    private OpenFaces DetectTerrainFlowFromBlocks(NativeArray<byte> blockIds)
+    private OpenFaces DetectTerrainFlowFromBlocks(NativeArray<byte> blockIds, LODLevel lod)
     {
-        OpenFaces flags = OpenFaces.None;
-        int s = chunkSize + 1;
+        // determine stride based on LOD
+        int stride = lod switch
+        {
+            LODLevel.Near => 1,
+            LODLevel.Mid => 2,
+            LODLevel.Far => 4,
+            _ => 1
+        };
 
-        bool IsSolid(int x, int y, int z) =>
-            blockIds[x + y * s + z * s * s] != 0; // non-air = solid
+        int s = (chunkSize / stride) + 1;
+        OpenFaces flags = OpenFaces.None;
+
+        bool IsSolid(int x, int y, int z)
+            => blockIds[x + y * s + z * s * s] != 0; // non-air = solid
 
         bool FaceExposed(Func<int, int, bool> test)
         {
             bool sawSolid = false;
             bool sawAir = false;
 
-            for (int i = 0; i < s; i++)
+            // sample every Nth voxel depending on LOD stride
+            for (int i = 0; i < s; i += stride)
             {
-                for (int j = 0; j < s; j++)
+                for (int j = 0; j < s; j += stride)
                 {
                     bool solid = test(i, j);
                     if (solid) sawSolid = true; else sawAir = true;
 
-                    if (sawSolid && sawAir) return true; // ? mixed ? exposed
+                    if (sawSolid && sawAir)
+                        return true; // mixed = exposed
                 }
             }
-            return false; // fully solid or fully air ? not exposed
+            return false; // fully solid or fully air = not exposed
         }
 
-        // +X: (s-1, y, z)
+        // +X
         if (FaceExposed((y, z) => IsSolid(s - 1, y, z)))
             flags |= OpenFaces.PosX;
 
-        // -X: (0, y, z)
+        // -X
         if (FaceExposed((y, z) => IsSolid(0, y, z)))
             flags |= OpenFaces.NegX;
 
-        // +Y: (x, s-1, z)
+        // +Y
         if (FaceExposed((x, z) => IsSolid(x, s - 1, z)))
             flags |= OpenFaces.PosY;
 
-        // -Y: (x, 0, z)
+        // -Y
         if (FaceExposed((x, z) => IsSolid(x, 0, z)))
             flags |= OpenFaces.NegY;
 
-        // +Z: (x, y, s-1)
+        // +Z
         if (FaceExposed((x, y) => IsSolid(x, y, s - 1)))
             flags |= OpenFaces.PosZ;
 
-        // -Z: (x, y, 0)
+        // -Z
         if (FaceExposed((x, y) => IsSolid(x, y, 0)))
             flags |= OpenFaces.NegZ;
 
         return flags;
     }
-
-    void ScheduleGreedyMeshJob(int3 coord, NativeArray<byte> blockIds)
+    void ScheduleGreedyMeshJob(int3 coord, NativeArray<byte> blockIds, LODLevel lod)
     {
         ChunkProfiler.MeshStart(); // Wont track an async job. Add handle.Complete() to profile
 
@@ -515,7 +585,9 @@ public class ChunkManager : MonoBehaviour
             triangles = new NativeList<int>(Allocator.Persistent),
             normals = new NativeList<float3>(Allocator.Persistent),
             colors = new NativeList<float4>(Allocator.Persistent),
-            UV0s = new NativeList<float2>(Allocator.Persistent)
+            UV0s = new NativeList<float2>(Allocator.Persistent),
+            stride = lodConfigs[lod].stride,
+            lod = lod
         };
 
         var job = new GreedyMeshJob
@@ -531,7 +603,6 @@ public class ChunkManager : MonoBehaviour
         //handle.Complete();
         ChunkProfiler.MeshEnd();
     }
-
     void ApplyMeshDataToChunk(MeshData meshData)
     {
         ChunkProfiler.UploadStart();
@@ -539,46 +610,42 @@ public class ChunkManager : MonoBehaviour
         bool chunkEmpty = !meshData.vertices.IsCreated || meshData.vertices.Length == 0;
         chunks.TryGetValue(meshData.coord, out var chunk);
 
-        if (chunk == null)
+        if (!chunkEmpty && chunk == null) // Do these things only to new chunks
         {
-            if (!chunkEmpty)
+            GameObject go;
+            if (chunkGoPool.Count > 0)
             {
-                GameObject go;
-                if (chunkGoPool.Count > 0)
-                {
-                    go = chunkGoPool.Pop();
-                    go.SetActive(true);
-                }
-                else
-                {
-                    go = new GameObject();
-                    go.AddComponent<Chunk>();
-                }
-
-                go.name = $"Chunk_{meshData.coord.x}_{meshData.coord.y}_{meshData.coord.z}";
-                go.transform.position = ChunkToWorld(meshData.coord);
-                go.transform.parent = transform;
-
-                chunk = go.GetComponent<Chunk>();
-                chunk.chunkMaterial = voxelMaterial;
-
-                chunks[meshData.coord] = chunk;
+                go = chunkGoPool.Pop();
+                go.SetActive(true);
             }
             else
             {
-                //chunks[meshData.coord] = null;
+                go = new GameObject();
+                go.AddComponent<Chunk>();
             }
+
+            go.name = $"Chunk_{meshData.coord.x}_{meshData.coord.y}_{meshData.coord.z}";
+            go.transform.position = ChunkToWorld(meshData.coord);
+            go.transform.parent = transform;
+
+            chunk = go.GetComponent<Chunk>();
+            
+            chunks[meshData.coord] = chunk;
         }
 
-        if (chunk != null)
-            chunk.ApplyMesh(meshData, meshPool);
+        if (chunk != null) // Do these things to all chunks 
+        { 
+            chunk.chunkMaterial = voxelMaterial;
+            chunk.lod = meshData.lod;
+            chunk.ApplyMesh(meshData, meshPool); 
+        }
 
         DisposeMeshData(ref meshData);
         generating.Remove(meshData.coord);
+        deferredFrontier.Remove(meshData.coord); /// sus?
 
         ChunkProfiler.UploadEnd();
     }
-
     void AdaptivePerformanceControl()
     {
         avgFrameTime = Mathf.Lerp(avgFrameTime, Time.deltaTime * 1000f, 0.1f);
@@ -651,13 +718,13 @@ public class ChunkManager : MonoBehaviour
                 }
 
         // Immediately run a flood-fill tick (respects throttling)
-        ScheduleVisibleChunksFloodFill();
+        ScheduleNoiseTask();
     }
     
     // Unloads chunks when the number of chunks in play exeeds the maxChunks value. Unloads based on furtheset distance from player
     void UnloadChunks(int3 currentPlayerChunk)
     {
-        if (chunks.Count < maxChunks + chunkUnloadBuffer || unloadAtMaxChunks) 
+        if (chunks.Count < maxChunks + chunkUnloadBuffer) 
         {
             bool chunksExistAtMaxDistance = false;
 
@@ -686,27 +753,37 @@ public class ChunkManager : MonoBehaviour
             return; 
         }
 
-        // Sort by distance to player
+        if (unloadAtMaxChunks)
+        {// Sort by distance to player
         var sortedChunks = chunks
             .OrderBy(kv => -GetChunkDistanceWithRenderShape(kv.Key, currentPlayerChunk)) // Sort by furtheset from player
             .ToList();
 
-        foreach (var kvp in sortedChunks)
-        {
-            var coord = kvp.Key;
-            var chunk = kvp.Value;
-            if (chunk == null) continue;
+            foreach (var kvp in sortedChunks)
+            {
+                var coord = kvp.Key;
+                var chunk = kvp.Value;
+                if (chunk == null) continue;
 
-            ReleaseChunk(coord);
-            
-            if (chunks.Count < maxChunks)
-                return;             
+                ReleaseChunk(coord);
+
+                if (chunks.Count < maxChunks)
+                    return;
+            }
         }
     }
 
     // =============================
     // ===== HELPER FUNCTIONS ======
     // =============================
+    LODLevel GetLODForCoord(int3 coord, int3 playerChunk)
+    {
+        float dist = GetChunkDistanceWithRenderShape(coord, playerChunk);
+
+        if (dist <= nearRange) return LODLevel.Near;
+        if (dist <= midRange) return LODLevel.Mid;
+        return LODLevel.Far;
+    }
     void EnqueueFrontier(int3 c)
     {
         if (frontierSet.Add(c)) frontier.Enqueue(c);
@@ -717,6 +794,19 @@ public class ChunkManager : MonoBehaviour
         {
             c = frontier.Dequeue();
             if (frontierSet.Remove(c)) return true; // real item
+        }
+        c = default; return false;
+    }
+    void EnqueueLodUpdate(int3 c, LODLevel l) // Currently does not do any extra sorting
+    {
+        if (lodUpdateSet.Add(c)) lodUpdate.Enqueue(new LodUpdateToken {coord = c, lod = l});
+    }
+    bool TryDequeueLodUpdate(out LodUpdateToken c)
+    {
+        while (lodUpdate.Count > 0)
+        {
+            c = lodUpdate.Dequeue();
+            if (lodUpdateSet.Remove(c.coord)) return true; // real item
         }
         c = default; return false;
     }
@@ -816,7 +906,7 @@ public class ChunkManager : MonoBehaviour
     }
     void CompleteAllJobs()
     {
-        foreach (var (coord, handle, density, blockIds) in pendingBlockJobs.ToArray())
+        foreach (var (coord, handle, density, blockIds, lod) in pendingBlockJobs.ToArray())
         {
             handle.Complete();
             if (density.IsCreated) density.Dispose();

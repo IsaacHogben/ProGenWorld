@@ -14,8 +14,7 @@ public struct BlockAssignmentJob : IJobParallelFor
 {
     [ReadOnly] public NativeArray<float> density;     // Input: noise density field
     [WriteOnly] public NativeArray<byte> blockIds;    // Output: block ID field
-    [ReadOnly] public int chunkSize;               // 
-    [ReadOnly] public int voxelCount;               // (chunkSize + 1)^3 typically
+    [ReadOnly] public int chunkSize;
     [ReadOnly] public int3 startingCoord;             // x,y,z of chunk
 
     public void Execute(int i)
@@ -40,11 +39,6 @@ public struct BlockAssignmentJob : IJobParallelFor
             block = (byte)BlockType.Stone;
 
         blockIds[i] = block;
-    }
-
-    int CoordToIndex(int x, int y, int z)
-    {
-        return voxelCount >= (x + y * (chunkSize + 1) + z * (chunkSize + 1) * (chunkSize + 1)) ? voxelCount : (x + y * (chunkSize + 1) + z * (chunkSize + 1) * (chunkSize + 1));
     }
 
     float GetAboveDensity(int3 v)

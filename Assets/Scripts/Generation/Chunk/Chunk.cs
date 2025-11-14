@@ -7,13 +7,13 @@ using UnityEngine.Rendering;
 public class Chunk : MonoBehaviour
 {
     public Material chunkMaterial;
+    public LODLevel lod;
 
     public void ApplyMesh(MeshData meshData, Stack<Mesh> meshPool)
     {
         // Ensure required components
         var mf = GetComponent<MeshFilter>(); if (mf == null) mf = gameObject.AddComponent<MeshFilter>(); 
-        var mr = GetComponent<MeshRenderer>(); if (mr == null) mr = gameObject.AddComponent<MeshRenderer>(); 
-        var mc = GetComponent<MeshCollider>(); if (mc == null) mc = gameObject.AddComponent<MeshCollider>();
+        var mr = GetComponent<MeshRenderer>(); if (mr == null) mr = gameObject.AddComponent<MeshRenderer>();
 
         if (mr.sharedMaterial == null)
             mr.sharedMaterial = chunkMaterial;
@@ -38,10 +38,6 @@ public class Chunk : MonoBehaviour
             mesh.Clear(false);
             mesh.UploadMeshData(false);
         }
-
-
-        // Reset collider before reassigning
-        //mc.sharedMesh = null;
 
         // Allocate writable MeshData and copy directly
         var meshArray = Mesh.AllocateWritableMeshData(1);
@@ -69,8 +65,12 @@ public class Chunk : MonoBehaviour
         Mesh.ApplyAndDisposeWritableMeshData(meshArray, mesh);
         mesh.RecalculateBounds();
 
-        // Assign to collider last (this binds physics)
-        mc.sharedMesh = mesh;
+        if (meshData.stride == 1) // Use stride to infer lod
+        {
+            var mc = GetComponent<MeshCollider>(); if (mc == null) mc = gameObject.AddComponent<MeshCollider>();
+            // Assign to collider last (this binds physics)
+            mc.sharedMesh = mesh;
+        }
     }
 
     public void Release(Stack<Mesh> meshPool)

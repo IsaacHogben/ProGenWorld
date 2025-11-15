@@ -28,7 +28,7 @@ public struct GreedyMeshJob : IJob
     public void Execute()
     {
         var mask = new NativeArray<FMask>(chunkSize * chunkSize, Allocator.Temp);
-        AGenerateMesh(mask);
+        GenerateMesh(mask);
         mask.Dispose();
     }
 
@@ -46,9 +46,8 @@ public struct GreedyMeshJob : IJob
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static bool CompareMask(FMask a, FMask b) => a.Normal == b.Normal && a.Block == b.Block;
 
-    public void AGenerateMesh(NativeArray<FMask> mask)
+    public void GenerateMesh(NativeArray<FMask> mask)
     {
-        chunkSize /= meshData.stride;
         // Sweep over each axis (X, Y, Z)
         for (int axis = 0; axis < 3; ++axis)
         {

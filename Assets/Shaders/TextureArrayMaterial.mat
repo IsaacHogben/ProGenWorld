@@ -63,12 +63,15 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
+    - _AtmosphereEnd: 601.3
+    - _AtmosphereStart: 490.6
     - _LargeScale: 32
     - _QueueControl: 0
     - _QueueOffset: 0
     - _Scale: 2
     - _SliceCount: 255
     - _SmallScale: 2
-    m_Colors: []
+    m_Colors:
+    - _Atmosphere_Color: {r: 0.61960787, g: 0.69803923, b: 0.7607844, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

@@ -1,10 +1,5 @@
 //using FastNoise2;
-using System;
-using System.Diagnostics;
-using Unity.Collections;
-using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
-using UnityEngine.LightTransport;
 
 public class NoiseGenerator
 {

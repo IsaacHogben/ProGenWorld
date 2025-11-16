@@ -28,6 +28,7 @@ public class ChunkManager : MonoBehaviour
     public int chunkSize = 32;
     public int viewDistance = 3;
     public int unloadDistance = 3;
+    [SerializeField] int minMoveBeforeUpdate = 16;
     [SerializeField] RenderShape renderShape = RenderShape.Sphere;
     public bool unloadAtMaxChunks = false;
     [SerializeField] int maxChunks;         // Max chunks loaded before most distant chunks begin to unload
@@ -116,9 +117,15 @@ public class ChunkManager : MonoBehaviour
     readonly Queue<LodUpdateRequest> lodUpdateQueue = new();    // chunks waiting to have lod updated
     readonly HashSet<int3> lodUpdateSet = new();                // hash set for duplication checks
     readonly HashSet<int3> deferredFrontier = new();            // neighbors to expand later (out of range)
-    private int3 lastPlayerChunk = int3.zero;
+
     private bool firstFloodTriggered = false;
     public HashSet<int3> GetDeferredFrontier() => deferredFrontier;
+
+    // Reusable temp buffers to avoid GC
+    static readonly List<int3> tmpFrontierList = new List<int3>(512);
+    static readonly List<int3> tmpFrontierRemove = new List<int3>(128);
+    static readonly List<int3> tmpChunkKeys = new List<int3>(2048);
+    static readonly List<int3> tmpChunksToRemove = new List<int3>(256);
 
     // --------------------------------------------------
     // Resources / Materials
@@ -137,10 +144,12 @@ public class ChunkManager : MonoBehaviour
     public Stack<Mesh> meshPool = new();
 
     // --------------------------------------------------
-    // Timing
+    // Timing / Movement Updates
     // --------------------------------------------------
     float lastScheduleTime = -999f;
-
+    private bool movementTriggered = false;
+    private int updatePhase = 0;
+    private Vector3 lastPlayerPos;
 
     void Awake()
     {
@@ -178,7 +187,7 @@ public class ChunkManager : MonoBehaviour
     void Start()
     {
         // Seed frontier at the player's current chunk
-        InitFloodFrontier(WorldToChunkCoord(player.transform.position), 0);
+        InitFloodFrontier(player.transform.position, 0, 20);
     }
 
     void Update()
@@ -189,28 +198,47 @@ public class ChunkManager : MonoBehaviour
         ChunkProfiler.ReportChunkCount(chunks.Count);
         ChunkProfiler.ReportMeshCount(pendingMeshJobs.Count);
 
+        // --- Flood-fill activation when entering new chunk ---
+        Vector3 currentPlayerPos = player.transform.position;
+        float moved = math.distance(currentPlayerPos, lastPlayerPos);
+
         // Periodic scheduling (throttled)
         if (Time.time - lastScheduleTime >= scheduleInterval)
         {
             lastScheduleTime = Time.time;
 
             if (frontierQueue.Count > 0) 
-                ScheduleNoiseTask();
+                ScheduleNoiseTask(currentPlayerPos);
         }
 
-        // --- Flood-fill activation when entering new chunk ---
-        int3 currentPlayerChunk = WorldToChunkCoord(player.transform.position);
-
-        // Trigger flood-fill expansion whenever the player enters a new chunk
-        if (!firstFloodTriggered || !currentPlayerChunk.Equals(lastPlayerChunk))
+        if (moved >= minMoveBeforeUpdate)
         {
-            lastPlayerChunk = currentPlayerChunk;
-            firstFloodTriggered = true;
-            OnPlayerMovedChunks(currentPlayerChunk);
+            lastPlayerPos = currentPlayerPos;
+            movementTriggered = true;
         }
+
+        // Process phases only when needed
+        if (movementTriggered)
+            OnPlayerMovePhaseUpdate(currentPlayerPos);
+
+        if (!firstFloodTriggered)
+        {
+            firstFloodTriggered = true;
+            PromoteDeferredToFrontier(currentPlayerPos);
+        }
+
         // Manage completed noise tasks, schedules block assignment
         while (completedNoiseQueue.TryDequeue(out var data))
         {
+            // Skip if chunk is already irrelevant
+            if (!IsChunkWithinRange(data.coord, currentPlayerPos, unloadDistance))
+            {
+                // Dispose density immediately
+                if (data.density.IsCreated)
+                    ReturnDensityArray(data.lod, data.density);
+                continue;
+            }
+
             var (handle, blockIds) = CreateBlockAssignmentJob(
                 data.density,
                 data.coord,
@@ -228,7 +256,7 @@ public class ChunkManager : MonoBehaviour
             it.handle.Complete();
 
             var faces = DetectTerrainFlowFromBlocks(it.blockIds, it.lod);
-            ExpandFrontierFromFaces(it.coord, faces);
+            ExpandFrontierFromFaces(it.coord, currentPlayerPos, faces);
             ScheduleMeshJob(it.coord, it.blockIds, it.lod);
 
             // Return density to pool
@@ -261,21 +289,43 @@ public class ChunkManager : MonoBehaviour
         }
 
         AdaptivePerformanceControl();
+        if (Time.frameCount % 300 == 0)
+        {
+            Debug.Log($"Chunks: {chunks.Count}, Deferred: {deferredFrontier.Count}, MeshPool: {meshPool.Count}, PendingBlock: {pendingBlockJobs.Count}, PendingMesh: {pendingMeshJobs.Count}");
+        }
     }
 
-    private void OnPlayerMovedChunks(int3 currentPlayerChunk)
+    private void OnPlayerMovePhaseUpdate(Vector3 playerPos)
     {
-        PromoteDeferredToFrontier(currentPlayerChunk);
-        CullOutOfRangeBlockJobs(currentPlayerChunk);
-        UpdateChunkLods(currentPlayerChunk);
-        UnloadChunks(currentPlayerChunk);
+        switch (updatePhase)
+        {
+            case 0:
+                PromoteDeferredToFrontier(playerPos);
+                break;
+            case 1:
+                UpdateChunkLods(playerPos);
+                break;
+            case 2:
+                UnloadChunks(playerPos);
+                break;
+            case 3:
+                CullOutOfRangeBlockJobs(playerPos);
+                break;
+        }
+
+        updatePhase++;
+
+        // Completed full cycle?
+        if (updatePhase > 3)
+        {
+            updatePhase = 0;
+            movementTriggered = false;   // Done until next movement trigger
+        }
     }
-    void UpdateChunkLods(int3 playerChunk)
+    void UpdateChunkLods(Vector3 playerPos)
     {
-        // priority queue buckets: small to large stride means higher priority
-        List<int3> toPromoteNear = new(32);  // highest priority (stride 2 1)
-        List<int3> toPromoteMid = new(32);  // mid priority (stride 4 2)
-        //List<int3> toPromote3 = new(32);  // lowest
+        List<int3> toPromoteNear = new(32);  
+        List<int3> toPromoteMid = new(32);  
 
         foreach (var kv in chunks)
         {
@@ -283,32 +333,30 @@ public class ChunkManager : MonoBehaviour
             var chunk = kv.Value;
             if (chunk == null) continue;
 
-            //var lod = ;
-            var desiredLod = GetLODForCoord(coord, playerChunk);
-            var chunkLod = chunk.lod;
+            var chunkLod = chunk.lod;            
+            var desiredLod = GetLODForCoord(coord, playerPos, chunkLod);
             if (desiredLod == chunkLod)
                 continue;
 
-            // Promote only (never lower LOD) ----------- Change to here if we want LOD's to downgrade as well
+            // Promote only (never lower LOD) ----------- Change here if we want LOD's to downgrade as well
             if (desiredLod < chunkLod)
             {
-                if (chunkLod == LODLevel.Mid) EnqueueLodUpdate(kv.Key, LODLevel.Near); //toPromoteNear.Add(kv.Key);
+                if (chunkLod == LODLevel.Mid) EnqueueLodUpdate(kv.Key, LODLevel.Near);
                 else if (chunkLod == LODLevel.Far) EnqueueLodUpdate(kv.Key, LODLevel.Mid);
-                //else if (cs == 8) toPromote3.Add(kv.Key);
+                chunk.lod = desiredLod;
             }
         }
     }
-
     // flood-fill scheduler (closest-first implicitly due to frontier expansion pattern)
-    void ScheduleNoiseTask()
+    void ScheduleNoiseTask(Vector3 playerPos)
     {
         if (player == null) return;
 
         int spawnedThisTick = 0;
         int cap = Math.Max(1, maxConcurrentNoiseTasks);
 
+        // Here we are initiating a number of tasks that will eventually result in chunks, but, we are limiting this per tick and prioritizing LOD upgrades over new chunk generation.
 
-        // Here we are initiating a number of tasks that will eventually result in chunks but, we are limiting this per tick and prioritizing LOD upgrades over new chunk generation.
         if (lodUpdateQueue.Count != 0)
             while (spawnedThisTick < cap && TryDequeueLodUpdate(out var lodUpdateToken))
             {
@@ -324,16 +372,13 @@ public class ChunkManager : MonoBehaviour
                 if (chunks.ContainsKey(coord) || generatingSet.Contains(coord)) continue;
                 generatingSet.Add(coord);
                 spawnedThisTick++;
-                LODLevel lod = GetLODForCoord(coord, WorldToChunkCoord(player.transform.position));
+                LODLevel lod = GetLODForCoord(coord, playerPos, LODLevel.Mid);
                 StartNoiseTask(coord, lod);
             }
     }
-
-    void ExpandFrontierFromFaces(int3 coord, OpenFaces faces)
+    void ExpandFrontierFromFaces(int3 coord, Vector3 playerPos, OpenFaces faces)
     {
         if (faces == OpenFaces.None) return;
-
-        var center = WorldToChunkCoord(player.transform.position);
 
         Span<(OpenFaces face, int3 d)> dirs = stackalloc (OpenFaces, int3)[]
         {
@@ -354,7 +399,7 @@ public class ChunkManager : MonoBehaviour
             if (chunks.ContainsKey(n) || generatingSet.Contains(n))
                 continue;
 
-            if (IsChunkWithinRange(n, center, viewDistance))
+            if (IsChunkWithinRange(n, playerPos, viewDistance))
             {
                 EnqueueFrontier(n);
             }
@@ -364,9 +409,8 @@ public class ChunkManager : MonoBehaviour
             }
         }
     }
-
     // Player changed chunk — promote deferred coords that are now in range
-    void PromoteDeferredToFrontier(int3 center)
+    void PromoteDeferredToFrontier(Vector3 playerPos)
     {
         // promote any deferred chunks now within view distance
         List<int3> toPromote = new(32);
@@ -376,7 +420,7 @@ public class ChunkManager : MonoBehaviour
             if (chunks.ContainsKey(c) || generatingSet.Contains(c))
                 continue;
      
-            if (IsChunkWithinRange(c, center, viewDistance))
+            if (IsChunkWithinRange(c, playerPos, viewDistance))
                 toPromote.Add(c);
         }
 
@@ -447,7 +491,6 @@ public class ChunkManager : MonoBehaviour
             }
         });
     }
-
     private (JobHandle handle, NativeArray<byte> blockIds) CreateBlockAssignmentJob(NativeArray<float> nativeDensity, int3 coord, int stride)
     {
         int chunkLodSize = chunkSize / stride;
@@ -665,13 +708,14 @@ public class ChunkManager : MonoBehaviour
         }
     }
     // Create an initial zone around the player from which the flood fill can start
-    void InitFloodFrontier(int3 centerChunk, short radius) // Create the initial position for flood fill to begin. Is the players location at start of world load.
+    void InitFloodFrontier(Vector3 playerPos, short radius, int height) // Create the initial position for flood fill to begin. Is the players location at start of world load.
     {
+        int3 centerChunk = WorldToChunkCoord(playerPos);
         float sqrViewDist = radius * radius;
 
         for (int x = -radius; x <= radius; x++)
-            for (int y = -5; y <= 5; y++)
-                for (int z = -radius; z <= radius; z++)
+            for (int z = -radius; z <= radius; z++)
+                for (int y = -height; y <= height; y++)
                 {
                     float distSqr = x * x + y * y + z * z;
                     if (distSqr > sqrViewDist)
@@ -687,57 +731,75 @@ public class ChunkManager : MonoBehaviour
                 }
 
         // Immediately run a flood-fill tick (respects throttling)
-        ScheduleNoiseTask();
+        ScheduleNoiseTask(playerPos);
     }
-    
     // Unloads chunks when the number of chunks in play exeeds the maxChunks value. Unloads based on furtheset distance from player
-    void UnloadChunks(int3 currentPlayerChunk)
-    {
-        if (chunks.Count < maxChunks + chunkUnloadBuffer) 
+    void UnloadChunks(Vector3 currentPlayerChunk)
+    {    
+        bool anyDeferredExists = deferredFrontier.Count > 0;
+
+        if (anyDeferredExists)
         {
-            bool chunksExistAtMaxDistance = false;
+            // Copy to list once to avoid hashset iteration overhead
+            tmpFrontierList.Clear();
+            tmpFrontierList.AddRange(deferredFrontier);
 
-            List<int3> defferedFrontierToRemove = new(32);
-            foreach (int3 coord in deferredFrontier)
+            tmpFrontierRemove.Clear();
+
+            // Process deferred frontier in one tight loop
+            int unloadPlusOne = unloadDistance + 1;
+            for (int i = 0; i < tmpFrontierList.Count; i++)
             {
-                if (GetChunkDistanceWithRenderShape(coord, currentPlayerChunk) > unloadDistance + 1)
-                    defferedFrontierToRemove.Add(coord);
-                chunksExistAtMaxDistance = true;
-            }
-            foreach (int3 coord in defferedFrontierToRemove)
-                deferredFrontier.Remove(coord);
+                int3 coord = tmpFrontierList[i];
 
-            if (chunksExistAtMaxDistance)
-            {   
-                List<int3> chunksToRemove = new(32);
-                foreach (var kvp in chunks)
-                {
-                    var coord = kvp.Key;
-                    if (GetChunkDistanceWithRenderShape(coord, currentPlayerChunk) > unloadDistance)
-                        chunksToRemove.Add(coord);
-                }
-                foreach (int3 coord in chunksToRemove)
-                    ReleaseChunk(coord);
+                if (GetDistanceAtChunkScaleWithRenderShape(coord, currentPlayerChunk) > unloadPlusOne)
+                    tmpFrontierRemove.Add(coord);
             }
-            return; 
+
+            // Remove flagged items
+            for (int i = 0; i < tmpFrontierRemove.Count; i++)
+                deferredFrontier.Remove(tmpFrontierRemove[i]);
+
+            // Evaluate real chunks only if deferred contained something
+            tmpChunkKeys.Clear();
+            tmpChunkKeys.AddRange(chunks.Keys);
+
+            tmpChunksToRemove.Clear();
+
+            for (int i = 0; i < tmpChunkKeys.Count; i++)
+            {
+                int3 coord = tmpChunkKeys[i];
+
+                if (GetDistanceAtChunkScaleWithRenderShape(coord, currentPlayerChunk) > unloadDistance)
+                    tmpChunksToRemove.Add(coord);
+            }
+
+            // Remove them
+            for (int i = 0; i < tmpChunksToRemove.Count; i++)
+                ReleaseChunk(tmpChunksToRemove[i]);
         }
 
-        if (unloadAtMaxChunks)
-        {// Sort by distance to player
-        var sortedChunks = chunks
-            .OrderBy(kv => -GetChunkDistanceWithRenderShape(kv.Key, currentPlayerChunk)) // Sort by furtheset from player
-            .ToList();
+        if (unloadAtMaxChunks && chunks.Count > maxChunks + chunkUnloadBuffer)
+        {
+            // Collect keys once
+            tmpChunkKeys.Clear();
+            tmpChunkKeys.AddRange(chunks.Keys);
 
-            foreach (var kvp in sortedChunks)
+            // Sort by distance descending (furthest first)
+            tmpChunkKeys.Sort((a, b) =>
             {
-                var coord = kvp.Key;
-                var chunk = kvp.Value;
-                if (chunk == null) continue;
+                float da = GetDistanceAtChunkScaleWithRenderShape(a, currentPlayerChunk);
+                float db = GetDistanceAtChunkScaleWithRenderShape(b, currentPlayerChunk);
+                return db.CompareTo(da); // descending
+            });
 
+            for (int i = 0; i < tmpChunkKeys.Count; i++)
+            {
+                int3 coord = tmpChunkKeys[i];
                 ReleaseChunk(coord);
 
                 if (chunks.Count < maxChunks)
-                    return;
+                    break;
             }
         }
     }
@@ -745,14 +807,28 @@ public class ChunkManager : MonoBehaviour
     // =============================
     // ===== HELPER FUNCTIONS ======
     // =============================
-    
-    LODLevel GetLODForCoord(int3 coord, int3 playerChunk)
+    LODLevel GetLODForCoord(int3 coord, Vector3 playerChunk, LODLevel current)
     {
-        float dist = GetChunkDistanceWithRenderShape(coord, playerChunk);
+        float dist = GetDistanceAtChunkScaleWithRenderShape(coord, playerChunk);
+        float h = 0.2f;
 
-        if (dist <= nearRange) return LODLevel.Near;
-        if (dist <= midRange) return LODLevel.Mid;
-        return LODLevel.Far;
+        switch (current)
+        {
+            case LODLevel.Near:
+                if (dist > nearRange + h) return LODLevel.Mid;
+                return LODLevel.Near;
+
+            case LODLevel.Mid:
+                if (dist < nearRange - h) return LODLevel.Near;
+                if (dist > midRange + h) return LODLevel.Far;
+                return LODLevel.Mid;
+
+            case LODLevel.Far:
+                if (dist < midRange - h) return LODLevel.Mid;
+                return LODLevel.Far;
+        }
+
+        return current;
     }
     void EnqueueFrontier(int3 c)
     {
@@ -780,7 +856,7 @@ public class ChunkManager : MonoBehaviour
         }
         c = default; return false;
     }
-    void CullOutOfRangeBlockJobs(int3 center)
+    void CullOutOfRangeBlockJobs(Vector3 center)
     {
         for (int i = pendingBlockJobs.Count - 1; i >= 0; --i)
         {
@@ -813,8 +889,8 @@ public class ChunkManager : MonoBehaviour
         if (m.colors.IsCreated) m.colors.Dispose();
         if (m.UV0s.IsCreated) m.UV0s.Dispose();
     }   
-    public Vector3 ChunkToWorld(int3 coord) =>
-        new Vector3(coord.x, coord.y, coord.z) * chunkSize; // Public for debug visualizers
+    public Vector3 ChunkToWorld(int3 coord) =>                                      // Public for debug visualizers
+        new Vector3(coord.x, coord.y, coord.z) * chunkSize;    // Add .5f to better represent the center of the chunk rather than origin
     int3 WorldToChunkCoord(Vector3 pos)
     {
         return new int3(
@@ -916,30 +992,39 @@ public class ChunkManager : MonoBehaviour
             pool.Push(arr);
         }
     }
-    public bool IsChunkWithinRange(int3 chunkCoord, int3 playerChunk, float viewDistance)
+    public bool IsChunkWithinRange(int3 chunkCoord, Vector3 playerChunk, float viewDistance)
     {
-        return GetChunkDistanceWithRenderShape(chunkCoord, playerChunk) <= viewDistance;
+        return GetDistanceAtChunkScaleWithRenderShape(chunkCoord, playerChunk) <= viewDistance;
     }
-    float GetChunkDistanceWithRenderShape(int3 chunk1, int3 chunk2)
+    float GetDistanceAtChunkScaleWithRenderShape(int3 _chunk, Vector3 pos)
     {
+        Vector3 chunk = ChunkToWorld(_chunk);
+
         switch (renderShape)
         {
             case RenderShape.Cylinder:
                 {
                     // 2D distance (XZ only)
-                    int2 flatchunk1 = chunk1.xz;
-                    int2 flatChunk2 = chunk2.xz;
-                    float dist2D = math.distance(flatchunk1, flatChunk2);
+                    float dx = chunk.x - pos.x;
+                    float dz = chunk.z - pos.z;
 
-                    // Allow full vertical range, only check XZ radius
-                    return dist2D;
+                    float distSq = dx * dx + dz * dz;
+                    float dist = math.sqrt(distSq);
+
+                    return dist / chunkSize;
                 }
 
             case RenderShape.Sphere:
             default:
                 {
-                    float dist3D = math.distance(chunk1, chunk2);
-                    return dist3D;
+                    float dx = chunk.x - pos.x;
+                    float dy = chunk.y - pos.y;
+                    float dz = chunk.z - pos.z;
+
+                    float distSq = dx * dx + dy * dy + dz * dz;
+                    float dist = math.sqrt(distSq);
+
+                    return dist / chunkSize;
                 }
         }
     }
@@ -979,7 +1064,7 @@ public class ChunkManager : MonoBehaviour
     void OnDestroy()
     {
         CompleteAllJobs();
-        cts?.Cancel(); // Cancels async task that was not able to be jobified (NoiseGen, )
+        cts?.Cancel(); // Cancels async task that was not able to be jobified
         cts?.Dispose();
         // Dispose any leftover pooled density arrays
         lock (densityPoolLock)

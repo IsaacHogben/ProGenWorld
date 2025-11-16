@@ -93,7 +93,7 @@ public class Chunk : MonoBehaviour
 
         if (mc && mc.sharedMesh != null)
         {
-            Destroy(mc.sharedMesh);
+            //Destroy(mc.sharedMesh);
             mc.sharedMesh = null;
         }
 

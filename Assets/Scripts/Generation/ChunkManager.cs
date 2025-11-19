@@ -10,7 +10,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Unity.Collections;
-using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
@@ -27,7 +26,8 @@ public class ChunkManager : MonoBehaviour
     public float frequency = 1;
     public int chunkSize = 32;
     public int viewDistance = 3;
-    public int unloadDistance = 3;
+    public int unloadPastViewDistance = 1;
+    private int unloadDistance => viewDistance + unloadPastViewDistance;
     [SerializeField] int minMoveBeforeUpdate = 16;
     [SerializeField] RenderShape renderShape = RenderShape.Sphere;
     public bool unloadAtMaxChunks = false;
@@ -187,7 +187,7 @@ public class ChunkManager : MonoBehaviour
     void Start()
     {
         // Seed frontier at the player's current chunk
-        InitFloodFrontier(player.transform.position, 0, 20);
+        InitFloodFrontier(player.transform.position, 0, 10);
     }
 
     void Update()
@@ -197,7 +197,16 @@ public class ChunkManager : MonoBehaviour
         ChunkProfiler.ReportUploadQueue(meshApplyQueue.Count + generatingSet.Count);
         ChunkProfiler.ReportChunkCount(chunks.Count);
         ChunkProfiler.ReportMeshCount(pendingMeshJobs.Count);
-
+        ChunkMemDebug.LogIfNeeded();
+        /*if (Time.frameCount % 300 == 0)
+        {
+            Debug.Log($"[ChunkStats] chunks={chunks.Count} " +
+                      $"chunkPool={chunkGoPool.Count} meshPool={meshPool.Count} " +
+                      $"frontier={frontierQueue.Count} deferred={deferredFrontier.Count} " +
+                      $"lodUpdateQ={lodUpdateQueue.Count} lodUpdateSet={lodUpdateSet.Count} " +
+                      $"pendingBlock={pendingBlockJobs.Count} pendingMesh={pendingMeshJobs.Count} " +
+                      $"activeNoise={activeNoiseTasks.Count}");
+        }*/
         // --- Flood-fill activation when entering new chunk ---
         Vector3 currentPlayerPos = player.transform.position;
         float moved = math.distance(currentPlayerPos, lastPlayerPos);
@@ -273,7 +282,7 @@ public class ChunkManager : MonoBehaviour
 
             entry.handle.Complete();
 
-            if (entry.blockIds.IsCreated) entry.blockIds.Dispose(); // << dispose blockIds
+            DisposeBlockIds(entry.blockIds);
 
             meshApplyQueue.Enqueue(entry.meshData);
             pendingMeshJobs.RemoveAt(i);
@@ -291,7 +300,7 @@ public class ChunkManager : MonoBehaviour
         AdaptivePerformanceControl();
         if (Time.frameCount % 300 == 0)
         {
-            Debug.Log($"Chunks: {chunks.Count}, Deferred: {deferredFrontier.Count}, MeshPool: {meshPool.Count}, PendingBlock: {pendingBlockJobs.Count}, PendingMesh: {pendingMeshJobs.Count}");
+            //Debug.Log($"Chunks: {chunks.Count}, Deferred: {deferredFrontier.Count}, MeshPool: {meshPool.Count}, PendingBlock: {pendingBlockJobs.Count}, PendingMesh: {pendingMeshJobs.Count}");
         }
     }
 
@@ -496,6 +505,8 @@ public class ChunkManager : MonoBehaviour
         int chunkLodSize = chunkSize / stride;
         int voxelCount = (chunkLodSize + 1) * (chunkLodSize + 1) * (chunkLodSize + 1);
         var blockIds = new NativeArray<byte>(voxelCount, Allocator.Persistent);
+        ChunkMemDebug.ActiveBlockIdArrays++;
+        ChunkMemDebug.TotalBlockIdAlloc++;
 
         var job = new BlockAssignmentJob
         {
@@ -613,6 +624,8 @@ public class ChunkManager : MonoBehaviour
             stride = lodConfigs[lod].stride,
             lod = lod
         };
+        ChunkMemDebug.ActiveMeshDatas++;
+        ChunkMemDebug.TotalMeshDataAlloc++;
 
         var job = new GreedyMeshJob
         {
@@ -664,9 +677,10 @@ public class ChunkManager : MonoBehaviour
             chunk.ApplyMesh(meshData, meshPool); 
         }
 
-        DisposeMeshData(ref meshData);
+        
         generatingSet.Remove(meshData.coord);
-        deferredFrontier.Remove(meshData.coord); /// sus?
+        deferredFrontier.Remove(meshData.coord);
+        DisposeMeshData(ref meshData);
 
         ChunkProfiler.UploadEnd();
     }
@@ -864,8 +878,8 @@ public class ChunkManager : MonoBehaviour
             if (!IsChunkWithinRange(it.coord, center, viewDistance + 1)) // small buffer
             {
                 it.handle.Complete();
-                if (it.density.IsCreated) it.density.Dispose();
-                if (it.blockIds.IsCreated) it.blockIds.Dispose();
+                ReturnDensityArray(it.lod, it.density);
+                DisposeBlockIds(it.blockIds);
                 pendingBlockJobs.RemoveAt(i);
                 generatingSet.Remove(it.coord);
             }
@@ -888,7 +902,14 @@ public class ChunkManager : MonoBehaviour
         if (m.normals.IsCreated) m.normals.Dispose();
         if (m.colors.IsCreated) m.colors.Dispose();
         if (m.UV0s.IsCreated) m.UV0s.Dispose();
+        ChunkMemDebug.ActiveMeshDatas--;
     }   
+    static void DisposeBlockIds(NativeArray<byte> arr)
+    {
+        ChunkMemDebug.ActiveBlockIdArrays--;
+        if (arr.IsCreated)
+            arr.Dispose();
+    }
     public Vector3 ChunkToWorld(int3 coord) =>                                      // Public for debug visualizers
         new Vector3(coord.x, coord.y, coord.z) * chunkSize;    // Add .5f to better represent the center of the chunk rather than origin
     int3 WorldToChunkCoord(Vector3 pos)
@@ -940,6 +961,7 @@ public class ChunkManager : MonoBehaviour
                 while (pool.Count < Mathf.Min(prewarmDensityPerLod, maxDensityPoolPerLod))
                 {
                     pool.Push(new NativeArray<float>(cfg.densityCount, Allocator.Persistent));
+                    ChunkMemDebug.TotalDensityAlloc++;
                 }
             }
         }
@@ -961,12 +983,17 @@ public class ChunkManager : MonoBehaviour
                     if (arr.IsCreated) arr.Dispose();
                     continue;
                 }
+
+                ChunkMemDebug.ActiveDensityArrays++;
                 return arr;
             }
         }
 
-        // No suitable array in pool, allocate new
-        return new NativeArray<float>(requiredLength, Allocator.Persistent);
+        // allocate new
+        var allocated = new NativeArray<float>(requiredLength, Allocator.Persistent);
+        ChunkMemDebug.ActiveDensityArrays++;
+        ChunkMemDebug.TotalDensityAlloc++;
+        return allocated;
     }
     void ReturnDensityArray(LODLevel lod, NativeArray<float> arr)
     {
@@ -975,22 +1002,21 @@ public class ChunkManager : MonoBehaviour
         var cfg = lodConfigs[lod];
         if (arr.Length != cfg.densityCount)
         {
-            // Wrong size – just dispose
             arr.Dispose();
-            return;
         }
-
-        lock (densityPoolLock)
+        else
         {
-            var pool = densityPoolByLod[lod];
-            if (pool.Count >= maxDensityPoolPerLod)
+            lock (densityPoolLock)
             {
-                arr.Dispose();
-                return;
+                var pool = densityPoolByLod[lod];
+                if (pool.Count >= maxDensityPoolPerLod)
+                    arr.Dispose();
+                else
+                    pool.Push(arr);
             }
-
-            pool.Push(arr);
         }
+
+        ChunkMemDebug.ActiveDensityArrays--;
     }
     public bool IsChunkWithinRange(int3 chunkCoord, Vector3 playerChunk, float viewDistance)
     {
@@ -1034,7 +1060,7 @@ public class ChunkManager : MonoBehaviour
         {
             handle.Complete();
             if (density.IsCreated) ReturnDensityArray(lod, density);
-            if (blockIds.IsCreated) blockIds.Dispose();
+            DisposeBlockIds(blockIds);
         }
         pendingBlockJobs.Clear();
 
@@ -1045,17 +1071,10 @@ public class ChunkManager : MonoBehaviour
             if (!handle.IsCompleted) handle.Complete();
 
             // Dispose blockIds — no density arrays here anymore
-            if (blockIds.IsCreated)
-            {
-                blockIds.Dispose();
-            }
+            DisposeBlockIds(blockIds);
 
             // Dispose mesh native lists (if not already disposed by ApplyMesh)
-            if (meshData.vertices.IsCreated) meshData.vertices.Dispose();
-            if (meshData.triangles.IsCreated) meshData.triangles.Dispose();
-            if (meshData.normals.IsCreated) meshData.normals.Dispose();
-            if (meshData.colors.IsCreated) meshData.colors.Dispose();
-            if (meshData.UV0s.IsCreated) meshData.UV0s.Dispose();
+            DisposeMeshData(ref meshData);
 
             pendingMeshJobs.RemoveAt(i);
         }
@@ -1097,4 +1116,5 @@ public class ChunkManager : MonoBehaviour
             nativeBlockDatabase.Dispose();
         openFaceDetector?.Dispose();
     }
+
 }

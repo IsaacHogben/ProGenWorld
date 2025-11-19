@@ -430,11 +430,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 123457
-  frequency: 0.15
+  seed: 355512
+  frequency: 0.6
   chunkSize: 64
-  viewDistance: 9
-  unloadDistance: 10
+  viewDistance: 7
+  unloadPastViewDistance: 1
   minMoveBeforeUpdate: 22
   renderShape: 1
   unloadAtMaxChunks: 0
@@ -444,16 +444,16 @@ MonoBehaviour:
   blockDatabase: {fileID: 11400000, guid: f9b2a5fcc2fa09d4caac36b7d550818c, type: 2}
   textureArrayBuilder: {fileID: 11400000, guid: 3f71b64aadbc3bf498224a3efb12f316, type: 2}
   voxelMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
-  nearRange: 4
-  midRange: 14
-  farRange: 16
+  nearRange: 6
+  midRange: 12
+  farRange: 18
   nearMaterial: {fileID: 0}
   midMaterial: {fileID: 0}
   farMaterial: {fileID: 2100000, guid: 2bf2215389819b342a877f12b9473126, type: 3}
   maxConcurrentNoiseTasks: 24
   maxMeshUploadsPerFrame: 24
-  minConcurrentNoiseTasks: 4
-  minMeshUploadsPerFrame: 1
+  minConcurrentNoiseTasks: 2
+  minMeshUploadsPerFrame: 2
   scheduleInterval: 0.05
   maxDensityPoolPerLod: 32
   prewarmDensityPerLod: 24
@@ -472,7 +472,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkProfiler
   chunkManager: {fileID: 695623964}
-  logInterval: 60
+  logInterval: 600
   showOnScreen: 1
   detailed: 1
   showMeshStats: 1
@@ -638,7 +638,7 @@ Transform:
   m_GameObject: {fileID: 832329037}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 30, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -723,7 +723,7 @@ Transform:
   m_GameObject: {fileID: 2024416877}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 31.62, z: 0}
+  m_LocalPosition: {x: 100, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:

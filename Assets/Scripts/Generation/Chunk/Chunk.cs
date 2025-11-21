@@ -75,7 +75,7 @@ public class Chunk : MonoBehaviour
         mesh.UploadMeshData(false); // keep CPU copy for collider & future rewrites
 
         // Collider handling:
-        if (meshData.stride == 0)
+        if (meshData.stride == 1)
         {
             var mc = GetComponent<MeshCollider>();
             if (mc == null) mc = gameObject.AddComponent<MeshCollider>();
@@ -99,7 +99,6 @@ public class Chunk : MonoBehaviour
         if (mc != null)
         {
             mc.sharedMesh = null;
-
             // mc.enabled = false;
         }
 
@@ -113,14 +112,13 @@ public class Chunk : MonoBehaviour
 
                 if (meshPool != null && meshPool.Count < MaxMeshPoolSizePerWorld)
                 {
-                    // No need to Clear() – ApplyAndDisposeWritableMeshData overwrites the content next time.
                     // Keep it dynamic for frequent updates.
                     mesh.MarkDynamic();
                     meshPool.Push(mesh);
                 }
                 else
                 {
-                    // Hard cap: if we have enough pooled meshes, destroy extras
+                    // if we have enough pooled meshes, destroy extras
                     Destroy(mesh);
                 }
             }

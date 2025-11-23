@@ -6,6 +6,8 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Drawing;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,6 +16,7 @@ using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 using static GreedyMeshJob;
+using static UnityEngine.EventSystems.EventTrigger;
 
 public class ChunkManager : MonoBehaviour
 {
@@ -88,6 +91,11 @@ public class ChunkManager : MonoBehaviour
     readonly Dictionary<int3, Chunk> chunks = new();
     readonly HashSet<int3> generatingSet = new();   // coords reserved for generation or meshing
     readonly Dictionary<LODLevel, LODSettings> lodConfigs = new();
+    readonly Dictionary<int3, NativeArray<byte>> fullResBlocksByChunk = new Dictionary<int3, NativeArray<byte>>();
+    readonly Dictionary<int3, List<PendingBlockWrite>> pendingWritesByChunk = new Dictionary<int3, List<PendingBlockWrite>>();
+    readonly HashSet<int3> chunksNeedingRemesh = new HashSet<int3>(); // Chunks that need their mesh rebuilt this frame
+    readonly HashSet<int3> chunksStillDecorating = new HashSet<int3>(); // Tracks chunks currently executing a DecorationJob
+    readonly HashSet<int3> meshInProgress = new HashSet<int3>(); // Tracks chunks currently executing a MeshJob
 
     // Threading / queues
     readonly ConcurrentQueue<(int3 coord, NativeArray<float> density, LODLevel lod)> completedNoiseQueue = new();
@@ -96,7 +104,8 @@ public class ChunkManager : MonoBehaviour
 
     // Job handles and pending work
     private readonly List<(int3 coord, JobHandle handle, NativeArray<float> density, NativeArray<byte> blockIds, LODLevel lod)> pendingBlockJobs = new(); // Waiting for block ID generation
-    private readonly List<(JobHandle handle, MeshData meshData, NativeArray<byte> blockIds)> pendingMeshJobs = new(); // Waiting for mesh completion
+    private readonly List<(JobHandle handle, MeshData meshData, NativeArray<byte> blockIds, bool keepBlockIds)> pendingMeshJobs = new(); // Waiting for mesh completion
+    private readonly List<(int3 coord, JobHandle handle, NativeArray<byte> blockIds, NativeList<PendingBlockWrite> outWrites, LODLevel lod)> pendingDecorationJobs = new();
     readonly Queue<MeshData> meshApplyQueue = new();  // Meshes ready to apply on main thread
 
     // Tokens
@@ -264,9 +273,45 @@ public class ChunkManager : MonoBehaviour
 
             it.handle.Complete();
 
-            var faces = DetectTerrainFlowFromBlocks(it.blockIds, it.lod);
-            ExpandFrontierFromFaces(it.coord, currentPlayerPos, faces);
-            ScheduleMeshJob(it.coord, it.blockIds, it.lod);
+            if (it.lod == LODLevel.Near)
+            {
+                // If it somehow exists already, dispose old and overwrite
+                if (fullResBlocksByChunk.TryGetValue(it.coord, out var existing) && existing.IsCreated)
+                    existing.Dispose();
+
+                fullResBlocksByChunk[it.coord] = it.blockIds;
+            }
+
+            // Decide if we should decorate this LOD (Near only)
+            bool shouldDecorate = (it.lod == LODLevel.Near);
+
+            if (shouldDecorate)
+            {
+                // Create output list for cross-chunk pending writes
+                var outWrites = new NativeList<PendingBlockWrite>(Allocator.Persistent);
+
+                var decJob = new DecorationJob
+                {
+                    chunkCoord = it.coord,
+                    chunkSize = chunkSize, // base size; Near => stride 1
+                    indexSize = chunkSize + 1,
+                    lod = it.lod,
+                    seed = (uint)(seed ^ it.coord.GetHashCode()),
+                    blockIds = it.blockIds,
+                    pendingWrites = outWrites
+                };
+
+                var decHandle = decJob.Schedule();
+
+                // Track decoration job instead of going directly to mesh
+                chunksStillDecorating.Add(it.coord);
+                pendingDecorationJobs.Add((it.coord, decHandle, it.blockIds, outWrites, it.lod));
+            }
+            else
+            {
+                // Non-Near: no decoration, straight to mesh, dispose blockIds afterwards.
+                ScheduleMeshJob(it.coord, it.blockIds, it.lod, false);
+            }
 
             // Return density to pool
             if (it.density.IsCreated)
@@ -275,17 +320,71 @@ public class ChunkManager : MonoBehaviour
             pendingBlockJobs.RemoveAt(i);
         }
 
+        // Check decoration jobs (Near LOD chunks)
+        for (int i = pendingDecorationJobs.Count - 1; i >= 0; i--)
+        {
+            var it = pendingDecorationJobs[i];
+            if (!it.handle.IsCompleted) continue;
+
+            it.handle.Complete();
+            chunksStillDecorating.Remove(it.coord);
+
+            // Merge cross-chunk writes into pendingWritesByChunk
+            MergeDecorationOutputs(it.outWrites);
+
+            // Flow detection + frontier expansion (unchanged)
+            var faces = DetectTerrainFlowFromBlocks(it.blockIds, it.lod);
+            ExpandFrontierFromFaces(it.coord, currentPlayerPos, faces);
+
+            // Dispose NativeList from the job
+            if (it.outWrites.IsCreated)
+                it.outWrites.Dispose();
+
+            // Now schedule the mesh for this decorated chunk
+            ScheduleMeshJob(it.coord, it.blockIds, it.lod, true);
+
+            pendingDecorationJobs.RemoveAt(i);
+        }
+
         for (int i = pendingMeshJobs.Count - 1; i >= 0; i--)
         {
-            var entry = pendingMeshJobs[i];
-            if (!entry.handle.IsCompleted) continue;
+            var it = pendingMeshJobs[i];
+            if (!it.handle.IsCompleted) continue;
 
-            entry.handle.Complete();
+            it.handle.Complete();
+            // Only dispose blockIds if we are not keeping them for gameplay / future re-meshes
+            if (!it.keepBlockIds)
+                DisposeBlockIds(it.blockIds);
 
-            DisposeBlockIds(entry.blockIds);
+            meshInProgress.Remove(it.meshData.coord);
 
-            meshApplyQueue.Enqueue(entry.meshData);
-            pendingMeshJobs.RemoveAt(i);
+            meshApplyQueue.Enqueue(it.meshData);
+            pendingMeshJobs.RemoveAt(i);           
+        }
+
+        FlushAllPendingWrites();
+
+        // Re-mesh all chunks that received neighbour writes this frame
+        if (chunksNeedingRemesh.Count > 0)
+        {
+            tmpChunkKeys.Clear();
+            tmpChunkKeys.AddRange(chunksNeedingRemesh);
+
+            foreach (var coord in tmpChunkKeys)
+            {
+                if (!fullResBlocksByChunk.TryGetValue(coord, out var blockIds) || !blockIds.IsCreated)
+                    continue;
+
+                if (!chunks.TryGetValue(coord, out var chunk) || chunk == null)
+                    continue;
+
+                var lod = chunk.lod;
+                bool keep = (lod == LODLevel.Near);
+
+                ScheduleMeshJob(coord, blockIds, lod, keepBlockIds: keep);
+            }
+
+            chunksNeedingRemesh.Clear();
         }
 
         // Apply a limited number of meshes to Unity per frame
@@ -609,7 +708,7 @@ public class ChunkManager : MonoBehaviour
 
         return flags;
     }
-    void ScheduleMeshJob(int3 coord, NativeArray<byte> blockIds, LODLevel lod)
+    void ScheduleMeshJob(int3 coord, NativeArray<byte> blockIds, LODLevel lod, bool keepBlockIds)
     {
         ChunkProfiler.MeshStart(); // Wont track an async job. Add handle.Complete() to profile
 
@@ -636,7 +735,8 @@ public class ChunkManager : MonoBehaviour
         };
 
         JobHandle handle = job.Schedule();
-        pendingMeshJobs.Add((handle, meshData, blockIds));
+        pendingMeshJobs.Add((handle, meshData, blockIds, keepBlockIds));
+        meshInProgress.Add(meshData.coord);
         //handle.Complete();
         ChunkProfiler.MeshEnd();
     }
@@ -821,6 +921,136 @@ public class ChunkManager : MonoBehaviour
     // =============================
     // ===== HELPER FUNCTIONS ======
     // =============================
+    void FlushAllPendingWrites()
+    {
+        if (pendingWritesByChunk.Count == 0)
+            return;
+
+        tmpChunkKeys.Clear();
+        tmpChunkKeys.AddRange(pendingWritesByChunk.Keys);
+
+        foreach (var coord in tmpChunkKeys)
+        {
+            // 1. Chunk must exist
+            if (!chunks.TryGetValue(coord, out var chunk) || chunk == null)
+                continue;
+
+            // 2. Must have full-res blockIds
+            if (!fullResBlocksByChunk.TryGetValue(coord, out var blockIds) ||
+                !blockIds.IsCreated)
+                continue;
+
+            // 3. Must NOT be locked by decoration or mesh
+            if (chunksStillDecorating.Contains(coord))
+                continue;
+            if (meshInProgress.Contains(coord))
+                continue;
+
+            // 4. Safe - apply all writes
+            var list = pendingWritesByChunk[coord];
+            foreach (var w in list)
+                SafeApplyWrite(coord, w);
+
+            pendingWritesByChunk.Remove(coord);
+            chunksNeedingRemesh.Add(coord);
+        }
+    }
+
+    void SafeApplyWrite(int3 coord, PendingBlockWrite w)
+    {
+        // If chunk is decorating or mesh job is running or we dont have blocks yet
+        // queue the write for later.
+        if (chunksStillDecorating.Contains(coord) ||
+            meshInProgress.Contains(coord) ||
+            !fullResBlocksByChunk.TryGetValue(coord, out var blockIds) ||
+            !blockIds.IsCreated)
+        {
+            if (!pendingWritesByChunk.TryGetValue(coord, out var waiting))
+                pendingWritesByChunk[coord] = waiting = new List<PendingBlockWrite>();
+            waiting.Add(w);
+            return;
+        }
+
+        // Safe to apply now
+        ApplySinglePendingWrite(coord, blockIds, w);
+        chunksNeedingRemesh.Add(coord);
+    }
+    void ApplySinglePendingWrite(int3 coord, NativeArray<byte> blockIds, PendingBlockWrite w)
+    {
+        int s = chunkSize + 1;
+        int3 p = w.localPos;
+
+        if ((uint)p.x >= s || (uint)p.y >= s || (uint)p.z >= s)
+            return;
+
+        int index = p.x + p.y * s + p.z * s * s;
+        byte current = blockIds[index];
+
+        switch (w.mode)
+        {
+            case PendingWriteMode.Replace:
+                blockIds[index] = w.blockId;
+                break;
+
+            case PendingWriteMode.ReplaceAir:
+                if (current == 0)
+                    blockIds[index] = w.blockId;
+                break;
+
+            case PendingWriteMode.ReplaceSoft:
+                if (current == 0)
+                    blockIds[index] = w.blockId;
+                break;
+        }
+
+        if (!w.isMirror)
+            EnqueueBoundaryMirrors(coord, w);
+    }
+    void EnqueueBoundaryMirrors(int3 coord, PendingBlockWrite source)
+    {
+        int3 p = source.localPos;
+        int edge = chunkSize;
+
+        void EnqueueMirror(int3 neighborChunk, int3 neighborLocal)
+        {
+            var mirror = new PendingBlockWrite
+            {
+                targetChunk = neighborChunk,
+                localPos = neighborLocal,
+                blockId = source.blockId,
+                mode = source.mode,
+                isMirror = true   // important: mirrors never spawn more mirrors
+            };
+
+            if (!pendingWritesByChunk.TryGetValue(neighborChunk, out var list))
+                pendingWritesByChunk[neighborChunk] = list = new List<PendingBlockWrite>();
+
+            list.Add(mirror);
+        }
+
+        // X faces
+        if (p.x == 0)
+            EnqueueMirror(coord + new int3(-1, 0, 0), new int3(edge, p.y, p.z));
+        /*else if (p.x == edge)
+            EnqueueMirror(coord + new int3(1, 0, 0), new int3(0, p.y, p.z));*/
+
+        // Y faces
+        if (p.y == 0)
+            EnqueueMirror(coord + new int3(0, -1, 0), new int3(p.x, edge, p.z));
+        /*else if (p.y == edge)
+            EnqueueMirror(coord + new int3(0, 1, 0), new int3(p.x, 0, p.z));*/
+
+        // Z faces
+        if (p.z == 0)
+            EnqueueMirror(coord + new int3(0, 0, -1), new int3(p.x, p.y, edge));
+        /*else if (p.z == edge)
+            EnqueueMirror(coord + new int3(0, 0, 1), new int3(p.x, p.y, 0));*/
+    }
+    void MergeDecorationOutputs(NativeList<PendingBlockWrite> writes)
+    {
+        for (int i = 0; i < writes.Length; i++)
+            SafeApplyWrite(writes[i].targetChunk, writes[i]);
+    }
     LODLevel GetLODForCoord(int3 coord, Vector3 playerChunk, LODLevel current)
     {
         float dist = GetDistanceAtChunkScaleWithRenderShape(coord, playerChunk);
@@ -894,6 +1124,16 @@ public class ChunkManager : MonoBehaviour
         chunk.Release(meshPool);
         chunkGoPool.Push(chunk.gameObject);
         chunks.Remove(coord);
+
+        if (fullResBlocksByChunk.TryGetValue(coord, out var arr))
+        {
+            if (arr.IsCreated) arr.Dispose();
+            fullResBlocksByChunk.Remove(coord);
+        }
+
+        // Also clear any “future” writes never applied
+        pendingWritesByChunk.Remove(coord);
+        chunksNeedingRemesh.Remove(coord);
     }
     static void DisposeMeshData(ref MeshData m)
     {
@@ -1067,7 +1307,7 @@ public class ChunkManager : MonoBehaviour
         // Complete and dispose pending jobs safely
         for (int i = pendingMeshJobs.Count - 1; i >= 0; i--)
         {
-            var (handle, meshData, blockIds) = pendingMeshJobs[i];
+            var (handle, meshData, blockIds, keepBlockIds) = pendingMeshJobs[i];
             if (!handle.IsCompleted) handle.Complete();
 
             // Dispose blockIds — no density arrays here anymore

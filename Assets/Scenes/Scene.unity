@@ -433,7 +433,7 @@ MonoBehaviour:
   seed: 355512
   frequency: 0.6
   chunkSize: 64
-  viewDistance: 5
+  viewDistance: 2
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 22
   renderShape: 1

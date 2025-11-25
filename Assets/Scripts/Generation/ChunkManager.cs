@@ -65,6 +65,7 @@ public class ChunkManager : MonoBehaviour
     public int minConcurrentNoiseTasks = 2;
     public int minMeshUploadsPerFrame = 2;
     public float scheduleInterval = 1f;       // Seconds between scheduling passes - Lower until chunk popping delay is acceptable.
+    [SerializeField] int meshDebounceFrames = 2;// Minimum # of frames between mesh jobs for any given chunk
 
     [Header("Pre-allocation tuning")]
     // Configurable pool sizes (tweakable)
@@ -93,6 +94,7 @@ public class ChunkManager : MonoBehaviour
     readonly Dictionary<LODLevel, LODSettings> lodConfigs = new();
     readonly Dictionary<int3, NativeArray<byte>> fullResBlocksByChunk = new Dictionary<int3, NativeArray<byte>>();
     readonly Dictionary<int3, List<PendingBlockWrite>> pendingWritesByChunk = new Dictionary<int3, List<PendingBlockWrite>>();
+    readonly Dictionary<int3, int> lastMeshFrame = new();
     readonly HashSet<int3> chunksNeedingRemesh = new HashSet<int3>(); // Chunks that need their mesh rebuilt this frame
     readonly HashSet<int3> chunksStillDecorating = new HashSet<int3>(); // Tracks chunks currently executing a DecorationJob
     readonly HashSet<int3> meshInProgress = new HashSet<int3>(); // Tracks chunks currently executing a MeshJob
@@ -206,7 +208,7 @@ public class ChunkManager : MonoBehaviour
         ChunkProfiler.ReportUploadQueue(meshApplyQueue.Count + generatingSet.Count);
         ChunkProfiler.ReportChunkCount(chunks.Count);
         ChunkProfiler.ReportMeshCount(pendingMeshJobs.Count);
-        ChunkMemDebug.LogIfNeeded();
+        //ChunkMemDebug.LogIfNeeded();
         /*if (Time.frameCount % 300 == 0)
         {
             Debug.Log($"[ChunkStats] chunks={chunks.Count} " +
@@ -237,19 +239,19 @@ public class ChunkManager : MonoBehaviour
 
         // Process phases only when needed
         if (movementTriggered)
-            OnPlayerMovePhaseUpdate(currentPlayerPos);
+            OnPlayerMovePhaseUpdate(lastPlayerPos);
 
         if (!firstFloodTriggered)
         {
             firstFloodTriggered = true;
-            PromoteDeferredToFrontier(currentPlayerPos);
+            PromoteDeferredToFrontier(lastPlayerPos);
         }
 
         // Manage completed noise tasks, schedules block assignment
         while (completedNoiseQueue.TryDequeue(out var data))
         {
             // Skip if chunk is already irrelevant
-            if (!IsChunkWithinRange(data.coord, currentPlayerPos, unloadDistance))
+            if (!IsChunkWithinRange(data.coord, lastPlayerPos, unloadDistance))
             {
                 // Dispose density immediately
                 if (data.density.IsCreated)
@@ -275,11 +277,21 @@ public class ChunkManager : MonoBehaviour
 
             if (it.lod == LODLevel.Near)
             {
-                // If it somehow exists already, dispose old and overwrite
+                // If decoration already created a blockId array, we DO NOT replace it.
                 if (fullResBlocksByChunk.TryGetValue(it.coord, out var existing) && existing.IsCreated)
-                    existing.Dispose();
+                {
+                    Debug.Log("Generation triggered for chunk that already has data");
+                    /*// Copy terrain into the existing array
+                    NativeArray<byte>.Copy(it.blockIds, existing);
 
-                fullResBlocksByChunk[it.coord] = it.blockIds;
+                    // Dispose the temporary array created by the block job
+                    it.blockIds.Dispose();*/
+                }
+                else
+                {
+                    // No existing array — this is the normal case for chunk generation
+                    fullResBlocksByChunk[it.coord] = it.blockIds;
+                }
             }
 
             // Decide if we should decorate this LOD (Near only)
@@ -309,6 +321,9 @@ public class ChunkManager : MonoBehaviour
             }
             else
             {
+                // Flow detection + frontier expansion
+                var faces = DetectTerrainFlowFromBlocks(it.blockIds, it.lod);
+                ExpandFrontierFromFaces(it.coord, lastPlayerPos, faces);
                 // Non-Near: no decoration, straight to mesh, dispose blockIds afterwards.
                 ScheduleMeshJob(it.coord, it.blockIds, it.lod, false);
             }
@@ -334,35 +349,19 @@ public class ChunkManager : MonoBehaviour
 
             // Flow detection + frontier expansion (unchanged)
             var faces = DetectTerrainFlowFromBlocks(it.blockIds, it.lod);
-            ExpandFrontierFromFaces(it.coord, currentPlayerPos, faces);
+            ExpandFrontierFromFaces(it.coord, lastPlayerPos, faces);
 
             // Dispose NativeList from the job
             if (it.outWrites.IsCreated)
                 it.outWrites.Dispose();
 
-            // Now schedule the mesh for this decorated chunk
-            ScheduleMeshJob(it.coord, it.blockIds, it.lod, true);
+            // Do not mesh immediately — defer to centralized remesh sweep
+            chunksNeedingRemesh.Add(it.coord);
 
             pendingDecorationJobs.RemoveAt(i);
         }
 
-        for (int i = pendingMeshJobs.Count - 1; i >= 0; i--)
-        {
-            var it = pendingMeshJobs[i];
-            if (!it.handle.IsCompleted) continue;
-
-            it.handle.Complete();
-            // Only dispose blockIds if we are not keeping them for gameplay / future re-meshes
-            if (!it.keepBlockIds)
-                DisposeBlockIds(it.blockIds);
-
-            meshInProgress.Remove(it.meshData.coord);
-
-            meshApplyQueue.Enqueue(it.meshData);
-            pendingMeshJobs.RemoveAt(i);           
-        }
-
-        FlushAllPendingWrites();
+        FlushAllPendingWrites(lastPlayerPos);
 
         // Re-mesh all chunks that received neighbour writes this frame
         if (chunksNeedingRemesh.Count > 0)
@@ -372,16 +371,50 @@ public class ChunkManager : MonoBehaviour
 
             foreach (var coord in tmpChunkKeys)
             {
+                // Must have blockIds
                 if (!fullResBlocksByChunk.TryGetValue(coord, out var blockIds) || !blockIds.IsCreated)
                     continue;
 
-                if (!chunks.TryGetValue(coord, out var chunk) || chunk == null)
+                chunks.TryGetValue(coord, out var chunk);
+
+                // For new chunks, lod is always Near (decoration only runs on Near)
+                LODLevel lod = LODLevel.Near;
+
+                // If the chunk exists, respect its LOD
+                if (chunk != null)
+                    lod = chunk.lod;
+
+                // Only re-mesh Near chunks
+                if (lod != LODLevel.Near)
                     continue;
 
-                var lod = chunk.lod;
-                bool keep = (lod == LODLevel.Near);
+                // Skip if it's mid-mesh (job in progress)
+                if (meshInProgress.Contains(coord))
+                    continue;
 
-                ScheduleMeshJob(coord, blockIds, lod, keepBlockIds: keep);
+                // Debounce: only mesh if allowed this frame
+                if (!CanMeshNow(coord))
+                    continue;
+
+                // OK schedule final remesh
+                ScheduleMeshJob(coord, blockIds, LODLevel.Near, keepBlockIds: true);
+                MarkMeshed(coord);
+            }
+
+            for (int i = pendingMeshJobs.Count - 1; i >= 0; i--)
+            {
+                var it = pendingMeshJobs[i];
+                if (!it.handle.IsCompleted) continue;
+
+                it.handle.Complete();
+                // Only dispose blockIds if we are not keeping them for gameplay / future re-meshes
+                if (!it.keepBlockIds)
+                    DisposeBlockIds(it.blockIds);
+
+                meshInProgress.Remove(it.meshData.coord);
+
+                meshApplyQueue.Enqueue(it.meshData);
+                pendingMeshJobs.RemoveAt(i);
             }
 
             chunksNeedingRemesh.Clear();
@@ -423,7 +456,7 @@ public class ChunkManager : MonoBehaviour
 
         updatePhase++;
 
-        // Completed full cycle?
+        // Completed full cycle
         if (updatePhase > 3)
         {
             updatePhase = 0;
@@ -463,7 +496,8 @@ public class ChunkManager : MonoBehaviour
         int spawnedThisTick = 0;
         int cap = Math.Max(1, maxConcurrentNoiseTasks);
 
-        // Here we are initiating a number of tasks that will eventually result in chunks, but, we are limiting this per tick and prioritizing LOD upgrades over new chunk generation.
+        // Here we are initiating a number of tasks that will eventually result in chunks
+        // We are limiting this per tick and prioritizing LOD upgrades over new chunk generation.
 
         if (lodUpdateQueue.Count != 0)
             while (spawnedThisTick < cap && TryDequeueLodUpdate(out var lodUpdateToken))
@@ -850,9 +884,7 @@ public class ChunkManager : MonoBehaviour
     // Unloads chunks when the number of chunks in play exeeds the maxChunks value. Unloads based on furtheset distance from player
     void UnloadChunks(Vector3 currentPlayerChunk)
     {    
-        bool anyDeferredExists = deferredFrontier.Count > 0;
-
-        if (anyDeferredExists)
+        if (deferredFrontier.Count > 0)
         {
             // Copy to list once to avoid hashset iteration overhead
             tmpFrontierList.Clear();
@@ -921,7 +953,18 @@ public class ChunkManager : MonoBehaviour
     // =============================
     // ===== HELPER FUNCTIONS ======
     // =============================
-    void FlushAllPendingWrites()
+    bool CanMeshNow(int3 coord)
+    {
+        if (!lastMeshFrame.TryGetValue(coord, out int last))
+            return true;
+
+        return Time.frameCount - last >= meshDebounceFrames;
+    }
+    void MarkMeshed(int3 coord)
+    {
+        lastMeshFrame[coord] = Time.frameCount;
+    }
+    void FlushAllPendingWrites(Vector3 currentPlayerChunk)
     {
         if (pendingWritesByChunk.Count == 0)
             return;
@@ -931,31 +974,45 @@ public class ChunkManager : MonoBehaviour
 
         foreach (var coord in tmpChunkKeys)
         {
-            // 1. Chunk must exist
-            if (!chunks.TryGetValue(coord, out var chunk) || chunk == null)
-                continue;
-
-            // 2. Must have full-res blockIds
-            if (!fullResBlocksByChunk.TryGetValue(coord, out var blockIds) ||
-                !blockIds.IsCreated)
-                continue;
-
-            // 3. Must NOT be locked by decoration or mesh
+            // Skip if decoration or mesh is running
             if (chunksStillDecorating.Contains(coord))
                 continue;
             if (meshInProgress.Contains(coord))
                 continue;
 
-            // 4. Safe - apply all writes
-            var list = pendingWritesByChunk[coord];
-            foreach (var w in list)
-                SafeApplyWrite(coord, w);
+            bool hasBlockIds =
+                fullResBlocksByChunk.TryGetValue(coord, out var blockIds) &&
+                blockIds.IsCreated;
 
-            pendingWritesByChunk.Remove(coord);
-            chunksNeedingRemesh.Add(coord);
+            bool hasChunk = chunks.ContainsKey(coord);
+            bool isGenerating = generatingSet.Contains(coord);
+
+            // Trigger chunk gen for case where decorations spill into a chunk that hasn't generated because it didn't have any terrain blocks.
+            if (!hasBlockIds && !hasChunk && !isGenerating && GetDistanceAtChunkScaleWithRenderShape(coord, currentPlayerChunk) < viewDistance)
+            {
+                if (!deferredFrontier.Contains(coord) && !frontierSet.Contains(coord))
+                {
+                    // Add the coordinate where the writes are placed into the defferedFrontier
+                    // This will add the chunks to the queue to eventually run through the full pipline
+                    deferredFrontier.Add(coord);
+                }
+                continue;
+            }
+
+            // Terrain exists safe to apply writes now
+            if (hasBlockIds)
+            {
+                var writes = pendingWritesByChunk[coord];
+
+                for (int i = 0; i < writes.Count; i++)
+                    SafeApplyWrite(coord, writes[i]);
+
+                pendingWritesByChunk.Remove(coord);
+                chunksNeedingRemesh.Add(coord);
+            }
+            //Terrain not ready yet leave writes queued
         }
     }
-
     void SafeApplyWrite(int3 coord, PendingBlockWrite w)
     {
         // If chunk is decorating or mesh job is running or we dont have blocks yet
@@ -1076,16 +1133,23 @@ public class ChunkManager : MonoBehaviour
     }
     void EnqueueFrontier(int3 c)
     {
-        if (frontierSet.Add(c)) frontierQueue.Enqueue(c);
+        if (frontierSet.Add(c))
+        {
+            frontierQueue.Enqueue(c);
+        }
     }
     bool TryDequeueFrontier(out int3 c)
     {
         while (frontierQueue.Count > 0)
         {
             c = frontierQueue.Dequeue();
-            if (frontierSet.Remove(c)) return true; // real item
+            if (frontierSet.Remove(c))
+            {
+                return true;
+            }
         }
-        c = default; return false;
+        c = default;
+        return false;
     }
     void EnqueueLodUpdate(int3 c, LODLevel l) // Currently does not do any extra sorting
     {

@@ -21,19 +21,19 @@ MonoBehaviour:
     isTransparent: 1
   - type: 1
     name: Dirt
-    texture: {fileID: 2800000, guid: 947ed903c9b980549b2820e858f7a6db, type: 3}
+    texture: {fileID: 2800000, guid: c58add1582493c54ebcd68c2cd606fc8, type: 3}
     isSolid: 1
     hasCollision: 1
     isTransparent: 0
   - type: 2
     name: Grass
-    texture: {fileID: 2800000, guid: 378bf7eb9ebc1b340a6deea4aaf80e5c, type: 3}
+    texture: {fileID: 2800000, guid: 9ed0cc8bb29b40746bfdd41e64e021b3, type: 3}
     isSolid: 1
     hasCollision: 1
     isTransparent: 0
   - type: 3
     name: Stone
-    texture: {fileID: 2800000, guid: c58add1582493c54ebcd68c2cd606fc8, type: 3}
+    texture: {fileID: 2800000, guid: 378bf7eb9ebc1b340a6deea4aaf80e5c, type: 3}
     isSolid: 1
     hasCollision: 1
     isTransparent: 0

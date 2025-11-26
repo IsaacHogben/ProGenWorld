@@ -17,6 +17,7 @@ public struct GreedyMeshJob : IJob
     [NonSerialized] [ReadOnly] public NativeArray<byte> blockArray;
     [ReadOnly] public NativeArray<BlockDatabase.BlockInfoUnmanaged> blocks;
     public int chunkSize;
+    public int blockSize;
     public MeshData meshData;
     public int vertexCount;
 
@@ -46,6 +47,42 @@ public struct GreedyMeshJob : IJob
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static bool CompareMask(FMask a, FMask b) => a.Normal == b.Normal && a.Block == b.Block;
 
+    byte SampleLOD(int3 coord)
+{
+    int s = meshData.meshRes;
+    if (s == 1)
+        return GetBlock(coord);
+
+    int3 basePos = new int3(coord.x * s, coord.y * s, coord.z * s);
+
+    int3 limit = new int3(s, s, s);
+
+    // When sampling at chunk face (coord==0), reduce one layer from that axis
+    if (coord.x == 0) limit.x -= 1;
+    if (coord.y == 0) limit.y -= 1;
+    if (coord.z == 0) limit.z -= 1;
+
+    byte best = 0;
+
+    for (int dx = 0; dx < limit.x; dx++)
+        for (int dy = 0; dy < limit.y; dy++)
+            for (int dz = 0; dz < limit.z; dz++)
+            {
+                int xi = basePos.x + dx;
+                int yi = basePos.y + dy;
+                int zi = basePos.z + dz;
+
+                if (xi <= chunkSize && yi <= chunkSize && zi <= chunkSize)
+                {
+                    byte v = GetBlock(new int3(xi, yi, zi));
+                    if (v > best)
+                        best = v;
+                }
+            }
+
+    return best;
+}
+
     public void GenerateMesh(NativeArray<FMask> mask)
     {
         // Sweep over each axis (X, Y, Z)
@@ -55,9 +92,9 @@ public struct GreedyMeshJob : IJob
             int axis1 = (axis + 1) % 3;
             int axis2 = (axis + 2) % 3;
 
-            int mainAxisLimit = chunkSize;
-            int axis1Limit = chunkSize;
-            int axis2Limit = chunkSize;
+            int mainAxisLimit = chunkSize / meshData.meshRes;
+            int axis1Limit = chunkSize / meshData.meshRes;
+            int axis2Limit = chunkSize / meshData.meshRes;
 
             int3 deltaAxis1 = int3.zero;
             int3 deltaAxis2 = int3.zero;
@@ -66,9 +103,6 @@ public struct GreedyMeshJob : IJob
             int3 axisMask = int3.zero;
 
             axisMask[axis] = 1;
-
-            // This change prevents overlapping faces on high lod chunks - Incomplete
-            int lodModifiedi = meshData.stride != 1 ? -1 : 0;
 
             // Check each slice of the chunk
             for (chunkItr[axis] = 0; chunkItr[axis] < mainAxisLimit;)
@@ -80,8 +114,8 @@ public struct GreedyMeshJob : IJob
                 {
                     for (chunkItr[axis1] = 0; chunkItr[axis1] < axis1Limit; ++chunkItr[axis1])
                     {
-                        var currentBlock = GetBlock(chunkItr);
-                        var compareBlock = GetBlock(chunkItr + axisMask);
+                        var currentBlock = SampleLOD(chunkItr);
+                        var compareBlock = SampleLOD(chunkItr + axisMask);
                         var currentBlockData = blocks[currentBlock];
                         var compareBlockData = blocks[compareBlock];
 
@@ -189,7 +223,7 @@ public struct GreedyMeshJob : IJob
 
         // apply vertex colour here if able 
         float4 color = new float4(mask.Block, 0, 0, 1);
-        float3 s = new float3(meshData.stride);
+        float3 s = new float3(blockSize);
         // Append vertices
         meshData.vertices.Add(v1 * s);
         meshData.vertices.Add(v2 * s);

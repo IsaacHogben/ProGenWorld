@@ -19,21 +19,21 @@ public class NoiseGenerator
         //noise = FastNoise.FromEncodedNodeTree("IQAZABMArkfhPyUAAACAP8P16D8AAIA/AACAPxEABAAAAK5HAUAQAArXY0ANAAMAAAAAAABAEAAAAAA/BwAAmpmZPgApXA8/ANejcD8AzczMPQDNzIw/ABSuB0ABEwBcj0I/EAB7FK4+JwABAAAA//8BAACuR+FABAAAAAAAuB6FPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACuR+G+");
     }
 
-    public float[] FillDensity(int3 chunkCoord, int chunkSize, float frequency, int stride)
+    public float[] FillDensity(int3 chunkCoord, int chunkSize, float frequency, int sampelRes)
     {
         if (noise == null)
             throw new System.Exception("Noise not initialized");
 
         // each LOD has fewer samples per axis
-        int scaledSize = (chunkSize / stride);
+        int scaledSize = (chunkSize / sampelRes);
         int scaledVoxelCount = (scaledSize + 1) * (scaledSize + 1) * (scaledSize + 1);
 
         float[] noiseOut = new float[scaledVoxelCount];
-        int3 worldPos = (chunkCoord * chunkSize) / stride;
+        int3 worldPos = (chunkCoord * chunkSize) / sampelRes;
 
         // scale frequency up to stretch the same area of the noise field
         // this keeps world alignment consistent between LODs
-        float relativeFrequency = frequency/100 * stride;
+        float relativeFrequency = frequency/100 * sampelRes;
 
         noise.GenUniformGrid3D(
             noiseOut,

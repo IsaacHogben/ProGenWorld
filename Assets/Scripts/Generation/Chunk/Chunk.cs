@@ -75,7 +75,7 @@ public class Chunk : MonoBehaviour
         mesh.UploadMeshData(false); // keep CPU copy for collider & future rewrites
 
         // Collider handling:
-        if (meshData.stride == 1)
+        if (lod == LODLevel.Near)
         {
             var mc = GetComponent<MeshCollider>();
             if (mc == null) mc = gameObject.AddComponent<MeshCollider>();

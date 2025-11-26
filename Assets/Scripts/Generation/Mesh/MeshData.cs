@@ -10,6 +10,6 @@ public struct MeshData
     [NonSerialized] public NativeList<float3> normals;
     [NonSerialized] public NativeList<float4> colors;
     [NonSerialized] public NativeList<float2> UV0s;
-    [NonSerialized] public int stride;
+    [NonSerialized] public int meshRes;
     [NonSerialized] public LODLevel lod;
 }

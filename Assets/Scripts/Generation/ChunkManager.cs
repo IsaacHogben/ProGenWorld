@@ -177,16 +177,16 @@ public class ChunkManager : MonoBehaviour
         openFaceDetector = new OpenFaceDetector(ref nativeBlockDatabase);
         
         //Define LODs
-        lodConfigs[LODLevel.Near] = new LODSettings { stride = 1, detailedBlocks = true, material = voxelMaterial};
-        lodConfigs[LODLevel.Mid] = new LODSettings { stride = 2, detailedBlocks = false, material = midMaterial};
-        lodConfigs[LODLevel.Far] = new LODSettings { stride = 4, detailedBlocks = false, material = farMaterial};
+        lodConfigs[LODLevel.Near] = new LODSettings { meshRes = 1, sampleRes = 1, blockSize = 1, detailedBlocks = true, material = voxelMaterial};
+        lodConfigs[LODLevel.Mid] = new LODSettings { meshRes = 2, sampleRes = 1, blockSize = 2, detailedBlocks = false, material = midMaterial};
+        lodConfigs[LODLevel.Far] = new LODSettings { meshRes = 1, sampleRes = 4, blockSize = 4, detailedBlocks = false, material = farMaterial};
         // Compute density counts per LOD
         foreach (var kv in lodConfigs.ToArray())
         {
             var lod = kv.Key;
             var cfg = kv.Value;
 
-            int lodChunkSize = chunkSize / cfg.stride;
+            int lodChunkSize = chunkSize / cfg.sampleRes;
             cfg.densityCount = (lodChunkSize + 1) * (lodChunkSize + 1) * (lodChunkSize + 1);
 
             lodConfigs[lod] = cfg;
@@ -262,7 +262,7 @@ public class ChunkManager : MonoBehaviour
             var (handle, blockIds) = CreateBlockAssignmentJob(
                 data.density,
                 data.coord,
-                lodConfigs[data.lod].stride);
+                lodConfigs[data.lod].sampleRes);
 
             pendingBlockJobs.Add((data.coord, handle, data.density, blockIds, data.lod));
         }
@@ -275,7 +275,7 @@ public class ChunkManager : MonoBehaviour
 
             it.handle.Complete();
 
-            if (it.lod == LODLevel.Near)
+            if (lodConfigs[it.lod].sampleRes == 1)
             {
                 // If decoration already created a blockId array, we DO NOT replace it.
                 if (fullResBlocksByChunk.TryGetValue(it.coord, out var existing) && existing.IsCreated)
@@ -295,7 +295,7 @@ public class ChunkManager : MonoBehaviour
             }
 
             // Decide if we should decorate this LOD (Near only)
-            bool shouldDecorate = (it.lod == LODLevel.Near);
+            bool shouldDecorate = (lodConfigs[it.lod].sampleRes == 1);
 
             if (shouldDecorate)
             {
@@ -305,7 +305,7 @@ public class ChunkManager : MonoBehaviour
                 var decJob = new DecorationJob
                 {
                     chunkCoord = it.coord,
-                    chunkSize = chunkSize, // base size; Near => stride 1
+                    chunkSize = chunkSize, // base size; Near => meshRes 1
                     indexSize = chunkSize + 1,
                     lod = it.lod,
                     seed = (uint)(seed ^ it.coord.GetHashCode()),
@@ -378,14 +378,13 @@ public class ChunkManager : MonoBehaviour
                 chunks.TryGetValue(coord, out var chunk);
 
                 // For new chunks, lod is always Near (decoration only runs on Near)
-                LODLevel lod = LODLevel.Near;
+                LODLevel lod = LODLevel.Mid;
 
                 // If the chunk exists, respect its LOD
                 if (chunk != null)
                     lod = chunk.lod;
 
-                // Only re-mesh Near chunks
-                if (lod != LODLevel.Near)
+                if (lod == LODLevel.Far)
                     continue;
 
                 // Skip if it's mid-mesh (job in progress)
@@ -397,7 +396,7 @@ public class ChunkManager : MonoBehaviour
                     continue;
 
                 // OK schedule final remesh
-                ScheduleMeshJob(coord, blockIds, LODLevel.Near, keepBlockIds: true);
+                ScheduleMeshJob(coord, blockIds, lod, keepBlockIds: true);
                 MarkMeshed(coord);
             }
 
@@ -482,7 +481,9 @@ public class ChunkManager : MonoBehaviour
             // Promote only (never lower LOD) ----------- Change here if we want LOD's to downgrade as well
             if (desiredLod < chunkLod)
             {
-                if (chunkLod == LODLevel.Mid) EnqueueLodUpdate(kv.Key, LODLevel.Near);
+                if (chunkLod == LODLevel.Mid)
+                    chunksNeedingRemesh.Add(coord);
+                //EnqueueLodUpdate(kv.Key, LODLevel.Near);
                 else if (chunkLod == LODLevel.Far) EnqueueLodUpdate(kv.Key, LODLevel.Mid);
                 chunk.lod = desiredLod;
             }
@@ -602,7 +603,7 @@ public class ChunkManager : MonoBehaviour
 
                 var sw = System.Diagnostics.Stopwatch.StartNew();
 
-                densityBuffer.CopyFrom(noiseGenerator.FillDensity(coord, chunkSize, frequency, lodSettings.stride)); //Editing native array in asyn task is unsafe. Is currently accounted for.
+                densityBuffer.CopyFrom(noiseGenerator.FillDensity(coord, chunkSize, frequency, lodSettings.sampleRes)); //Editing native array in asyn task is unsafe. Is currently accounted for.
                 sw.Stop();
 
                 completedNoiseQueue.Enqueue((coord, densityBuffer, lod));
@@ -633,9 +634,9 @@ public class ChunkManager : MonoBehaviour
             }
         });
     }
-    private (JobHandle handle, NativeArray<byte> blockIds) CreateBlockAssignmentJob(NativeArray<float> nativeDensity, int3 coord, int stride)
+    private (JobHandle handle, NativeArray<byte> blockIds) CreateBlockAssignmentJob(NativeArray<float> nativeDensity, int3 coord, int sampleRes)
     {
-        int chunkLodSize = chunkSize / stride;
+        int chunkLodSize = chunkSize / sampleRes;
         int voxelCount = (chunkLodSize + 1) * (chunkLodSize + 1) * (chunkLodSize + 1);
         var blockIds = new NativeArray<byte>(voxelCount, Allocator.Persistent);
         ChunkMemDebug.ActiveBlockIdArrays++;
@@ -681,16 +682,16 @@ public class ChunkManager : MonoBehaviour
     }
     private OpenFaces DetectTerrainFlowFromBlocks(NativeArray<byte> blockIds, LODLevel lod)
     {
-        // determine stride based on LOD
-        int stride = lod switch
+        // determine meshRes based on LOD
+        int meshRes = lod switch
         {
             LODLevel.Near => 1,
-            LODLevel.Mid => 2,
+            LODLevel.Mid => 1,
             LODLevel.Far => 4,
             _ => 1
         };
 
-        int s = (chunkSize / stride) + 1;
+        int s = (chunkSize / meshRes) + 1;
         OpenFaces flags = OpenFaces.None;
 
         bool IsSolid(int x, int y, int z)
@@ -701,10 +702,10 @@ public class ChunkManager : MonoBehaviour
             bool sawSolid = false;
             bool sawAir = false;
 
-            // sample every Nth voxel depending on LOD stride
-            for (int i = 0; i < s; i += stride)
+            // sample every Nth voxel depending on LOD meshRes
+            for (int i = 0; i < s; i += meshRes)
             {
-                for (int j = 0; j < s; j += stride)
+                for (int j = 0; j < s; j += meshRes)
                 {
                     bool solid = test(i, j);
                     if (solid) sawSolid = true; else sawAir = true;
@@ -754,7 +755,7 @@ public class ChunkManager : MonoBehaviour
             normals = new NativeList<float3>(Allocator.Persistent),
             colors = new NativeList<float4>(Allocator.Persistent),
             UV0s = new NativeList<float2>(Allocator.Persistent),
-            stride = lodConfigs[lod].stride,
+            meshRes = lodConfigs[lod].meshRes,
             lod = lod
         };
         ChunkMemDebug.ActiveMeshDatas++;
@@ -764,7 +765,8 @@ public class ChunkManager : MonoBehaviour
         {
             blockArray = blockIds,
             blocks = nativeBlockDatabase,
-            chunkSize = chunkSize / lodConfigs[lod].stride,
+            chunkSize = chunkSize / lodConfigs[lod].sampleRes,
+            blockSize = lodConfigs[lod].blockSize,
             meshData = meshData,
         };
 
@@ -1386,10 +1388,12 @@ public class ChunkManager : MonoBehaviour
     }
     void OnDestroy()
     {
+        // Stop async tasks
         CompleteAllJobs();
-        cts?.Cancel(); // Cancels async task that was not able to be jobified
+        cts?.Cancel();
         cts?.Dispose();
-        // Dispose any leftover pooled density arrays
+
+        // Dispose leftover pooled density arrays
         lock (densityPoolLock)
         {
             foreach (var pool in densityPoolByLod.Values)
@@ -1408,16 +1412,35 @@ public class ChunkManager : MonoBehaviour
         generatingSet.Clear();
         activeNoiseTasks.Clear();
 
-        // Optionally destroy pooled gameobjects
+        // Destroy pooled chunk gameobjects
         while (chunkGoPool.Count > 0)
         {
             var go = chunkGoPool.Pop();
-            if (go != null) DestroyImmediate(go);
+            if (go != null)
+                DestroyImmediate(go);
         }
 
-        // Remaining Clean-up
+        // Dispose all full-res block arrays that were never cleaned
+        foreach (var kv in fullResBlocksByChunk)
+        {
+            try
+            {
+                if (kv.Value.IsCreated)
+                    kv.Value.Dispose();
+            }
+            catch { /* already disposed, ignore */ }
+        }
+        fullResBlocksByChunk.Clear();
+
+        // Also clear leftover pending writes
+        pendingWritesByChunk.Clear();
+        chunksNeedingRemesh.Clear();
+
+        // Dispose block database
         if (nativeBlockDatabase.IsCreated)
             nativeBlockDatabase.Dispose();
+
+        // Dispose compute detector
         openFaceDetector?.Dispose();
     }
 

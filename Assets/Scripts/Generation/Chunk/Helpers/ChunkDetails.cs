@@ -10,7 +10,9 @@ public enum LODLevel : byte
 
 public struct LODSettings
 {
-    public int stride;          // voxel step size (1 = full res)
+    public int meshRes;         // resolution that mesh samples block array
+    public int sampleRes;       // step size of noise sample - influences size of array
+    public int blockSize;       // size of mesh block outputs
     public bool detailedBlocks; // whether to assign detailed block types
     public Material material;   // material for mesh
     

@@ -281,11 +281,14 @@ public class ChunkManager : MonoBehaviour
                 if (fullResBlocksByChunk.TryGetValue(it.coord, out var existing) && existing.IsCreated)
                 {
                     Debug.Log("Generation triggered for chunk that already has data");
-                    /*// Copy terrain into the existing array
-                    NativeArray<byte>.Copy(it.blockIds, existing);
-
-                    // Dispose the temporary array created by the block job
-                    it.blockIds.Dispose();*/
+                    // Exit early
+                    if (it.density.IsCreated)
+                        ReturnDensityArray(it.lod, it.density);
+                    if (it.blockIds.IsCreated)
+                        DisposeBlockIds(it.blockIds);
+                    pendingBlockJobs.RemoveAt(i);
+                    generatingSet.Remove(it.coord);
+                    continue;
                 }
                 else
                 {
@@ -487,6 +490,14 @@ public class ChunkManager : MonoBehaviour
                 else if (chunkLod == LODLevel.Far) EnqueueLodUpdate(kv.Key, LODLevel.Mid);
                 chunk.lod = desiredLod;
             }
+            if (desiredLod > chunkLod)
+            {
+                if (chunkLod == LODLevel.Near)
+                {
+                    chunksNeedingRemesh.Add(coord);
+                    chunk.lod = LODLevel.Mid;
+                }
+            }
         }
     }
     // flood-fill scheduler (closest-first implicitly due to frontier expansion pattern)
@@ -652,33 +663,6 @@ public class ChunkManager : MonoBehaviour
 
         var handle = job.Schedule(voxelCount, 64); // async, no Complete()
         return (handle, blockIds);
-    }
-    private OpenFaces DetectOpenFacesFromBlocks(NativeArray<byte> blockIds)
-    {
-        OpenFaces flags = OpenFaces.None;
-        int s = chunkSize + 1;
-
-        bool Solid(int x, int y, int z) => blockIds[x + y * s + z * s * s] == 0;
-
-        // +X
-        for (int y = 0; y < s; y++) for (int z = 0; z < s; z++) if (Solid(s - 1, y, z)) { flags |= OpenFaces.PosX; goto NEG_X; }
-            NEG_X:
-        // -X
-        for (int y = 0; y < s; y++) for (int z = 0; z < s; z++) if (Solid(0, y, z)) { flags |= OpenFaces.NegX; goto POS_Y; }
-            POS_Y:
-        // +Y
-        for (int x = 0; x < s; x++) for (int z = 0; z < s; z++) if (Solid(x, s - 1, z)) { flags |= OpenFaces.PosY; goto NEG_Y; }
-            NEG_Y:
-        // -Y
-        for (int x = 0; x < s; x++) for (int z = 0; z < s; z++) if (Solid(x, 0, z)) { flags |= OpenFaces.NegY; goto POS_Z; }
-            POS_Z:
-        // +Z
-        for (int x = 0; x < s; x++) for (int y = 0; y < s; y++) if (Solid(x, y, s - 1)) { flags |= OpenFaces.PosZ; goto NEG_Z; }
-            NEG_Z:
-        // -Z
-        for (int x = 0; x < s; x++) for (int y = 0; y < s; y++) if (Solid(x, y, 0)) { flags |= OpenFaces.NegZ; }
-
-        return flags;
     }
     private OpenFaces DetectTerrainFlowFromBlocks(NativeArray<byte> blockIds, LODLevel lod)
     {
@@ -1216,8 +1200,22 @@ public class ChunkManager : MonoBehaviour
         if (arr.IsCreated)
             arr.Dispose();
     }
-    public Vector3 ChunkToWorld(int3 coord) =>                                      // Public for debug visualizers
-        new Vector3(coord.x, coord.y, coord.z) * chunkSize;    // Add .5f to better represent the center of the chunk rather than origin
+    public Vector3 ChunkToWorld(int3 coord)
+    {
+        // Return ORIGIN (unchanged behavior for mesh placement)
+        return new Vector3(coord.x * chunkSize,
+                           coord.y * chunkSize,
+                           coord.z * chunkSize);
+    }
+
+    public Vector3 ChunkToWorldCenter(int3 coord)
+    {
+        float off = chunkSize * 0.5f;
+        return new Vector3(coord.x * chunkSize + off,
+                           coord.y * chunkSize + off,
+                           coord.z * chunkSize + off);
+    }
+
     int3 WorldToChunkCoord(Vector3 pos)
     {
         return new int3(
@@ -1330,7 +1328,7 @@ public class ChunkManager : MonoBehaviour
     }
     float GetDistanceAtChunkScaleWithRenderShape(int3 _chunk, Vector3 pos)
     {
-        Vector3 chunk = ChunkToWorld(_chunk);
+        Vector3 chunk = ChunkToWorldCenter(_chunk);
 
         switch (renderShape)
         {

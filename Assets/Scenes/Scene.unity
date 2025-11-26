@@ -433,7 +433,7 @@ MonoBehaviour:
   seed: 355512
   frequency: 0.2
   chunkSize: 64
-  viewDistance: 20
+  viewDistance: 9
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 22
   renderShape: 1
@@ -444,8 +444,8 @@ MonoBehaviour:
   blockDatabase: {fileID: 11400000, guid: f9b2a5fcc2fa09d4caac36b7d550818c, type: 2}
   textureArrayBuilder: {fileID: 11400000, guid: 3f71b64aadbc3bf498224a3efb12f316, type: 2}
   voxelMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
-  nearRange: 8
-  midRange: 16
+  nearRange: 7
+  midRange: 9
   farRange: 20
   nearMaterial: {fileID: 0}
   midMaterial: {fileID: 0}
@@ -1013,7 +1013,7 @@ MonoBehaviour:
   groundMask:
     serializedVersion: 2
     m_Bits: 4294967295
-  moveSpeed: 33
+  moveSpeed: 44
   gravity: 0
   jumpHeight: 16
   sensitivity: 0.15

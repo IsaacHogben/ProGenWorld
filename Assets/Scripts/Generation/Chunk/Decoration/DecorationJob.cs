@@ -33,19 +33,50 @@ public struct DecorationJob : IJob
 
                     byte currentBlock = blockIds[index];
 
-                    if (currentBlock == (byte)BlockType.Grass && rng.NextFloat() < 0.00005f)
-                        MakeTestSpiralTower(x, y, z);
                     if (currentBlock == (byte)BlockType.Grass && rng.NextFloat() < 0.001f)
-                        MakeTestPineTree(x, y, z);
-                        /*if (x == 0 && y == 0 && z == 0)
-                            MakeTestShape(x, y, z);
-                        if (x == 63 && y == 0 && z == 0)
-                            MakeTestShape(x, y, z);
-                        if (x == 0 && y == 0 && z == 63)
-                            MakeTestShape(x, y, z);
-                        if (x == 63 && y == 0 && z == 63)
-                            MakeTestShape(x, y, z);*/
+                        MakeTestPineTree(x, y, z); 
+                    else if (currentBlock == (byte)BlockType.Grass && rng.NextFloat() < 0.000001f)
+                        MakeTestSpiralTower(x, y, z);
                 }
+    }
+
+    void ApplyBlock(int x, int y, int z, BlockType block)
+    {
+        byte blockId = (byte)block;
+        int index = x + y * indexSize + z * indexSize * indexSize;
+        int3 localPos = new int3(x, y, z);
+        int3 worldPos = chunkCoord * chunkSize + localPos;
+
+        // Compute which chunk this block belongs to
+        int3 targetChunk = new int3(
+            (int)math.floor(worldPos.x / (float)chunkSize),
+            (int)math.floor(worldPos.y / (float)chunkSize),
+            (int)math.floor(worldPos.z / (float)chunkSize)
+        );
+
+        // Compute localPos inside that target chunk
+        int3 targetLocal = new int3(
+            worldPos.x - targetChunk.x * chunkSize,
+            worldPos.y - targetChunk.y * chunkSize,
+            worldPos.z - targetChunk.z * chunkSize
+        );
+
+        // Writes imediatly if change does not affect bordering chunks, else, uses the pending writes system
+        // This may be changed to only use pending writes system
+        if (targetLocal.Equals(chunkCoord) && x!=0 && y!=0 && z!=0)
+        {
+            blockIds[index] = blockId;
+        }
+        else
+            // Cross-chunk: emit pending write for main thread to route later
+            pendingWrites.Add(new PendingBlockWrite
+            {
+                targetChunk = targetChunk,
+                localPos = targetLocal,
+                blockId = blockId,
+                mode = PendingWriteMode.ReplaceAir,
+                isMirror = false,
+            });
     }
     private void MakeTestSpiralTower(int x, int y, int z)
     {
@@ -89,11 +120,10 @@ public struct DecorationJob : IJob
         for (int yy = 0; yy < 10; yy++)
             ApplyBlock(x, top + yy, z, BlockType.Stone);
     }
-
     private void MakeTestPineTree(int x, int y, int z)
     {
         // --- Trunk ---
-        int trunkHeight = 23;
+        int trunkHeight = 12;
         for (int i = 0; i < trunkHeight; i++)
         {
             ApplyBlock(x, y + i, z, BlockType.Dirt);
@@ -101,8 +131,8 @@ public struct DecorationJob : IJob
 
         // --- Layers of decreasing radius ---
         int layerStartY = y + trunkHeight;
-        int maxRadius = 7;           // bottom foliage
-        int layers = 7;              // number of "rings"
+        int maxRadius = 6;           // bottom foliage
+        int layers = 6;              // number of "rings"
         int radius = maxRadius;
 
         for (int ly = 0; ly < layers; ly++)
@@ -128,52 +158,6 @@ public struct DecorationJob : IJob
                 }
             }
         }
-    }
-
-    private void MakeTestShape(int x, int y, int z)
-    {
-        for (int i = y; i < 64; i++)
-        {
-            ApplyBlock(x, y + i, z, BlockType.Stone);
-        }
-    }
-    void ApplyBlock(int x, int y, int z, BlockType block)
-    {
-        byte blockId = (byte)block;
-        int index = x + y * indexSize + z * indexSize * indexSize;
-        int3 localPos = new int3(x, y, z);
-        int3 worldPos = chunkCoord * chunkSize + localPos;
-
-        // Compute which chunk this block belongs to
-        int3 targetChunk = new int3(
-            (int)math.floor(worldPos.x / (float)chunkSize),
-            (int)math.floor(worldPos.y / (float)chunkSize),
-            (int)math.floor(worldPos.z / (float)chunkSize)
-        );
-
-        // Compute localPos inside that target chunk
-        int3 targetLocal = new int3(
-            worldPos.x - targetChunk.x * chunkSize,
-            worldPos.y - targetChunk.y * chunkSize,
-            worldPos.z - targetChunk.z * chunkSize
-        );
-
-        // Writes imediatly if change does not affect bordering chunks, else, uses the pending writes system
-        // This may be changed to only use pending writes system
-        if (targetLocal.Equals(chunkCoord) && x!=0 && y!=0 && z!=0)
-        {
-            blockIds[index] = blockId;
-        }
-        else
-            // Cross-chunk: emit pending write for main thread to route later
-            pendingWrites.Add(new PendingBlockWrite
-            {
-                targetChunk = targetChunk,
-                localPos = targetLocal,
-                blockId = blockId,
-                mode = PendingWriteMode.ReplaceAir,
-                isMirror = false,
-            });
     }
 }
 

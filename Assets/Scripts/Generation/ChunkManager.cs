@@ -44,9 +44,9 @@ public class ChunkManager : MonoBehaviour
     [SerializeField] public Material voxelMaterial;
 
     [Header("LOD Settings")]
-    [SerializeField] float nearRange = 4f;
-    [SerializeField] float midRange = 10f;
-    [SerializeField] float farRange = 20f;
+    [SerializeField] int nearRange = 4;
+    [SerializeField] int midRange = 10;
+    [SerializeField] int farRange = 20;
 
     [SerializeField] Material nearMaterial;
     [SerializeField] Material midMaterial;
@@ -198,7 +198,7 @@ public class ChunkManager : MonoBehaviour
     void Start()
     {
         // Seed frontier at the player's current chunk
-        InitFloodFrontier(player.transform.position, 0, 10);
+        InitFloodFrontier(player.transform.position, nearRange, 4);
     }
 
     void Update()
@@ -666,16 +666,9 @@ public class ChunkManager : MonoBehaviour
     }
     private OpenFaces DetectTerrainFlowFromBlocks(NativeArray<byte> blockIds, LODLevel lod)
     {
-        // determine meshRes based on LOD
-        int meshRes = lod switch
-        {
-            LODLevel.Near => 1,
-            LODLevel.Mid => 1,
-            LODLevel.Far => 4,
-            _ => 1
-        };
+        int sampleRes = lodConfigs[lod].sampleRes;
 
-        int s = (chunkSize / meshRes) + 1;
+        int s = (chunkSize / sampleRes) + 1;
         OpenFaces flags = OpenFaces.None;
 
         bool IsSolid(int x, int y, int z)
@@ -687,9 +680,9 @@ public class ChunkManager : MonoBehaviour
             bool sawAir = false;
 
             // sample every Nth voxel depending on LOD meshRes
-            for (int i = 0; i < s; i += meshRes)
+            for (int i = 0; i < s; i += sampleRes)
             {
-                for (int j = 0; j < s; j += meshRes)
+                for (int j = 0; j < s; j += sampleRes)
                 {
                     bool solid = test(i, j);
                     if (solid) sawSolid = true; else sawAir = true;
@@ -842,7 +835,7 @@ public class ChunkManager : MonoBehaviour
         }
     }
     // Create an initial zone around the player from which the flood fill can start
-    void InitFloodFrontier(Vector3 playerPos, short radius, int height) // Create the initial position for flood fill to begin. Is the players location at start of world load.
+    void InitFloodFrontier(Vector3 playerPos, int radius, int height) // Create the initial position for flood fill to begin. Is the players location at start of world load.
     {
         int3 centerChunk = WorldToChunkCoord(playerPos);
         float sqrViewDist = radius * radius;
@@ -974,7 +967,7 @@ public class ChunkManager : MonoBehaviour
             bool isGenerating = generatingSet.Contains(coord);
 
             // Trigger chunk gen for case where decorations spill into a chunk that hasn't generated because it didn't have any terrain blocks.
-            if (!hasBlockIds && !hasChunk && !isGenerating && GetDistanceAtChunkScaleWithRenderShape(coord, currentPlayerChunk) < viewDistance)
+            if (!hasBlockIds && !hasChunk && !isGenerating && GetDistanceAtChunkScaleWithRenderShape(coord, currentPlayerChunk) < midRange)
             {
                 if (!deferredFrontier.Contains(coord) && !frontierSet.Contains(coord))
                 {
@@ -1071,23 +1064,17 @@ public class ChunkManager : MonoBehaviour
             list.Add(mirror);
         }
 
-        // X faces
+        // X face
         if (p.x == 0)
             EnqueueMirror(coord + new int3(-1, 0, 0), new int3(edge, p.y, p.z));
-        /*else if (p.x == edge)
-            EnqueueMirror(coord + new int3(1, 0, 0), new int3(0, p.y, p.z));*/
 
-        // Y faces
+        // Y face
         if (p.y == 0)
             EnqueueMirror(coord + new int3(0, -1, 0), new int3(p.x, edge, p.z));
-        /*else if (p.y == edge)
-            EnqueueMirror(coord + new int3(0, 1, 0), new int3(p.x, 0, p.z));*/
 
-        // Z faces
+        // Z face
         if (p.z == 0)
             EnqueueMirror(coord + new int3(0, 0, -1), new int3(p.x, p.y, edge));
-        /*else if (p.z == edge)
-            EnqueueMirror(coord + new int3(0, 0, 1), new int3(p.x, p.y, 0));*/
     }
     void MergeDecorationOutputs(NativeList<PendingBlockWrite> writes)
     {

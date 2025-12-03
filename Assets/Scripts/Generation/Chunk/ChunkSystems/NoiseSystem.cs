@@ -58,7 +58,7 @@ public class NoiseSystem
 
     public void RequestDensity(int3 coord, LODLevel lod)
     {
-        // Decide sampleRes per LOD (same logic you use elsewhere)
+        // Decide sampleRes per LOD - OUTDATED
         int sampleRes = lod switch
         {
             LODLevel.Near => 1,

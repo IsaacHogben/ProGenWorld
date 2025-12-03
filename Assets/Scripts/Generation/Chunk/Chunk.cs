@@ -13,6 +13,8 @@ public class Chunk : MonoBehaviour
 
     public void ApplyMesh(MeshData meshData, Stack<Mesh> meshPool)
     {
+        Profiler.StartUpload();
+
         // Ensure components
         var mf = GetComponent<MeshFilter>();
         if (mf == null) mf = gameObject.AddComponent<MeshFilter>();
@@ -73,6 +75,7 @@ public class Chunk : MonoBehaviour
         Mesh.ApplyAndDisposeWritableMeshData(meshArray, mesh);
         mesh.RecalculateBounds();
         mesh.UploadMeshData(false); // keep CPU copy for collider & future rewrites
+        
 
         // Collider handling:
         if (lod == LODLevel.Near)
@@ -88,6 +91,22 @@ public class Chunk : MonoBehaviour
             if (mc != null)
                 mc.sharedMesh = null;
         }
+
+        Profiler.EndUpload();
+    }
+    public void ClearMesh(Stack<Mesh> meshPool)
+    {
+        var mf = GetComponent<MeshFilter>();
+        var mc = GetComponent<MeshCollider>();
+
+        if (mf != null && mf.sharedMesh != null)
+        {
+            meshPool.Push(mf.sharedMesh);
+            mf.sharedMesh = null;
+        }
+
+        if (mc != null)
+            mc.sharedMesh = null;
     }
     public void Release(Stack<Mesh> meshPool)
     {

@@ -15,7 +15,7 @@ using static UnityEngine.EventSystems.EventTrigger;
 public struct GreedyMeshJob : IJob
 {
     [NonSerialized] [ReadOnly] public NativeArray<byte> blockArray;
-    [ReadOnly] public NativeArray<BlockDatabase.BlockInfoUnmanaged> blocks;
+    [ReadOnly] public NativeArray<BlockDatabase.BlockInfoUnmanaged> blockDb;
     public int chunkSize;
     public int blockSize;
     public MeshData meshData;
@@ -35,7 +35,7 @@ public struct GreedyMeshJob : IJob
 
     bool IsSolid(byte block)
     {
-        return blocks[block].isSolid;
+        return blockDb[block].isSolid;
     }
 
     byte GetBlock(int3 coord)
@@ -116,8 +116,8 @@ public struct GreedyMeshJob : IJob
                     {
                         var currentBlock = SampleLOD(chunkItr);
                         var compareBlock = SampleLOD(chunkItr + axisMask);
-                        var currentBlockData = blocks[currentBlock];
-                        var compareBlockData = blocks[compareBlock];
+                        var currentBlockData = blockDb[currentBlock];
+                        var compareBlockData = blockDb[compareBlock];
 
                         bool currentBlockOpaque = currentBlock != 0;
                         bool compareBlockOpaque = compareBlock != 0;

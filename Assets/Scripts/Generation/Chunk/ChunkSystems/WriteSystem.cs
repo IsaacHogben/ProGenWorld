@@ -31,7 +31,6 @@ public class WriteSystem
         Func<int3, NativeArray<byte>> getBlockIds,
         Action<int3> markForRemesh,
 
-        // NEW optional inputs – you will patch ChunkManager later
         Func<int3, float> getDistance = null,
         float forceGenRange = 9999f,
         Action<int3> queueFrontier = null
@@ -56,18 +55,12 @@ public class WriteSystem
         list.Add(w);
     }
 
-    // ================================================================
-    // UPDATED: Now handles:
-    // - decorating + meshing lockout
-    // - spill into ungenerated chunks
-    // - force-generate under terrain
-    // ================================================================
     public void ProcessWrite(int3 coord, PendingBlockWrite w)
     {
-        // If chunk is occupied or missing blockIds ? delay
+        // If chunk is occupied or missing blockIds - delay
         if (isDecorating(coord) || isMeshing(coord) || !hasBlockIds(coord))
         {
-            // NEW: If chunk has no data AND no generation in progress ? force-generate
+            // If chunk has no data AND no generation in progress force-generate
             if (!hasBlockIds(coord) && getDistance != null && queueFrontier != null)
             {
                 if (getDistance(coord) < forceGenRange)

@@ -302,6 +302,7 @@ public class ChunkManager : MonoBehaviour
         switch (updatePhase)
         {
             case 0:
+                CleanupDeferred(playerPos);
                 PromoteDeferredToFrontier(playerPos);
                 break;
             case 1:
@@ -395,8 +396,13 @@ public class ChunkManager : MonoBehaviour
         {
             while (spawnedThisTick < cap && TryDequeueFrontier(out var coord))
             {
-                if (chunks.ContainsKey(coord) || generatingSet.Contains(coord) || fullResBlocksByChunk.ContainsKey(coord))
+                if (chunks.ContainsKey(coord) || generatingSet.Contains(coord))
                     continue;
+                if (fullResBlocksByChunk.ContainsKey(coord))
+                {
+                    Debug.Log($"Frontier not queued at {coord} because a fullResBlocks was found");
+                    continue;
+                }
 
                 generatingSet.Add(coord);
                 spawnedThisTick++;
@@ -582,13 +588,13 @@ public class ChunkManager : MonoBehaviour
     {    
         if (deferredFrontier.Count > 0)
         {
-            // Copy to list once to avoid hashset iteration overhead
+            /*// Copy to list once to avoid hashset iteration overhead
             tmpFrontierList.Clear();
             tmpFrontierList.AddRange(deferredFrontier);
 
             tmpFrontierRemove.Clear();
 
-            // Process deferred frontier in one tight loop
+            // Process deferred frontier
             int unloadPlusOne = unloadDistance + 1;
             for (int i = 0; i < tmpFrontierList.Count; i++)
             {
@@ -600,9 +606,8 @@ public class ChunkManager : MonoBehaviour
 
             // Remove flagged items
             for (int i = 0; i < tmpFrontierRemove.Count; i++)
-                deferredFrontier.Remove(tmpFrontierRemove[i]);
+                deferredFrontier.Remove(tmpFrontierRemove[i]);*/
 
-            // Evaluate real chunks only if deferred contained something
             tmpChunkKeys.Clear();
             tmpChunkKeys.AddRange(chunks.Keys);
 
@@ -643,6 +648,19 @@ public class ChunkManager : MonoBehaviour
                 if (chunks.Count < maxChunks)
                     break;
             }
+        }
+    }
+    void CleanupDeferred(Vector3 playerPos)
+    {
+        tmpFrontierList.Clear();
+        tmpFrontierList.AddRange(deferredFrontier);
+
+        float limit = unloadDistance + 1;
+
+        foreach (var coord in tmpFrontierList)
+        {
+            if (GetDistanceAtChunkScaleWithRenderShape(coord, playerPos) > limit)
+                deferredFrontier.Remove(coord);
         }
     }
 
@@ -698,7 +716,7 @@ public class ChunkManager : MonoBehaviour
             coord => fullResBlocksByChunk[coord],
             coord => chunksNeedingRemesh.Add(coord),
             coord => GetDistanceAtChunkScaleWithRenderShape(coord, lastPlayerPos),    // getDistance()
-            midRange,                                                                 // forceGenRange
+            viewDistance,                                                             // forceGenRange
             EnqueueFrontier                                                           // queueFrontier()
         );
 
@@ -839,11 +857,10 @@ public class ChunkManager : MonoBehaviour
             // this generation was redundant. Dispose the new one and bail.
             if (fullResBlocksByChunk.TryGetValue(coord, out var existing) && existing.IsCreated)
             {
-                // OPTIONAL: downgrade to a warning if you still want visibility
                 Debug.LogWarning($"[BlockGen] Redundant full-res blockIds for {coord}, discarding new buffer.");
 
                 if (blockIds.IsCreated)
-                    blockIds.Dispose(); // we’re not going to use this one
+                    blockIds.Dispose();
 
                 generatingSet.Remove(coord); // this regen pass is done
                 return;
@@ -970,11 +987,17 @@ public class ChunkManager : MonoBehaviour
     void ReleaseChunk(int3 coord)
     {
         deferredFrontier.Add(coord); // If a chunk is removed it must then become a new frontier for terrain generation
-        if (!chunks.TryGetValue(coord, out var chunk) || chunk == null)
+
+        if (!chunks.TryGetValue(coord, out var chunk))
             return;
 
-        chunk.Release(meshPool);
-        chunkGoPool.Push(chunk.gameObject);
+        // Handle null seperatly here as empty chunks can exist in the dictionary
+        if (chunk != null)
+        {    
+            chunk.Release(meshPool);
+            chunkGoPool.Push(chunk.gameObject);
+        }
+
         chunks.Remove(coord);
 
         if (fullResBlocksByChunk.TryGetValue(coord, out var arr))

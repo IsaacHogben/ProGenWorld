@@ -76,7 +76,6 @@ public class Chunk : MonoBehaviour
         mesh.RecalculateBounds();
         mesh.UploadMeshData(false); // keep CPU copy for collider & future rewrites
         
-
         // Collider handling:
         if (lod == LODLevel.Near)
         {

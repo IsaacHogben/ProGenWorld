@@ -22,6 +22,7 @@ public class MeshSystem
         public Func<LODLevel, int> GetMeshRes;
         public Func<LODLevel, int> GetSampleRes;
         public Func<LODLevel, int> GetBlockSize;
+        public Func<int> GetMaxUploadsPerFrame;
     }
 
     private Config config;
@@ -42,6 +43,7 @@ public class MeshSystem
     private readonly Dictionary<int3, MeshJobInfo> meshJobs = new();
     private Dictionary<int3, MeshData> meshJobData = new();
     public int ActiveJobs => meshJobs.Count;
+    public int uploadsThisFrame = 0;
 
     private Queue<(int3 coord, MeshData data)> completed = new();
 
@@ -108,44 +110,48 @@ public class MeshSystem
     }
     public void Update()
     {
-        if (meshJobs.Count == 0)
-            return;
-
-        tempList.Clear();
-        tempList.AddRange(meshJobs.Keys);
-
-        foreach (var coord in tempList)
+        if (meshJobs.Count > 0)
         {
-            var info = meshJobs[coord];
+            tempList.Clear();
+            tempList.AddRange(meshJobs.Keys);
 
-            if (!info.handle.IsCompleted)
-                continue;
-
-            info.handle.Complete();
-            Profiler.EndMesh();
-
-            // Prepare data for callback
-            var meshData = info.data;
-
-            // If we do not want to keep blockIds (Far LOD),
-            // free them here.
-            if (!info.keepBlocks && info.blockIds.IsCreated)
+            foreach (var coord in tempList)
             {
-                ChunkMemDebug.ActiveBlockIdArrays--;
-                info.blockIds.Dispose();
+                var info = meshJobs[coord];
+
+                if (!info.handle.IsCompleted)
+                    continue;
+
+                info.handle.Complete();
+                Profiler.EndMesh();
+
+                // Prepare data for callback
+                var meshData = info.data;
+
+                // If we do not want to keep blockIds (Far LOD),
+                // free them here.
+                if (!info.keepBlocks && info.blockIds.IsCreated)
+                {
+                    ChunkMemDebug.ActiveBlockIdArrays--;
+                    info.blockIds.Dispose();
+                }
+
+                meshJobs.Remove(coord);
+
+                completed.Enqueue((coord, meshData));
             }
-
-            meshJobs.Remove(coord);
-
-            completed.Enqueue((coord, meshData));
         }
 
-        while (completed.Count > 0)
+        while (completed.Count > 0 && uploadsThisFrame <= config.GetMaxUploadsPerFrame())
         {
             var (coord, data) = completed.Dequeue();
             markMeshed(coord);
             OnMeshReady?.Invoke(coord, data);
+
+            uploadsThisFrame++;
         }
+
+        uploadsThisFrame = 0;
     }
 
     public bool IsMeshInProgress(int3 coord)

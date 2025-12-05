@@ -10,6 +10,7 @@ using System.Linq;
 using System.Threading;
 using Unity.Collections;
 using Unity.Mathematics;
+using Unity.Profiling;
 using UnityEngine;
 
 public class ChunkManager : MonoBehaviour
@@ -52,11 +53,13 @@ public class ChunkManager : MonoBehaviour
 
     [Header("Performance tuning")]
     public int maxConcurrentNoiseTasks = 4;   // How many noise tasks to allow concurrently - Increase until CPU saturates or frame drops.
-    public int maxMeshUploadsPerFrame = 2;    // How many mesh uploads (Mesh.SetVertices/SetTriangles) per frame - Increase until GPU upload hitching appears.
     public int minConcurrentNoiseTasks = 2;
+    public int maxMeshUploadsPerFrame = 2;    // How many mesh uploads (Mesh.SetVertices/SetTriangles) per frame - Increase until GPU upload hitching appears.
     public int minMeshUploadsPerFrame = 2;
+    public int currentMeshUploadsPerFrame = 999;
     public float scheduleInterval = 1f;       // Seconds between scheduling passes - Lower until chunk popping delay is acceptable.
-    [SerializeField] int meshDebounceFrames = 2;// Minimum # of frames between mesh jobs for any given chunk
+    public int meshDebounceFrames = 2;// Minimum # of frames between mesh jobs for any given chunk
+    ProfilerRecorder gpuFrameTimeRecorder;
 
     [Header("Pre-allocation tuning")]
     // Configurable pool sizes (tweakable)
@@ -64,15 +67,31 @@ public class ChunkManager : MonoBehaviour
     [SerializeField] int prewarmDensityPerLod = 8;
     [SerializeField] int prewarmChunks = 200;
     [SerializeField] int prewarmMeshes = 400;
+    // =====================================================
+    // Adaptive Performance State
+    // =====================================================
 
-    // --- Adaptive performance control ---
+    // How often the tuner runs
+    [SerializeField] float adaptiveInterval = 0.25f; // seconds
+    float adaptiveLastTime = 0f;
+
+    // Rolling averages (EMA)
+    float emaFrameTime = 16.6f;     // ms
+    float emaWorkerLoad = 0f;
+    float emaGpuFrameTime = 0f;
+
+    // Stability tracker for scale-up recovery
+    float goodPerfTimer = 0f;
     float avgFrameTime = 16.6f;
-    float lastPerfAdjustTime = 0f;
+
+    //Bootstrap
+    bool bootstrapMode = true;
+    string lastDecisionString = "Loading...";
 
     // --- Performance diagnostics ---
     public float AvgFrameTime => avgFrameTime;
     public int CurrentNoiseTasks => maxConcurrentNoiseTasks;
-    public int CurrentMeshUploads => maxMeshUploadsPerFrame;
+    public int CurrentMeshUploads => currentMeshUploadsPerFrame;
     public float CurrentScheduleInterval => scheduleInterval;
     public int CurrentPoolSize => 404;
 
@@ -156,6 +175,7 @@ public class ChunkManager : MonoBehaviour
     {
         nativeBlockDatabase = blockDatabase.ToNative(Allocator.Persistent);
         cts = new CancellationTokenSource();
+        gpuFrameTimeRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Render, "GPU Frame Time");
 
         InitializeSystems();
 
@@ -196,7 +216,7 @@ public class ChunkManager : MonoBehaviour
         ChunkProfiler.ActiveBlockJobs = blockGenSystem.ActiveJobs;
         ChunkProfiler.ActiveDecoJobs = decorationSystem.ActiveJobs;
         ChunkProfiler.ActiveMeshJobs = meshSystem.ActiveJobs;
-        ChunkProfiler.PendingWriteChunks = writeSystem.PendingWriteChunks;
+        ChunkProfiler.PendingWriteChunks = writeSystem.PendingWritesCount;
         ChunkProfiler.TotalChunks = chunks.Count;
 
         // --- Flood-fill activation when entering new chunk ---
@@ -265,7 +285,7 @@ public class ChunkManager : MonoBehaviour
                 {
                     Debug.LogWarning($"[BlockGen] Remesh attempted without full res at {coord}");
                     //generatingSet.Remove(coord);
-                    return;
+                    continue;
                 }
 
                 // Current LOD (if chunk exists)
@@ -296,23 +316,27 @@ public class ChunkManager : MonoBehaviour
             //Debug.Log($"Chunks: {chunks.Count}, Deferred: {deferredFrontier.Count}, MeshPool: {meshPool.Count}, PendingBlock: {pendingBlockJobs.Count}, PendingMesh: {pendingMeshJobs.Count}");
         }
     }
-
     private void OnPlayerMovePhaseUpdate(Vector3 playerPos)
     {
+        Profiler.StartMovePhase();
         switch (updatePhase)
         {
             case 0:
                 CleanupDeferred(playerPos);
                 PromoteDeferredToFrontier(playerPos);
+                Profiler.EndMovePhase0();
                 break;
             case 1:
                 UpdateChunkLods(playerPos);
+                Profiler.EndMovePhase1();
                 break;
             case 2:
                 UnloadChunks(playerPos);
+                Profiler.EndMovePhase2();
                 break;
             case 3:
                 CullOutOfRangeBlockJobs(playerPos);
+                Profiler.EndMovePhase3();
                 break;
         }
 
@@ -325,7 +349,6 @@ public class ChunkManager : MonoBehaviour
             movementTriggered = false;   // Done until next movement trigger
         }
     }
-
     void UpdateChunkLods(Vector3 playerPos)
     {
         Profiler.StartLodLoop();
@@ -351,7 +374,6 @@ public class ChunkManager : MonoBehaviour
         }
         Profiler.EndLodLoop();
     }
-
     void ScheduleNoiseTask(Vector3 playerPos)
     {
         Profiler.StartSchedLoop();
@@ -524,40 +546,157 @@ public class ChunkManager : MonoBehaviour
     }
     void AdaptivePerformanceControl()
     {
-        avgFrameTime = Mathf.Lerp(avgFrameTime, Time.deltaTime * 1000f, 0.1f);
-
-        // Adaptive performance adjustion frequency
-        if (Time.time - lastPerfAdjustTime < 0.1f)
+        // ------------------------------------------------------------
+        // 1. Fixed-rate Update
+        // ------------------------------------------------------------
+        if (Time.time - adaptiveLastTime < adaptiveInterval)
             return;
+        adaptiveLastTime = Time.time;
 
-        lastPerfAdjustTime = Time.time;
+        float frameMs = Time.deltaTime * 1000f;
 
-        const float dangerFrameTime = 18f;     // ~?60 FPS
-        const float safeFrameTime = 8.3333f; // ?120 FPS
+        // EMAs
+        const float alpha = 0.12f;
+        emaFrameTime = Mathf.Lerp(emaFrameTime, frameMs, alpha);
 
-        bool adjusted = false;
+        int activeNoise = noiseSystem.ActiveTasks;
+        int activeMesh = meshSystem.ActiveJobs;
+        int activeDeco = decorationSystem.ActiveJobs;
 
-        if (avgFrameTime > dangerFrameTime)
+        int coreCount = Mathf.Max(1, SystemInfo.processorCount);
+        float workerLoadSample = Mathf.Clamp01((activeNoise + activeMesh + activeDeco) / (float)coreCount);
+        emaWorkerLoad = Mathf.Lerp(emaWorkerLoad, workerLoadSample, alpha);
+
+        // GPU timing optional
+        float gpuMs = 0f;
+        if (gpuFrameTimeRecorder.Valid && gpuFrameTimeRecorder.LastValue > 0)
         {
-            // Decrease load
-            maxConcurrentNoiseTasks = Mathf.Max(minConcurrentNoiseTasks, maxConcurrentNoiseTasks - 1);
-            maxMeshUploadsPerFrame = Mathf.Max(minMeshUploadsPerFrame, maxMeshUploadsPerFrame - 1);
-            scheduleInterval = Mathf.Min(scheduleInterval * 1.15f, 0.4f);
-            adjusted = true;
-        }
-        else if (avgFrameTime < safeFrameTime)
-        {
-            // Increase load
-            maxConcurrentNoiseTasks = Mathf.Min(maxConcurrentNoiseTasks + 1, SystemInfo.processorCount);
-            maxMeshUploadsPerFrame = Mathf.Min(maxMeshUploadsPerFrame + 1, minMeshUploadsPerFrame);
-            scheduleInterval = Mathf.Max(scheduleInterval * 0.85f, 0.05f);
-            adjusted = true;
+            gpuMs = gpuFrameTimeRecorder.LastValue / 1_000_000f;
+            if (emaGpuFrameTime <= 0f) emaGpuFrameTime = gpuMs;
+            else emaGpuFrameTime = Mathf.Lerp(emaGpuFrameTime, gpuMs, alpha);
         }
 
-        if (adjusted)
+        // ------------------------------------------------------------
+        // 2. Bootstrap mode — no throttling until world bubble is done
+        // ------------------------------------------------------------
+        if (bootstrapMode)
         {
-            //Debug.Log($"[PerfTuner] {avgFrameTime:F1}ms ? Noise={maxConcurrentNoiseTasks}, Uploads={maxMeshUploadsPerFrame}, Interval={scheduleInterval:F2}");
+            maxConcurrentNoiseTasks = coreCount;
+            currentMeshUploadsPerFrame = maxMeshUploadsPerFrame;
+            scheduleInterval = 0.001f;
+            meshDebounceFrames = 0;
+
+            bool worldDone =
+                frontierQueue.Count == 0 &&
+                activeNoise == 0 &&
+                activeMesh == 0 &&
+                activeDeco == 0;
+
+            if (worldDone)
+            {
+                bootstrapMode = false;
+                Debug.Log("Initial Loading Complete!");
+            }
+
+            return;
         }
+
+        // ------------------------------------------------------------
+        // 3. Push state into profiler
+        // ------------------------------------------------------------
+        ChunkProfiler.AP_EmaFrameTime = emaFrameTime;
+        ChunkProfiler.AP_EmaWorkerLoad = emaWorkerLoad;
+        ChunkProfiler.AP_EmaGpuTime = emaGpuFrameTime;
+
+        bool cpuStressed = emaFrameTime > ChunkProfiler.AP_WarnThreshold;
+        bool gpuStressed = emaGpuFrameTime > ChunkProfiler.AP_WarnThreshold;
+        bool workerStressed = emaWorkerLoad > 0.7f;
+
+        ChunkProfiler.AP_IsCPUStressed = cpuStressed;
+        ChunkProfiler.AP_IsGPUStressed = gpuStressed;
+        ChunkProfiler.AP_IsWorkerStressed = workerStressed;
+
+        // ------------------------------------------------------------
+        // 4. Backpressure (queue overload)
+        // ------------------------------------------------------------
+        int backlog =
+            frontierQueue.Count +
+            chunksNeedingRemesh.Count +
+            lodUpdateQueue.Count;
+
+        bool backlogStressed = backlog > 200;
+        bool stressed =
+            backlogStressed ||
+            cpuStressed ||
+            gpuStressed ||
+            workerStressed;
+
+        if (stressed) goodPerfTimer = 0f;
+        else goodPerfTimer += adaptiveInterval;
+
+        // ------------------------------------------------------------
+        // 5. Backpressure overrides everything else
+        // ------------------------------------------------------------
+        if (backlogStressed)
+        {
+            maxConcurrentNoiseTasks = Mathf.Max(minConcurrentNoiseTasks, 1);
+            currentMeshUploadsPerFrame = Mathf.Max(minMeshUploadsPerFrame, 1);
+
+            scheduleInterval = Mathf.Min(scheduleInterval * 1.15f, 0.30f);
+            meshDebounceFrames = Mathf.Min(meshDebounceFrames + 1, 10);
+
+            lastDecisionString = "Backpressure Slowdown";
+            ChunkProfiler.AP_LastDecision = lastDecisionString;
+            return;
+        }
+
+        // ------------------------------------------------------------
+        // 6. CPU/GPU Stress Adjustments
+        // ------------------------------------------------------------
+        if (cpuStressed || gpuStressed)
+        {
+            currentMeshUploadsPerFrame = Mathf.Max(minMeshUploadsPerFrame, currentMeshUploadsPerFrame - 1);
+            scheduleInterval = Mathf.Min(scheduleInterval * 1.10f, 0.40f);
+            meshDebounceFrames = Mathf.Min(meshDebounceFrames + 1, 8);
+
+            lastDecisionString = "CPU/GPU Throttle";
+            ChunkProfiler.AP_LastDecision = lastDecisionString;
+        }
+
+        // ------------------------------------------------------------
+        // 7. Worker Saturation
+        // ------------------------------------------------------------
+        if (workerStressed)
+        {
+            maxConcurrentNoiseTasks =
+                Mathf.Max(minConcurrentNoiseTasks, maxConcurrentNoiseTasks - 1);
+
+            lastDecisionString = "Worker Saturation";
+            ChunkProfiler.AP_LastDecision = lastDecisionString;
+        }
+
+        // ------------------------------------------------------------
+        // 8. Recovery Mode
+        // ------------------------------------------------------------
+        if (!stressed && goodPerfTimer > 1.0f)
+        {
+            maxConcurrentNoiseTasks =
+                Mathf.Min(maxConcurrentNoiseTasks + 1, coreCount);
+
+            currentMeshUploadsPerFrame =
+                Mathf.Min(currentMeshUploadsPerFrame + 1, maxMeshUploadsPerFrame);
+
+            scheduleInterval =
+                Mathf.Max(scheduleInterval * 0.92f, 0.05f);
+
+            meshDebounceFrames =
+                Mathf.Max(2, meshDebounceFrames - 1);
+
+            lastDecisionString = "Recovery Speed-Up";
+            ChunkProfiler.AP_LastDecision = lastDecisionString;
+        }
+
+        ChunkProfiler.AP_LastDecisionTime = Time.time;
     }
     void InitFloodFrontier(Vector3 playerPos, int radius, int height) // Create the initial position for flood fill to begin. Is the players location at start of world load.
     {
@@ -588,26 +727,6 @@ public class ChunkManager : MonoBehaviour
     {    
         if (deferredFrontier.Count > 0)
         {
-            /*// Copy to list once to avoid hashset iteration overhead
-            tmpFrontierList.Clear();
-            tmpFrontierList.AddRange(deferredFrontier);
-
-            tmpFrontierRemove.Clear();
-
-            // Process deferred frontier
-            int unloadPlusOne = unloadDistance + 1;
-            for (int i = 0; i < tmpFrontierList.Count; i++)
-            {
-                int3 coord = tmpFrontierList[i];
-
-                if (GetDistanceAtChunkScaleWithRenderShape(coord, currentPlayerChunk) > unloadPlusOne)
-                    tmpFrontierRemove.Add(coord);
-            }
-
-            // Remove flagged items
-            for (int i = 0; i < tmpFrontierRemove.Count; i++)
-                deferredFrontier.Remove(tmpFrontierRemove[i]);*/
-
             tmpChunkKeys.Clear();
             tmpChunkKeys.AddRange(chunks.Keys);
 
@@ -663,7 +782,6 @@ public class ChunkManager : MonoBehaviour
                 deferredFrontier.Remove(coord);
         }
     }
-
     private void InitializeSystems()
     {
         // NoiseSystem set-up
@@ -674,7 +792,7 @@ public class ChunkManager : MonoBehaviour
                 seed = seed,
                 frequency = frequency,
                 chunkSize = chunkSize,
-                maxConcurrentNoiseTasks = maxConcurrentNoiseTasks
+                maxConcurrentNoiseTasks =  maxConcurrentNoiseTasks
             },
             lod => RentDensityArray(lod),
             (lod, arr) => ReturnDensityArray(lod, arr)
@@ -729,7 +847,8 @@ public class ChunkManager : MonoBehaviour
                 blockDb = nativeBlockDatabase,
                 GetMeshRes = lod => lodConfigs[lod].meshRes,
                 GetSampleRes = lod => lodConfigs[lod].sampleRes,
-                GetBlockSize = lod => lodConfigs[lod].blockSize
+                GetBlockSize = lod => lodConfigs[lod].blockSize,
+                GetMaxUploadsPerFrame = () => currentMeshUploadsPerFrame
             },
             rentMesh: () =>
             {
@@ -874,13 +993,13 @@ public class ChunkManager : MonoBehaviour
             return;
         }
 
-        // --- Far LOD: NO full-res storage, NO decoration ---
+        // --- Test for skipping Decoration ---
         {
             var faces = DetectTerrainFlowFromBlocks(blockIds, lod);
             ExpandFrontierFromFaces(coord, lastPlayerPos, faces);
 
             // Far LOD - don't keep blocks; MeshSystem frees them after mesh
-            meshSystem.RequestMesh(coord, blockIds, lod, keepBlocks: false);
+            meshSystem.RequestMesh(coord, blockIds, lod, keepBlocks: true);
         }
     }
     private void HandleDensityReady(int3 coord, LODLevel lod, NativeArray<float> density)
@@ -1191,5 +1310,8 @@ public class ChunkManager : MonoBehaviour
         noiseSystem.Shutdown();
         // Dispose compute detector
         openFaceDetector?.Dispose();
+        if (gpuFrameTimeRecorder.Valid)
+            gpuFrameTimeRecorder.Dispose();
+
     }
 }

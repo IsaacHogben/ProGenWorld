@@ -7,7 +7,7 @@ public class WriteSystem
 {
     private readonly Dictionary<int3, List<PendingBlockWrite>> pendingWrites =
         new Dictionary<int3, List<PendingBlockWrite>>();
-    public int PendingWriteChunks => pendingWrites.Count;
+    public int PendingWritesCount => pendingWrites.Count;
 
     // External state
     private Func<int3, bool> isDecorating;

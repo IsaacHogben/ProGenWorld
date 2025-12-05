@@ -33,10 +33,10 @@ public struct DecorationJob : IJob
 
                     byte currentBlock = blockIds[index];
 
-                    if (currentBlock == (byte)BlockType.Grass && rng.NextFloat() < 0.001f)
+                    if (currentBlock == (byte)BlockType.Grass && rng.NextFloat() < 0.002f)
                         MakeTestPineTree(x, y, z); 
-                    else if (currentBlock == (byte)BlockType.Grass && rng.NextFloat() < 0.000001f)
-                        MakeTestSpiralTower(x, y, z);
+                    /*else if (currentBlock == (byte)BlockType.Grass && rng.NextFloat() < 0.000001f)
+                        MakeTestSpiralTower(x, y, z);*/
                 }
     }
 
@@ -123,16 +123,16 @@ public struct DecorationJob : IJob
     private void MakeTestPineTree(int x, int y, int z)
     {
         // --- Trunk ---
-        int trunkHeight = 12;
+        int trunkHeight = 18;
         for (int i = 0; i < trunkHeight; i++)
         {
             ApplyBlock(x, y + i, z, BlockType.Dirt);
         }
 
-        // --- Layers of decreasing radius ---
-        int layerStartY = y + trunkHeight;
-        int maxRadius = 6;           // bottom foliage
-        int layers = 6;              // number of "rings"
+        // --- Layers of decreasing radius ---     
+        int maxRadius = 4;           // bottom foliage
+        int layers = 4;              // number of "rings"
+        int layerStartY = y + trunkHeight - (layers * 2);
         int radius = maxRadius;
 
         for (int ly = 0; ly < layers; ly++)

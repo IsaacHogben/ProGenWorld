@@ -475,7 +475,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkProfiler
   chunkManager: {fileID: 695623964}
-  showOnScreen: 1
+  showOnScreen: 0
   showMeshStats: 0
   showSystemStats: 1
   showMainThreadLoopTimes: 0

@@ -5,8 +5,14 @@ using Unity.Mathematics;
 
 public class WriteSystem
 {
+    // one list per chunk coord
     private readonly Dictionary<int3, List<PendingBlockWrite>> pendingWrites =
         new Dictionary<int3, List<PendingBlockWrite>>();
+
+    // pooled lists to avoid allocations
+    private readonly Stack<List<PendingBlockWrite>> listPool =
+        new Stack<List<PendingBlockWrite>>();
+
     public int PendingWritesCount => pendingWrites.Count;
 
     // External state
@@ -18,10 +24,11 @@ public class WriteSystem
 
     private int chunkSize;
 
-    private Func<int3, float> getDistance;             // distance to player (ChunkManager supplies this)
-    private float forceGenRange;                       // usually midRange
-    private Action<int3> queueFrontier;                // request chunk generation
-    private HashSet<(int3, int3, byte)> mirrorSeen = new();   // suppress duplicate mirror writes
+    private Func<int3, float> getDistance;   // distance to player
+    private float forceGenRange;             // usually midRange
+    private Action<int3> queueFrontier;      // request chunk generation
+
+    private HashSet<(int3, int3, byte)> mirrorSeen = new(); // suppress duplicate mirror writes
 
     public void Initialize(
         int chunkSize,
@@ -30,7 +37,6 @@ public class WriteSystem
         Func<int3, bool> hasBlockIds,
         Func<int3, NativeArray<byte>> getBlockIds,
         Action<int3> markForRemesh,
-
         Func<int3, float> getDistance = null,
         float forceGenRange = 9999f,
         Action<int3> queueFrontier = null
@@ -48,19 +54,43 @@ public class WriteSystem
         this.queueFrontier = queueFrontier;
     }
 
+    // -----------------------------
+    // Enqueue
+    // -----------------------------
     public void EnqueueWrite(PendingBlockWrite w)
     {
         if (!pendingWrites.TryGetValue(w.targetChunk, out var list))
-            pendingWrites[w.targetChunk] = list = new List<PendingBlockWrite>();
+        {
+            // get pooled list or create new once
+            list = (listPool.Count > 0) ? listPool.Pop() : new List<PendingBlockWrite>(16);
+            list.Clear();
+            pendingWrites[w.targetChunk] = list;
+        }
+
         list.Add(w);
     }
+    public void TakeWritesNonAlloc(int3 coord, List<PendingBlockWrite> dst)
+    {
+        dst.Clear();
 
+        if (!pendingWrites.TryGetValue(coord, out var list))
+            return;
+
+        // Copy snapshot into dst, then clear internal list
+        dst.AddRange(list);
+        list.Clear();
+
+        // Optional: if lists balloon, clamp their capacity
+        // if (list.Capacity > 1024) list.Capacity = 1024;
+    }
+        // -----------------------------
+        // Process single write
+        // -----------------------------
     public void ProcessWrite(int3 coord, PendingBlockWrite w)
     {
         // If chunk is occupied or missing blockIds - delay
         if (isDecorating(coord) || isMeshing(coord) || !hasBlockIds(coord))
         {
-            // If chunk has no data AND no generation in progress force-generate
             if (!hasBlockIds(coord) && getDistance != null && queueFrontier != null)
             {
                 if (getDistance(coord) < forceGenRange)
@@ -71,11 +101,8 @@ public class WriteSystem
             return;
         }
 
-        // Chunk is ready - apply write
         var blockIds = getBlockIds(coord);
         ApplyWriteDirect(coord, blockIds, w);
-
-        // Centralized remesh trigger
         markForRemesh(coord);
     }
 
@@ -103,12 +130,10 @@ public class WriteSystem
                 break;
         }
 
-        // prevent doubled mirror propagation
         if (!w.isMirror)
             EnqueueBoundaryMirrors(coord, w);
     }
 
-    // BOUNDARY MIRRORING (patched to suppress duplicates)
     private void EnqueueBoundaryMirrors(int3 coord, PendingBlockWrite source)
     {
         int3 p = source.localPos;
@@ -117,8 +142,6 @@ public class WriteSystem
         void Mirror(int3 neighborChunk, int3 pos)
         {
             var key = (neighborChunk, pos, source.blockId);
-
-            // duplicate suppression
             if (!mirrorSeen.Add(key))
                 return;
 
@@ -136,32 +159,63 @@ public class WriteSystem
 
         if (p.x == 0)
             Mirror(coord + new int3(-1, 0, 0), new int3(edge, p.y, p.z));
-
         if (p.y == 0)
             Mirror(coord + new int3(0, -1, 0), new int3(p.x, edge, p.z));
-
         if (p.z == 0)
             Mirror(coord + new int3(0, 0, -1), new int3(p.x, p.y, edge));
     }
 
-    // SAFELY USED BY CHUNKMANAGER
-    public List<PendingBlockWrite> TakeWrites(int3 coord)
+    // -----------------------------
+    // Access from ChunkManager
+    // -----------------------------
+
+    // Fills caller-provided list with keys – NO allocation
+    public void GetKeySnapshot(List<int3> dst)
+    {
+        dst.Clear();
+        foreach (var kvp in pendingWrites)
+            dst.Add(kvp.Key);
+    }
+
+    // Returns the internal list (do NOT modify/clear it outside the system)
+    public List<PendingBlockWrite> GetWrites(int3 coord)
+    {
+        pendingWrites.TryGetValue(coord, out var list);
+        return list;
+    }
+
+    // Called after FlushAllPendingWrites finishes with this coord
+    public void ReleaseWrites(int3 coord)
     {
         if (!pendingWrites.TryGetValue(coord, out var list))
-            return new List<PendingBlockWrite>(0);
+            return;
 
         pendingWrites.Remove(coord);
-        return list;
+        list.Clear();
+        listPool.Push(list);
     }
 
     public bool HasWritesFor(int3 coord) => pendingWrites.ContainsKey(coord);
 
-    public List<int3> GetKeySnapshot() => new List<int3>(pendingWrites.Keys);
+    public void Clear(int3 coord)
+    {
+        if (!pendingWrites.TryGetValue(coord, out var list))
+            return;
 
-    public void Clear(int3 coord) => pendingWrites.Remove(coord);
+        pendingWrites.Remove(coord);
+        list.Clear();
+        listPool.Push(list);
+    }
 
     public void ClearAll()
     {
+        foreach (var kvp in pendingWrites)
+        {
+            var list = kvp.Value;
+            list.Clear();
+            listPool.Push(list);
+        }
+
         pendingWrites.Clear();
         mirrorSeen.Clear();
     }

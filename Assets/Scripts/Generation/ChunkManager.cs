@@ -138,6 +138,10 @@ public class ChunkManager : MonoBehaviour
     static readonly List<int3> tmpChunkKeys = new List<int3>(2048);
     static readonly List<int3> tmpChunksToRemove = new List<int3>(256);
 
+    static readonly List<int3> tmpWriteChunks = new List<int3>(256);
+    static readonly List<PendingBlockWrite> tmpWriteBuffer = new List<PendingBlockWrite>(512);
+
+
     // --------------------------------------------------
     // Resources / Materials
     // --------------------------------------------------
@@ -206,12 +210,22 @@ public class ChunkManager : MonoBehaviour
 
     void Start()
     {
+        // Sample settings
+        Application.targetFrameRate = -1;
+        QualitySettings.vSyncCount = 0;
+
         // Seed frontier at the player's current chunk
         InitFloodFrontier(player.transform.position, nearRange/2, 4);
     }
 
     void Update()
     {
+        // Editor fix: forces GameView to detach from internal vsync
+        #if UNITY_EDITOR
+            if (UnityEditor.EditorApplication.isPlaying)
+                UnityEngine.Rendering.OnDemandRendering.renderFrameInterval = 1;
+        #endif
+
         ChunkProfiler.ActiveNoiseTasks = noiseSystem.ActiveTasks;
         ChunkProfiler.ActiveBlockJobs = blockGenSystem.ActiveJobs;
         ChunkProfiler.ActiveDecoJobs = decorationSystem.ActiveJobs;
@@ -955,7 +969,7 @@ public class ChunkManager : MonoBehaviour
         generatingSet.Remove(coord);
         deferredFrontier.Remove(coord);
     }
-    private void HandleDecorationCompleted(int3 coord, List<PendingBlockWrite> writes)
+    private void HandleDecorationCompleted(int3 coord, PendingBlockWrite[] buffer, int count)
     {
         chunksStillDecorating.Remove(coord);
 
@@ -963,14 +977,20 @@ public class ChunkManager : MonoBehaviour
         {
             Debug.LogError($"[Decoration] Completed for {coord} but no fullResBlocksByChunk exists.");
 
-            foreach (var w in writes)
-                writeSystem.EnqueueWrite(w);
+            for (int i = 0; i < count; i++)
+            {
+                var write = buffer[i];
+                writeSystem.EnqueueWrite(write);
+            }
 
             return;
         }
 
-        foreach (var w in writes)
-            writeSystem.EnqueueWrite(w);
+        for (int i = 0; i < count; i++)
+        {
+            var write = buffer[i];
+            writeSystem.EnqueueWrite(write);
+        }
 
         chunksNeedingRemesh.Add(coord);
 
@@ -1039,21 +1059,30 @@ public class ChunkManager : MonoBehaviour
     }
     void FlushAllPendingWrites()
     {
-        var keys = writeSystem.GetKeySnapshot();
+        // Snapshot of chunks that have pending writes
+        tmpWriteChunks.Clear();
+        writeSystem.GetKeySnapshot(tmpWriteChunks);    // fills into our list
 
-        for (int i = 0; i < keys.Count; i++)
+        for (int i = 0; i < tmpWriteChunks.Count; i++)
         {
-            int3 coord = keys[i];
+            int3 coord = tmpWriteChunks[i];
 
-            // Take and reprocess through the system
-            var writes = writeSystem.TakeWrites(coord);
-            if (writes == null)
+            // Snapshot writes for this chunk into a reusable buffer
+            tmpWriteBuffer.Clear();
+            writeSystem.TakeWritesNonAlloc(coord, tmpWriteBuffer);
+
+            if (tmpWriteBuffer.Count == 0)
                 continue;
 
-            for (int w = 0; w < writes.Count; w++)
-                writeSystem.ProcessWrite(coord, writes[w]);
+            // Process the snapshot. Any re-enqueued writes go back
+            // into the dictionary list, NOT this buffer.
+            for (int w = 0; w < tmpWriteBuffer.Count; w++)
+            {
+                writeSystem.ProcessWrite(coord, tmpWriteBuffer[w]);
+            }
         }
     }
+
     LODLevel GetLODForCoord(int3 coord, Vector3 playerChunk, LODLevel current)
     {
         float dist = GetDistanceAtChunkScaleWithRenderShape(coord, playerChunk);

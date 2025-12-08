@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
+using UnityEngine;
 
 public class DecorationSystem
 {
@@ -19,11 +20,15 @@ public class DecorationSystem
     private readonly Dictionary<int3, JobHandle> jobHandles = new();
     private readonly Dictionary<int3, NativeList<PendingBlockWrite>> outputLists = new();
     private readonly Dictionary<int3, (NativeArray<byte> blockIds, LODLevel lod)> inputs = new();
+    // Large static buffer reused for decoration write results.
+    // Auto-resizes but NEVER allocates per-frame once stable.
+    private static PendingBlockWrite[] sharedWriteBuffer = new PendingBlockWrite[256];
+
     public int ActiveJobs => jobHandles.Count;
 
     // Events
     public event Action<int3> OnDecorationStarted;
-    public event Action<int3, List<PendingBlockWrite>> OnDecorationCompleted;
+    public event Action<int3, PendingBlockWrite[], int> OnDecorationCompleted;
 
     public void Initialize(DecorationConfig config)
     {
@@ -61,39 +66,69 @@ public class DecorationSystem
 
     public void Update()
     {
-        // Collect ready jobs
-        tmpKeys.Clear();
-        tmpKeys.AddRange(jobHandles.Keys);
+        if (jobHandles.Count == 0)
+            return;
 
-        foreach (var coord in tmpKeys)
+        // ------------------------------------------
+        // Reuse temp keys list (no allocations)
+        // ------------------------------------------
+        tmpKeys.Clear();
+        foreach (var kvp in jobHandles)
+            tmpKeys.Add(kvp.Key);
+
+        int maxDecorationCompletesPerFrame = 3;
+        int completes = 0;
+
+        // ------------------------------------------
+        // Process completed jobs
+        // ------------------------------------------
+        for (int i = 0; i < tmpKeys.Count; i++)
         {
+            if (completes >= maxDecorationCompletesPerFrame)
+                break;
+
+            var coord = tmpKeys[i];
             var handle = jobHandles[coord];
+
             if (!handle.IsCompleted)
                 continue;
-            
+
             handle.Complete();
             Profiler.EndDeco();
+            completes++;
 
-            // Extract results
+            // --------------------------------------
+            // Convert NativeList to static buffer
+            // --------------------------------------
             var writesNative = outputLists[coord];
-            var input = inputs[coord];
 
-            // Convert NativeList to managed List for ChunkManager
-            var results = new List<PendingBlockWrite>(writesNative.Length);
-            for (int i = 0; i < writesNative.Length; i++)
-                results.Add(writesNative[i]);
+            int count = writesNative.Length;
 
-            // Cleanup internal containers
-            if (writesNative.IsCreated) writesNative.Dispose();
+            // Ensure pooled array is large enough
+            if (sharedWriteBuffer.Length < count)
+                sharedWriteBuffer = new PendingBlockWrite[Mathf.NextPowerOfTwo(count)];
+
+            // Copy NativeList to array
+            for (int w = 0; w < count; w++)
+                sharedWriteBuffer[w] = writesNative[w];
+
+            // --------------------------------------
+            // Free native containers
+            // --------------------------------------
+            if (writesNative.IsCreated)
+                writesNative.Dispose();
 
             jobHandles.Remove(coord);
             outputLists.Remove(coord);
             inputs.Remove(coord);
 
-            // Emit event
-            OnDecorationCompleted?.Invoke(coord, results);
+            // --------------------------------------
+            // Fire callback
+            // --------------------------------------
+            OnDecorationCompleted?.Invoke(coord, sharedWriteBuffer, count);
         }
     }
+
 
     // temp list avoid GC
     private static readonly List<int3> tmpKeys = new();

@@ -29,7 +29,7 @@ public struct BlockAssignmentJob : IJobParallelFor
             block = (byte)BlockType.Air;
         }
 
-        else if (aboveBlockDensity > 0)
+        else if (aboveBlockDensity > 0 && index.y + startingCoord.y * chunkSize > -90)
         {
             block = (byte)BlockType.Grass;
         }

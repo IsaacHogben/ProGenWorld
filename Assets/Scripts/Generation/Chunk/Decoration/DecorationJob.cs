@@ -126,7 +126,7 @@ public struct DecorationJob : IJob
         int trunkHeight = 18;
         for (int i = 0; i < trunkHeight; i++)
         {
-            ApplyBlock(x, y + i, z, BlockType.Dirt);
+            ApplyBlock(x, y + i, z, BlockType.Log);
         }
 
         // --- Layers of decreasing radius ---     
@@ -143,7 +143,7 @@ public struct DecorationJob : IJob
         }
 
         // --- Tip ---
-        ApplyBlock(x, layerStartY + layers * 2, z, BlockType.Dirt);
+        ApplyBlock(x, layerStartY + layers * 2, z, BlockType.Leaves);
     }
     private void MakePineLayer(int cx, int cy, int cz, int r)
     {
@@ -154,7 +154,7 @@ public struct DecorationJob : IJob
             {
                 if (x * x + z * z <= r * r)  // circular-ish
                 {
-                    ApplyBlock(cx + x, cy, cz + z, BlockType.Dirt);
+                    ApplyBlock(cx + x, cy, cz + z, BlockType.Leaves);
                 }
             }
         }

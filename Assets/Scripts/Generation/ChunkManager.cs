@@ -228,7 +228,7 @@ public class ChunkManager : MonoBehaviour
         {
             lastScheduleTime = Time.time;
 
-            if (frontierQueue.Count > 0) 
+            if (frontierQueue.Count > 0)
                 ScheduleNoiseTask(currentPlayerPos);
         }
 
@@ -238,10 +238,6 @@ public class ChunkManager : MonoBehaviour
             movementTriggered = true;
         }
 
-        // Process phases only when needed
-        if (movementTriggered)
-            OnPlayerMovePhaseUpdate(lastPlayerPos);
-
         // Trigger initial frontier propagation
         if (!firstFloodTriggered)
         {
@@ -249,7 +245,12 @@ public class ChunkManager : MonoBehaviour
             PromoteDeferredToFrontier(lastPlayerPos);
         }
 
+        // Process phases only when needed
+        if (movementTriggered)
+            OnPlayerMovePhaseUpdate(lastPlayerPos);
+
         // Manage completed noise tasks, schedules block assignment
+        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: DrainNoiseQueue");
         while (completedNoiseQueue.TryDequeue(out var data))
         {
             // Skip if chunk is already irrelevant
@@ -262,13 +263,35 @@ public class ChunkManager : MonoBehaviour
             }
             blockGenSystem.GenerateBlocks(data.coord, data.lod, data.density);
         }
+        UnityEngine.Profiling.Profiler.EndSample();
 
+        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: BlockGenSystem.Update");
         blockGenSystem.Update();
-        
+        UnityEngine.Profiling.Profiler.EndSample();
+
+        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: DecorationSystem.Update");
         decorationSystem.Update();
+        UnityEngine.Profiling.Profiler.EndSample();
 
-        FlushAllPendingWrites(lastPlayerPos);
+        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: FlushAllPendingWrites");
+        FlushAllPendingWrites();
+        UnityEngine.Profiling.Profiler.EndSample();
 
+        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: RemeshNeedingChunks");
+        RemeshChunksNeedingRemesh(); // extracted loop into its own method
+        UnityEngine.Profiling.Profiler.EndSample();
+
+        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: MeshSystem.Update");
+        meshSystem.Update();
+        UnityEngine.Profiling.Profiler.EndSample();
+
+        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: AdaptivePerformance");
+        AdaptivePerformanceControl();
+        UnityEngine.Profiling.Profiler.EndSample();
+    }
+
+    private void RemeshChunksNeedingRemesh()
+    {
         // Re-mesh all chunks that received neighbour writes or decoration this frame
         if (chunksNeedingRemesh.Count > 0)
         {
@@ -307,15 +330,8 @@ public class ChunkManager : MonoBehaviour
             chunksNeedingRemesh.Clear();
             Profiler.EndRemeshLoop();
         }
-
-        meshSystem.Update();
-
-        AdaptivePerformanceControl();
-        if (Time.frameCount % 300 == 0)
-        {
-            //Debug.Log($"Chunks: {chunks.Count}, Deferred: {deferredFrontier.Count}, MeshPool: {meshPool.Count}, PendingBlock: {pendingBlockJobs.Count}, PendingMesh: {pendingMeshJobs.Count}");
-        }
     }
+
     private void OnPlayerMovePhaseUpdate(Vector3 playerPos)
     {
         Profiler.StartMovePhase();
@@ -1021,7 +1037,7 @@ public class ChunkManager : MonoBehaviour
     {
         lastMeshFrame[coord] = Time.frameCount;
     }
-    void FlushAllPendingWrites(Vector3 playerPos)
+    void FlushAllPendingWrites()
     {
         var keys = writeSystem.GetKeySnapshot();
 

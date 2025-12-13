@@ -37,6 +37,7 @@ public class ChunkManager : MonoBehaviour
     [SerializeField] private BlockDatabase blockDatabase;
     [SerializeField] public BlockTextureArrayBuilder textureArrayBuilder;
     [SerializeField] public Material voxelMaterial;
+    [SerializeField] public Material waterMaterial;
 
     [Header("LOD Settings")]
     [SerializeField] int nearRange = 4;
@@ -105,7 +106,8 @@ public class ChunkManager : MonoBehaviour
     readonly Dictionary<int3, NativeArray<byte>> fullResBlocksByChunk = new Dictionary<int3, NativeArray<byte>>();
     readonly Dictionary<int3, int> lastMeshFrame = new();
     readonly Dictionary<int3, LODLevel> lodByCoord = new();
-    readonly HashSet<int3> chunksNeedingRemesh = new HashSet<int3>(); // Chunks that need their mesh rebuilt this frame
+    readonly List<int3> chunksNeedingRemesh = new(256);
+    readonly HashSet<int3> chunksNeedingRemeshSet = new HashSet<int3>(); // Chunks that need their mesh rebuilt this frame
     readonly HashSet<int3> chunksStillDecorating = new HashSet<int3>(); // Tracks chunks currently executing a DecorationJob
 
     // Threading / queues
@@ -135,7 +137,7 @@ public class ChunkManager : MonoBehaviour
     // Reusable temp buffers to avoid GC
     static readonly List<int3> tmpFrontierList = new List<int3>(512);
     static readonly List<int3> tmpFrontierRemove = new List<int3>(128);
-    static readonly List<int3> tmpChunkKeys = new List<int3>(2048);
+    static readonly List<int3> tmpChunkKeys = new List<int3>(256);
     static readonly List<int3> tmpChunksToRemove = new List<int3>(256);
 
     static readonly List<int3> tmpWriteChunks = new List<int3>(256);
@@ -184,7 +186,9 @@ public class ChunkManager : MonoBehaviour
         InitializeSystems();
 
         // load texture array
-        voxelMaterial.SetTexture("_Textures", textureArrayBuilder.GetTextureArray());
+        var texture = textureArrayBuilder.GetTextureArray();
+        voxelMaterial.SetTexture("_Textures", texture);
+        waterMaterial.SetTexture("_Textures", texture);
 
         //Define LODs
         lodConfigs[LODLevel.Near] = new LODSettings { meshRes = 1, sampleRes = 1, blockSize = 1, detailedBlocks = true, material = voxelMaterial };
@@ -311,7 +315,8 @@ public class ChunkManager : MonoBehaviour
         {
             Profiler.StartRemeshLoop();
             tmpChunkKeys.Clear();
-            tmpChunkKeys.AddRange(chunksNeedingRemesh);
+            for (int i = 0; i < chunksNeedingRemesh.Count; i++)
+                tmpChunkKeys.Add(chunksNeedingRemesh[i]);
 
             for (int i = 0; i < tmpChunkKeys.Count; i++)
             {
@@ -338,14 +343,14 @@ public class ChunkManager : MonoBehaviour
                     continue;
 
                 // Schedule through MeshSystem at the desired LOD
-                meshSystem.RequestMesh(coord, blockIds, targetLod, keepBlocks: true);
+                meshSystem.RequestMesh(coord, blockIds, targetLod, keepBlocks: true, isWaterMesh: false);
             }
 
             chunksNeedingRemesh.Clear();
+            chunksNeedingRemeshSet.Clear();
             Profiler.EndRemeshLoop();
         }
     }
-
     private void OnPlayerMovePhaseUpdate(Vector3 playerPos)
     {
         Profiler.StartMovePhase();
@@ -430,7 +435,7 @@ public class ChunkManager : MonoBehaviour
                     existing.IsCreated)
                 {
                     // Just mark for remesh; block data already exists
-                    chunksNeedingRemesh.Add(coord);
+                    MarkChunkForRemesh(coord);
                     continue;
                 }
 
@@ -497,8 +502,7 @@ public class ChunkManager : MonoBehaviour
             }
         }
     }
-    // Player changed chunk — promote deferred coords that are now in range
-    void PromoteDeferredToFrontier(Vector3 playerPos)
+    void PromoteDeferredToFrontier(Vector3 playerPos) // Player changed chunk — promote deferred coords that are now in range
     {
         // promote any deferred chunks now within view distance
         List<int3> toPromote = new(32);
@@ -526,22 +530,25 @@ public class ChunkManager : MonoBehaviour
         OpenFaces flags = OpenFaces.None;
 
         bool IsSolid(int x, int y, int z)
-            => blockIds[x + y * s + z * s * s] != 0; // non-air = solid
+            => nativeBlockDatabase[blockIds[x + y * s + z * s * s]].isSolid; // non-air = solid
+        bool IsSeeThrough(int x, int y, int z)
+            => nativeBlockDatabase[blockIds[x + y * s + z * s * s]].visibility != BlockVisibility.Opaque; // Anything that might allow vision into neigbour chunk
 
-        bool FaceExposed(Func<int, int, bool> test)
+        bool FaceExposed(Func<int, int, bool> solidCheck, Func<int, int, bool> seeThroughCheck)
         {
             bool sawSolid = false;
-            bool sawAir = false;
+            bool sawTransparent = false;
 
             // sample every Nth voxel depending on LOD meshRes
             for (int i = 0; i < s; i += sampleRes)
             {
                 for (int j = 0; j < s; j += sampleRes)
                 {
-                    bool solid = test(i, j);
-                    if (solid) sawSolid = true; else sawAir = true;
 
-                    if (sawSolid && sawAir)
+                    if (solidCheck(i, j)) sawSolid = true;
+                    if (seeThroughCheck(i, j)) sawTransparent = true;
+
+                    if (sawSolid && sawTransparent)
                         return true; // mixed = exposed
                 }
             }
@@ -549,27 +556,27 @@ public class ChunkManager : MonoBehaviour
         }
 
         // +X
-        if (FaceExposed((y, z) => IsSolid(s - 1, y, z)))
+        if (FaceExposed((y, z) => IsSolid(s - 1, y, z), (y, z) => IsSeeThrough(s - 1, y, z)))
             flags |= OpenFaces.PosX;
 
         // -X
-        if (FaceExposed((y, z) => IsSolid(0, y, z)))
+        if (FaceExposed((y, z) => IsSolid(0, y, z), (y, z) => IsSeeThrough(0, y, z)))
             flags |= OpenFaces.NegX;
 
         // +Y
-        if (FaceExposed((x, z) => IsSolid(x, s - 1, z)))
+        if (FaceExposed((x, z) => IsSolid(x, s - 1, z), (x, z) => IsSeeThrough(x, s - 1, z)))
             flags |= OpenFaces.PosY;
 
         // -Y
-        if (FaceExposed((x, z) => IsSolid(x, 0, z)))
+        if (FaceExposed((x, z) => IsSolid(x, 0, z), (x, z) => IsSeeThrough(x, 0, z)))
             flags |= OpenFaces.NegY;
 
         // +Z
-        if (FaceExposed((x, y) => IsSolid(x, y, s - 1)))
+        if (FaceExposed((x, y) => IsSolid(x, y, s - 1), (x, y) => IsSeeThrough(x, y, s - 1)))
             flags |= OpenFaces.PosZ;
 
         // -Z
-        if (FaceExposed((x, y) => IsSolid(x, y, 0)))
+        if (FaceExposed((x, y) => IsSolid(x, y, 0), (x, y) => IsSeeThrough(x, y, 0)))
             flags |= OpenFaces.NegZ;
 
         return flags;
@@ -766,7 +773,7 @@ public class ChunkManager : MonoBehaviour
             {
                 int3 coord = tmpChunkKeys[i];
 
-                if (GetDistanceAtChunkScaleWithRenderShape(coord, currentPlayerChunk) > unloadDistance)
+                if (GetDistanceAtChunkScaleWithRenderShape(coord, currentPlayerChunk) > unloadDistance && !generatingSet.Contains(coord))
                     tmpChunksToRemove.Add(coord);
             }
 
@@ -849,7 +856,8 @@ public class ChunkManager : MonoBehaviour
         {
             chunkSize = chunkSize,
             indexSize = chunkSize + 1,
-            seed = seed
+            seed = seed,
+            GetBootstrapMode = () => bootstrapMode
         });
         decorationSystem.OnDecorationStarted += HandleDecorationStarted;
         decorationSystem.OnDecorationCompleted += HandleDecorationCompleted;
@@ -862,7 +870,7 @@ public class ChunkManager : MonoBehaviour
             coord => meshSystem.IsMeshInProgress(coord),
             coord => fullResBlocksByChunk.ContainsKey(coord) && fullResBlocksByChunk[coord].IsCreated,
             coord => fullResBlocksByChunk[coord],
-            coord => chunksNeedingRemesh.Add(coord),
+            coord => MarkChunkForRemesh(coord),
             coord => GetDistanceAtChunkScaleWithRenderShape(coord, lastPlayerPos),    // getDistance()
             viewDistance,                                                             // forceGenRange
             EnqueueFrontier                                                           // queueFrontier()
@@ -899,7 +907,9 @@ public class ChunkManager : MonoBehaviour
                     triangles = new NativeList<int>(Allocator.Persistent),
                     normals = new NativeList<float3>(Allocator.Persistent),
                     colors = new NativeList<float4>(Allocator.Persistent),
-                    UV0s = new NativeList<float2>(Allocator.Persistent)
+                    UV0s = new NativeList<float2>(Allocator.Persistent),
+                    isWaterMesh = new NativeReference<bool>(Allocator.Persistent),
+                    requestWaterMesh = new NativeReference<bool>(Allocator.Persistent)
                 };
             },
             freeMeshData: data =>
@@ -909,9 +919,9 @@ public class ChunkManager : MonoBehaviour
                 if (data.normals.IsCreated) data.normals.Dispose();
                 if (data.colors.IsCreated) data.colors.Dispose();
                 if (data.UV0s.IsCreated) data.UV0s.Dispose();
+                if (data.isWaterMesh.IsCreated) data.requestWaterMesh.Dispose();
+                if (data.requestWaterMesh.IsCreated) data.requestWaterMesh.Dispose();
             },
-            getChunk: coord => chunks.TryGetValue(coord, out var c) ? c : null,
-            chunkToWorldPos: ChunkToWorld,
             markMeshed: coord => lastMeshFrame[coord] = Time.frameCount,
             canMeshNow: coord => CanMeshNow(coord)
         );
@@ -941,7 +951,7 @@ public class ChunkManager : MonoBehaviour
             generatingSet.Remove(coord);
             deferredFrontier.Remove(coord);
 
-            return; // 
+            return;
         }
 
         // Create chunk GO only if missing
@@ -959,17 +969,26 @@ public class ChunkManager : MonoBehaviour
 
             chunks[coord] = chunk;
         }
+        if (meshData.isWaterMesh.Value == true)
+        {
+            chunk.waterMaterial = waterMaterial;
+            chunk.ApplyWaterMesh(meshData, meshPool);
+        }
+        else // Apply mesh normally
+        {   
+            chunk.chunkMaterial = voxelMaterial;
+            chunk.lod = meshData.lod;
+            chunk.ApplyMesh(meshData, meshPool);
+        }
 
-        // Apply mesh normally
-        chunk.chunkMaterial = voxelMaterial;
-        chunk.lod = meshData.lod;
-        chunk.ApplyMesh(meshData, meshPool);
-
-        meshSystem.ReleaseMeshData(meshData);
-        generatingSet.Remove(coord);
-        deferredFrontier.Remove(coord);
+        if (meshData.requestWaterMesh.Value == meshData.isWaterMesh.Value) // This means we are still waiting on a water mesh
+        {
+            meshSystem.ReleaseMeshData(meshData);
+            generatingSet.Remove(coord);
+            deferredFrontier.Remove(coord);
+        }
     }
-    private void HandleDecorationCompleted(int3 coord, PendingBlockWrite[] buffer, int count)
+    private void HandleDecorationCompleted(int3 coord, NativeList<PendingBlockWrite> writes)
     {
         chunksStillDecorating.Remove(coord);
 
@@ -977,22 +996,25 @@ public class ChunkManager : MonoBehaviour
         {
             Debug.LogError($"[Decoration] Completed for {coord} but no fullResBlocksByChunk exists.");
 
-            for (int i = 0; i < count; i++)
-            {
-                var write = buffer[i];
-                writeSystem.EnqueueWrite(write);
-            }
+            for (int i = 0; i < writes.Length; i++)
+                writeSystem.EnqueueWrite(writes[i]);
+
+            // we still own the native list: dispose it
+            if (writes.IsCreated)
+                writes.Dispose();
 
             return;
         }
 
-        for (int i = 0; i < count; i++)
-        {
-            var write = buffer[i];
-            writeSystem.EnqueueWrite(write);
-        }
+        // Enqueue all writes to WriteSystem
+        for (int i = 0; i < writes.Length; i++)
+            writeSystem.EnqueueWrite(writes[i]);
 
-        chunksNeedingRemesh.Add(coord);
+        // Done with native container
+        if (writes.IsCreated)
+            writes.Dispose();
+
+        MarkChunkForRemesh(coord);
 
         var faces = DetectTerrainFlowFromBlocks(blockIds, LODLevel.Near);
         ExpandFrontierFromFaces(coord, player.transform.position, faces);
@@ -1035,7 +1057,7 @@ public class ChunkManager : MonoBehaviour
             ExpandFrontierFromFaces(coord, lastPlayerPos, faces);
 
             // Far LOD - don't keep blocks; MeshSystem frees them after mesh
-            meshSystem.RequestMesh(coord, blockIds, lod, keepBlocks: true);
+            meshSystem.RequestMesh(coord, blockIds, lod, keepBlocks: true, isWaterMesh: false);
         }
     }
     private void HandleDensityReady(int3 coord, LODLevel lod, NativeArray<float> density)
@@ -1046,6 +1068,11 @@ public class ChunkManager : MonoBehaviour
     // =============================
     // ===== HELPER FUNCTIONS ======
     // =============================
+    public void MarkChunkForRemesh(int3 coord)
+    {
+        if (chunksNeedingRemeshSet.Add(coord))
+            chunksNeedingRemesh.Add(coord);
+    }
     bool CanMeshNow(int3 coord)
     {
         if (!lastMeshFrame.TryGetValue(coord, out int last))
@@ -1057,32 +1084,40 @@ public class ChunkManager : MonoBehaviour
     {
         lastMeshFrame[coord] = Time.frameCount;
     }
+
+    // temp buffer – allocated once at class scope
+    private static readonly List<int3> tmpWriteCoords = new List<int3>(256);
     void FlushAllPendingWrites()
     {
-        // Snapshot of chunks that have pending writes
-        tmpWriteChunks.Clear();
-        writeSystem.GetKeySnapshot(tmpWriteChunks);    // fills into our list
+        // Early-out: nothing queued
+        if (writeSystem.PendingWritesCount == 0)
+            return;
 
-        for (int i = 0; i < tmpWriteChunks.Count; i++)
+        // Collect coords without allocs
+        writeSystem.GetKeySnapshot(tmpWriteCoords);
+
+        for (int i = 0; i < tmpWriteCoords.Count; i++)
         {
-            int3 coord = tmpWriteChunks[i];
+            int3 coord = tmpWriteCoords[i];
 
-            // Snapshot writes for this chunk into a reusable buffer
-            tmpWriteBuffer.Clear();
-            writeSystem.TakeWritesNonAlloc(coord, tmpWriteBuffer);
-
-            if (tmpWriteBuffer.Count == 0)
-                continue;
-
-            // Process the snapshot. Any re-enqueued writes go back
-            // into the dictionary list, NOT this buffer.
-            for (int w = 0; w < tmpWriteBuffer.Count; w++)
+            // Detach current batch for this coord
+            var batch = writeSystem.StealWrites(coord);
+            if (batch == null || batch.Count == 0)
             {
-                writeSystem.ProcessWrite(coord, tmpWriteBuffer[w]);
+                writeSystem.RecycleList(batch);
+                continue;
             }
+
+            // Process this snapshot only – re-enqueued writes go to a NEW list
+            for (int w = 0; w < batch.Count; w++)
+            {
+                writeSystem.ProcessWrite(coord, batch[w]);
+            }
+
+            // Return this list to the pool
+            writeSystem.RecycleList(batch);
         }
     }
-
     LODLevel GetLODForCoord(int3 coord, Vector3 playerChunk, LODLevel current)
     {
         float dist = GetDistanceAtChunkScaleWithRenderShape(coord, playerChunk);

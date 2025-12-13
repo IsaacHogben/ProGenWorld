@@ -13,6 +13,8 @@ public class MeshSystem
         public MeshData data;
         public NativeArray<byte> blockIds;
         public bool keepBlocks;
+        public bool requestWaterMesh;
+        public bool isWaterMesh;
     }
 
     public struct Config
@@ -34,14 +36,11 @@ public class MeshSystem
     private Func<MeshData> allocMeshData;
     private Action<MeshData> freeMeshData;
 
-    private Func<int3, Chunk> getChunk;
-    private Func<int3, Vector3> chunkToWorldPos;
-
     private Action<int3> markMeshed; // updates lastMeshFrame
     private Func<int3, bool> canMeshNow; // debounce checker
 
     private readonly Dictionary<int3, MeshJobInfo> meshJobs = new();
-    private Dictionary<int3, MeshData> meshJobData = new();
+    //private Dictionary<int3, MeshData> meshJobData = new();
     public int ActiveJobs => meshJobs.Count;
     public int uploadsThisFrame = 0;
 
@@ -54,8 +53,6 @@ public class MeshSystem
         Action<Mesh> returnMesh,
         Func<MeshData> allocMeshData,
         Action<MeshData> freeMeshData,
-        Func<int3, Chunk> getChunk,
-        Func<int3, Vector3> chunkToWorldPos,
         Action<int3> markMeshed,
         Func<int3, bool> canMeshNow)
     {
@@ -66,14 +63,11 @@ public class MeshSystem
         this.allocMeshData = allocMeshData;
         this.freeMeshData = freeMeshData;
 
-        this.getChunk = getChunk;
-        this.chunkToWorldPos = chunkToWorldPos;
-
         this.markMeshed = markMeshed;
         this.canMeshNow = canMeshNow;
     }
 
-    public void RequestMesh(int3 coord, NativeArray<byte> blocks, LODLevel lod, bool keepBlocks)
+    public void RequestMesh(int3 coord, NativeArray<byte> blocks, LODLevel lod, bool keepBlocks, bool isWaterMesh)
     {
         if (!canMeshNow(coord))
             return;
@@ -87,6 +81,8 @@ public class MeshSystem
         meshData.coord = coord;
         meshData.meshRes = meshRes;
         meshData.lod = lod;
+        meshData.requestWaterMesh.Value = false;
+        meshData.isWaterMesh.Value = isWaterMesh;
 
         var job = new GreedyMeshJob
         {
@@ -94,7 +90,8 @@ public class MeshSystem
             blockDb = config.blockDb,
             chunkSize = config.chunkSize / sampleRes,
             blockSize = blockSize,
-            meshData = meshData
+            meshData = meshData,
+            isWaterMesh = isWaterMesh
         };
 
         Profiler.StartMesh();
@@ -105,7 +102,8 @@ public class MeshSystem
             handle = handle,
             data = meshData,
             blockIds = blocks,
-            keepBlocks = keepBlocks
+            keepBlocks = keepBlocks,
+            isWaterMesh = isWaterMesh
         };
     }
     public void Update()
@@ -137,6 +135,11 @@ public class MeshSystem
                 }
 
                 meshJobs.Remove(coord);
+                if (meshData.requestWaterMesh.Value == true && meshData.isWaterMesh.Value == false)
+                {
+                    RequestMesh(coord, info.blockIds, meshData.lod, keepBlocks: true, isWaterMesh: true);
+                    Debug.Log($"Made request for water mesh at {coord}.");
+                }
 
                 completed.Enqueue((coord, meshData));
             }

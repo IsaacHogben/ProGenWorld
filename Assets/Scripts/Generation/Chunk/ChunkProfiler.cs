@@ -85,6 +85,7 @@ public class ChunkProfiler : MonoBehaviour
 
     void Update()
     {
+        if (!showOnScreen) return;
         MergeThreadedQueues();
         avgNoise = Avg(Profiler.noiseTimes, Profiler.noiseLock);
         avgBlock = Avg(Profiler.blockTimes, Profiler.blockLock);

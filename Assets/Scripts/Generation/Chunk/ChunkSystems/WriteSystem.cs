@@ -61,31 +61,20 @@ public class WriteSystem
     {
         if (!pendingWrites.TryGetValue(w.targetChunk, out var list))
         {
-            // get pooled list or create new once
-            list = (listPool.Count > 0) ? listPool.Pop() : new List<PendingBlockWrite>(16);
+            list = (listPool.Count > 0)
+                ? listPool.Pop()
+                : new List<PendingBlockWrite>(16);
+
             list.Clear();
             pendingWrites[w.targetChunk] = list;
         }
 
         list.Add(w);
     }
-    public void TakeWritesNonAlloc(int3 coord, List<PendingBlockWrite> dst)
-    {
-        dst.Clear();
 
-        if (!pendingWrites.TryGetValue(coord, out var list))
-            return;
-
-        // Copy snapshot into dst, then clear internal list
-        dst.AddRange(list);
-        list.Clear();
-
-        // Optional: if lists balloon, clamp their capacity
-        // if (list.Capacity > 1024) list.Capacity = 1024;
-    }
-        // -----------------------------
-        // Process single write
-        // -----------------------------
+    // -----------------------------
+    // Process single write
+    // -----------------------------
     public void ProcessWrite(int3 coord, PendingBlockWrite w)
     {
         // If chunk is occupied or missing blockIds - delay
@@ -165,9 +154,30 @@ public class WriteSystem
             Mirror(coord + new int3(0, 0, -1), new int3(p.x, p.y, edge));
     }
 
+
+
     // -----------------------------
     // Access from ChunkManager
     // -----------------------------
+    // Called by ChunkManager.FlushAllPendingWrites
+    public List<PendingBlockWrite> StealWrites(int3 coord)
+    {
+        if (!pendingWrites.TryGetValue(coord, out var list))
+            return null;
+
+        // Detach from dictionary so any new writes go into a NEW list
+        pendingWrites.Remove(coord);
+        return list;
+    }
+
+    public void RecycleList(List<PendingBlockWrite> list)
+    {
+        if (list == null)
+            return;
+
+        list.Clear();
+        listPool.Push(list);
+    }
 
     // Fills caller-provided list with keys – NO allocation
     public void GetKeySnapshot(List<int3> dst)
@@ -176,26 +186,6 @@ public class WriteSystem
         foreach (var kvp in pendingWrites)
             dst.Add(kvp.Key);
     }
-
-    // Returns the internal list (do NOT modify/clear it outside the system)
-    public List<PendingBlockWrite> GetWrites(int3 coord)
-    {
-        pendingWrites.TryGetValue(coord, out var list);
-        return list;
-    }
-
-    // Called after FlushAllPendingWrites finishes with this coord
-    public void ReleaseWrites(int3 coord)
-    {
-        if (!pendingWrites.TryGetValue(coord, out var list))
-            return;
-
-        pendingWrites.Remove(coord);
-        list.Clear();
-        listPool.Push(list);
-    }
-
-    public bool HasWritesFor(int3 coord) => pendingWrites.ContainsKey(coord);
 
     public void Clear(int3 coord)
     {

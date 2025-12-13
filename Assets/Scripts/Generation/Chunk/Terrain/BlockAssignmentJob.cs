@@ -22,23 +22,48 @@ public struct BlockAssignmentJob : IJobParallelFor
         float blockDensity = density[i];
         int3 index = IndexToXYZ(i);
         float aboveBlockDensity = GetAboveDensity(index);
+        // Gradient: positive means terrain is getting less dense upward (approaching surface)
+        // Negative means terrain is getting denser upward (unusual, but possible in overhangs)
+        float verticalGradient = aboveBlockDensity - blockDensity;
+
+        bool isSolid = blockDensity <= 0;
+        bool isAirAbove = aboveBlockDensity > 0;
+        bool isAboveWaterLevel = GetWorldYValue(index) >= -90;
+        bool isApproachingSurface = verticalGradient - 0.002f > 0;
+
         byte block;
-
-        if (blockDensity > 0)
+        if (!isSolid)
         {
-            block = (byte)BlockType.Air;
+            if (isAboveWaterLevel)
+                block = (byte)BlockType.Air;
+            else
+                block = (byte)BlockType.Water;
         }
-
-        else if (aboveBlockDensity > 0 && index.y + startingCoord.y * chunkSize > -90)
+        else if (isAirAbove && isAboveWaterLevel)
         {
-            block = (byte)BlockType.Grass;
+            // Surface layer - transition based on gradient steepness
+            if (verticalGradient > 0.005f) // More is less
+                block = (byte)BlockType.Grass;      // Gentle slopes
+            else if (verticalGradient > 0.002f)
+                block = (byte)BlockType.Dirt;       // Moderate slopes
+            else
+                block = (byte)BlockType.Stone;      // Steep cliffs
         }
-        else if (blockDensity < aboveBlockDensity)
+        else if (isApproachingSurface)
+        {
             block = (byte)BlockType.Dirt;
+        }
         else
+        {
             block = (byte)BlockType.Stone;
+        }
 
-        blockIds[i] = block;
+            blockIds[i] = block;
+    }
+
+    int GetWorldYValue(int3 index)
+    {
+        return index.y + startingCoord.y * chunkSize;
     }
 
     float GetAboveDensity(int3 v)

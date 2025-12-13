@@ -15,7 +15,7 @@ public class BlockDatabase : ScriptableObject
         [Header("Properties")]
         public bool isSolid;
         public bool hasCollision;
-        public bool isTransparent;
+        public BlockVisibility visibility;
 
         // Default constructor for new entries
         public BlockEntry(BlockType t)
@@ -25,7 +25,7 @@ public class BlockDatabase : ScriptableObject
             texture = null;
             isSolid = true;
             hasCollision = true;
-            isTransparent = false;
+            visibility = BlockVisibility.Opaque;
         }
     }
     public struct BlockInfoUnmanaged
@@ -33,7 +33,7 @@ public class BlockDatabase : ScriptableObject
         public byte id;
         public bool isSolid;
         public bool hasCollision;
-        public bool isTransparent;
+        public BlockVisibility visibility;
     }
 
     [Header("All Block Types")]
@@ -62,7 +62,7 @@ public class BlockDatabase : ScriptableObject
                 id = (byte)i,
                 isSolid = blocks[i].isSolid,
                 hasCollision = blocks[i].hasCollision,
-                isTransparent = blocks[i].isTransparent
+                visibility = blocks[i].visibility
             };
         }
         return arr;

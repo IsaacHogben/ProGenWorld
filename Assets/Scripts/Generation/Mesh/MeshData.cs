@@ -12,4 +12,6 @@ public struct MeshData
     [NonSerialized] public NativeList<float2> UV0s;
     [NonSerialized] public int meshRes;
     [NonSerialized] public LODLevel lod;
+    [NonSerialized] public NativeReference<bool> isWaterMesh;
+    [NonSerialized] public NativeReference<bool> requestWaterMesh;
 }

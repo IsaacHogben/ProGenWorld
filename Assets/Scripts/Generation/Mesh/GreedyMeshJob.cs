@@ -20,6 +20,7 @@ public struct GreedyMeshJob : IJob
     public int blockSize;
     public MeshData meshData;
     public int vertexCount;
+    public bool isWaterMesh;
 
     public struct FMask
     {
@@ -116,25 +117,85 @@ public struct GreedyMeshJob : IJob
                     {
                         var currentBlock = SampleLOD(chunkItr);
                         var compareBlock = SampleLOD(chunkItr + axisMask);
+
                         var currentBlockData = blockDb[currentBlock];
                         var compareBlockData = blockDb[compareBlock];
 
-                        bool currentBlockOpaque = currentBlock != 0;
-                        bool compareBlockOpaque = compareBlock != 0;
+                        BlockVisibility currentVis = blockDb[currentBlock].visibility;
+                        BlockVisibility compareVis = blockDb[compareBlock].visibility;
 
+                        // Decision table: [current][compare] -> (shouldDraw, whichBlock, normal)
+                        // Invisible = 0, Translucent = 1, Opaque = 2
 
-                        // Standard Block draw
-                        if (currentBlockOpaque == compareBlockOpaque)
+                        bool shouldDrawFace = false;
+                        byte faceBlock = 0;
+                        short faceNormal = 0;
+
+                        if (currentVis == BlockVisibility.Invisible)
                         {
-                            mask[n++] = new FMask { Normal = 0 };
+                            if (compareVis != BlockVisibility.Invisible)
+                            {
+                                // Air next to visible block - draw visible block
+                                shouldDrawFace = true;
+                                faceBlock = compareBlock;
+                                faceNormal = 1;
+                            }
                         }
-                        else if (currentBlockOpaque)
+                        else if (compareVis == BlockVisibility.Invisible)
                         {
-                            mask[n++] = new FMask {Block = currentBlock, Normal = -1 };
+                            // Visible block next to air - draw visible block
+                            shouldDrawFace = true;
+                            faceBlock = currentBlock;
+                            faceNormal = -1;
+                        }
+                        else if (currentVis == BlockVisibility.Opaque || compareVis == BlockVisibility.Opaque)
+                        {
+                            // At least one opaque - draw the opaque one
+                            if (currentVis == BlockVisibility.Opaque && compareVis != BlockVisibility.Opaque)
+                            {
+                                shouldDrawFace = true;
+                                faceBlock = currentBlock;
+                                faceNormal = -1;
+                            }
+                            else if (compareVis == BlockVisibility.Opaque && currentVis != BlockVisibility.Opaque)
+                            {
+                                shouldDrawFace = true;
+                                faceBlock = compareBlock;
+                                faceNormal = 1;
+                            }
+                            // Both opaque - no face needed
+                        }
+                        else // Both translucent
+                        {
+                            // Only draw if different translucent types (water/glass boundary)
+                            if (currentBlock != compareBlock)
+                            {
+                                shouldDrawFace = true;
+                                faceBlock = currentBlock;
+                                faceNormal = -1;
+                            }
+                        }
+
+                        if (shouldDrawFace)
+                        {
+                            bool isWaterBlock = faceBlock == (byte)BlockType.Water; // Do our current mesh type check, currently only seperates water into its own mesh
+                                                                                    // Handled by a request that will start another MeshJob.
+                            if (isWaterBlock)
+                                meshData.requestWaterMesh.Value = true;             // Flag for that request.
+
+                            // Only add face if it matches the mesh type we're building
+                            if (isWaterBlock == isWaterMesh)
+                            {
+                                mask[n++] = new FMask { Block = faceBlock, Normal = faceNormal };
+                            }
+                            else
+                            {
+                                mask[n++] = new FMask { Normal = 0 };
+                            }
                         }
                         else
                         {
-                            mask[n++] = new FMask {Block = compareBlock, Normal = 1 };
+                            mask[n++] = new FMask { Normal = 0 };
                         }
                     }
                 }

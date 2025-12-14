@@ -267,7 +267,7 @@ public class ChunkProfiler : MonoBehaviour
         GUILayout.Label("<b>Throttle State</b>", apBold);
 
         GUILayout.Label($"Mesh Uploads / Frame: {chunkManager.currentMeshUploadsPerFrame}", apLabel);
-        GUILayout.Label($"Noise Concurrency: {chunkManager.maxConcurrentNoiseTasks}", apLabel);
+        GUILayout.Label($"Noise Concurrency: {chunkManager.maxConcurrentSchedualTasks}", apLabel);
         GUILayout.Label($"Schedule Interval: {chunkManager.scheduleInterval:F3}s", apLabel);
         GUILayout.Label($"Mesh Debounce: {chunkManager.meshDebounceFrames}", apLabel);
     }

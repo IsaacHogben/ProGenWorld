@@ -56,7 +56,7 @@ public class NoiseSystem
         activeNoiseTasks.Clear();
     }
 
-    public void RequestDensity(int3 coord, LODLevel lod)
+    public void RequestDensity(int3 coord, LODLevel lod, BiomeData biome)
     {
         // Decide sampleRes per LOD - OUTDATED
         int sampleRes = lod switch
@@ -90,7 +90,8 @@ public class NoiseSystem
                         coord,
                         config.chunkSize,
                         config.frequency,
-                        sampleRes));
+                        sampleRes,
+                        biome));
 
                 Profiler.EndNoise();
 

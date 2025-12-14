@@ -7,7 +7,7 @@ using UnityEngine;
 
 /// <summary>
 /// Converts a chunk's density field into block IDs.
-/// Runs after noise generation, before meshing.
+/// Runs after noise generation, before decorations.
 /// </summary>
 [BurstCompile]
 public struct BlockAssignmentJob : IJobParallelFor
@@ -15,7 +15,8 @@ public struct BlockAssignmentJob : IJobParallelFor
     [ReadOnly] public NativeArray<float> density;     // Input: noise density field
     [WriteOnly] public NativeArray<byte> blockIds;    // Output: block ID field
     [ReadOnly] public int chunkSize;
-    [ReadOnly] public int3 startingCoord;             // x,y,z of chunk
+    [ReadOnly] public int3 chunkCoord;             // x,y,z of chunk
+    [ReadOnly] public BiomeData biomeData;
 
     public void Execute(int i)
     {
@@ -30,6 +31,7 @@ public struct BlockAssignmentJob : IJobParallelFor
         bool isAirAbove = aboveBlockDensity > 0;
         bool isAboveWaterLevel = GetWorldYValue(index) >= -90;
         bool isApproachingSurface = verticalGradient - 0.002f > 0;
+        BiomeHint biome = BiomeSampler.SampleBiome(biomeData.grid, biomeData.resolution, chunkSize, index.x, index.z);
 
         byte block;
         if (!isSolid)
@@ -39,10 +41,17 @@ public struct BlockAssignmentJob : IJobParallelFor
             else
                 block = (byte)BlockType.Water;
         }
-        else if (isAirAbove && isAboveWaterLevel)
+        else
+        {
+            if (biome.primary == 1)
+                block = (byte)BlockType.Stone;
+            else
+                block = (byte)BlockType.Log;
+        }
+        /*else if (isAirAbove && isAboveWaterLevel)
         {
             // Surface layer - transition based on gradient steepness
-            if (verticalGradient > 0.005f) // More is less
+            if (verticalGradient > 0.005f)          // More is less
                 block = (byte)BlockType.Grass;      // Gentle slopes
             else if (verticalGradient > 0.002f)
                 block = (byte)BlockType.Dirt;       // Moderate slopes
@@ -56,14 +65,14 @@ public struct BlockAssignmentJob : IJobParallelFor
         else
         {
             block = (byte)BlockType.Stone;
-        }
+        }*/
 
             blockIds[i] = block;
     }
 
     int GetWorldYValue(int3 index)
     {
-        return index.y + startingCoord.y * chunkSize;
+        return index.y + chunkCoord.y * chunkSize;
     }
 
     float GetAboveDensity(int3 v)

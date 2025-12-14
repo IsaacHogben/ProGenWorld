@@ -41,7 +41,7 @@ public class BlockGenSystem
         this.returnDensity = returnDensity;
     }
 
-    public void GenerateBlocks(int3 coord, LODLevel lod, NativeArray<float> density)
+    public void GenerateBlocks(int3 coord, LODLevel lod, NativeArray<float> density, BiomeData biomeData)
     {
         // If somehow we already have a job for this coord, complete and clean it first
         if (jobs.TryGetValue(coord, out var existing))
@@ -67,7 +67,8 @@ public class BlockGenSystem
             density = density,
             blockIds = blockIds,
             chunkSize = chunkLodSize,
-            startingCoord = coord,
+            chunkCoord = coord,
+            biomeData = biomeData
         };
 
         Profiler.StartBlock();

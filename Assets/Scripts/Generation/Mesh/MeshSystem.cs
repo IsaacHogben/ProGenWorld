@@ -138,7 +138,7 @@ public class MeshSystem
                 if (meshData.requestWaterMesh.Value == true && meshData.isWaterMesh.Value == false)
                 {
                     RequestMesh(coord, info.blockIds, meshData.lod, keepBlocks: true, isWaterMesh: true);
-                    Debug.Log($"Made request for water mesh at {coord}.");
+                    //Debug.Log($"Made request for water mesh at {coord}.");
                 }
 
                 completed.Enqueue((coord, meshData));

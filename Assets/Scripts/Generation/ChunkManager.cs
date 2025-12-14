@@ -12,12 +12,13 @@ using Unity.Collections;
 using Unity.Mathematics;
 using Unity.Profiling;
 using UnityEngine;
+using static Unity.Burst.Intrinsics.X86.Avx;
 
 public class ChunkManager : MonoBehaviour
 {
-    // --------------------------------------------------
+    // ==================================================
     // World Configuration
-    // --------------------------------------------------
+    // ==================================================
 
     [Header("World")]
     public int seed = 1337;
@@ -26,18 +27,34 @@ public class ChunkManager : MonoBehaviour
     public int viewDistance = 3;
     public int unloadPastViewDistance = 1;
     private int unloadDistance => viewDistance + unloadPastViewDistance;
+
     [SerializeField] int minMoveBeforeUpdate = 16;
     [SerializeField] RenderShape renderShape = RenderShape.Sphere;
+
     public bool unloadAtMaxChunks = false;
     [SerializeField] int maxChunks;         // Max chunks loaded before most distant chunks begin to unload
     [SerializeField] int chunkUnloadBuffer; // How many more chunks than max before chunk unload begins - prevents chunk flicker
 
+
+    // ==================================================
+    // Scene References
+    // ==================================================
+
     [Header("References")]
     public GameObject player;
+
+    [SerializeField] public BiomeSystem biomeSystem;
+
     [SerializeField] private BlockDatabase blockDatabase;
     [SerializeField] public BlockTextureArrayBuilder textureArrayBuilder;
+
     [SerializeField] public Material voxelMaterial;
     [SerializeField] public Material waterMaterial;
+
+
+    // ==================================================
+    // LOD Configuration
+    // ==================================================
 
     [Header("LOD Settings")]
     [SerializeField] int nearRange = 4;
@@ -48,29 +65,39 @@ public class ChunkManager : MonoBehaviour
     [SerializeField] Material midMaterial;
     [SerializeField] Material farMaterial;
 
-    // --------------------------------------------------
-    // Performance Tuning
-    // --------------------------------------------------
 
-    [Header("Performance tuning")]
-    public int maxConcurrentNoiseTasks = 4;   // How many noise tasks to allow concurrently - Increase until CPU saturates or frame drops.
+    // ==================================================
+    // Performance Tuning
+    // ==================================================
+
+    [Header("Performance Tuning")]
+    public int maxConcurrentSchedualTasks = 4;   // How many noise tasks to allow concurrently - Increase until CPU saturates or frame drops.
     public int minConcurrentNoiseTasks = 2;
-    public int maxMeshUploadsPerFrame = 2;    // How many mesh uploads (Mesh.SetVertices/SetTriangles) per frame - Increase until GPU upload hitching appears.
+
+    public int maxMeshUploadsPerFrame = 2;    // How many mesh uploads per frame - Increase until GPU upload hitching appears.
     public int minMeshUploadsPerFrame = 2;
     public int currentMeshUploadsPerFrame = 999;
+
     public float scheduleInterval = 1f;       // Seconds between scheduling passes - Lower until chunk popping delay is acceptable.
-    public int meshDebounceFrames = 2;// Minimum # of frames between mesh jobs for any given chunk
+    public int meshDebounceFrames = 2;         // Minimum number of frames between mesh jobs for any given chunk
+
     ProfilerRecorder gpuFrameTimeRecorder;
 
-    [Header("Pre-allocation tuning")]
-    // Configurable pool sizes (tweakable)
+
+    // ==================================================
+    // Pre-allocation Tuning
+    // ==================================================
+
+    [Header("Pre-allocation Tuning")]
     [SerializeField] int maxDensityPoolPerLod = 32;
     [SerializeField] int prewarmDensityPerLod = 8;
     [SerializeField] int prewarmChunks = 200;
     [SerializeField] int prewarmMeshes = 400;
-    // =====================================================
-    // Adaptive Performance State
-    // =====================================================
+
+
+    // ==================================================
+    // Adaptive Performance State (Runtime)
+    // ==================================================
 
     // How often the tuner runs
     [SerializeField] float adaptiveInterval = 0.25f; // seconds
@@ -85,41 +112,62 @@ public class ChunkManager : MonoBehaviour
     float goodPerfTimer = 0f;
     float avgFrameTime = 16.6f;
 
-    //Bootstrap
+    // Bootstrap
     bool bootstrapMode = true;
     string lastDecisionString = "Loading...";
 
     // --- Performance diagnostics ---
     public float AvgFrameTime => avgFrameTime;
-    public int CurrentNoiseTasks => maxConcurrentNoiseTasks;
+    public int CurrentNoiseTasks => maxConcurrentSchedualTasks;
     public int CurrentMeshUploads => currentMeshUploadsPerFrame;
     public float CurrentScheduleInterval => scheduleInterval;
     public int CurrentPoolSize => 404;
 
-    // --------------------------------------------------
-    // Data Structures / State
-    // --------------------------------------------------
-    // Internal chunk tracking
+
+    // ==================================================
+    // Chunk / Generation State
+    // ==================================================
+
     readonly Dictionary<int3, Chunk> chunks = new();
     readonly HashSet<int3> generatingSet = new();   // coords reserved for generation or meshing
+
     readonly Dictionary<LODLevel, LODSettings> lodConfigs = new();
-    readonly Dictionary<int3, NativeArray<byte>> fullResBlocksByChunk = new Dictionary<int3, NativeArray<byte>>();
+    readonly Dictionary<int3, NativeArray<byte>> fullResBlocksByChunk = new();
     readonly Dictionary<int3, int> lastMeshFrame = new();
     readonly Dictionary<int3, LODLevel> lodByCoord = new();
-    readonly List<int3> chunksNeedingRemesh = new(256);
-    readonly HashSet<int3> chunksNeedingRemeshSet = new HashSet<int3>(); // Chunks that need their mesh rebuilt this frame
-    readonly HashSet<int3> chunksStillDecorating = new HashSet<int3>(); // Tracks chunks currently executing a DecorationJob
 
-    // Threading / queues
+    readonly List<int3> chunksNeedingRemesh = new(256);
+    readonly HashSet<int3> chunksNeedingRemeshSet = new(); // Chunks that need their mesh rebuilt this frame
+    readonly HashSet<int3> chunksStillDecorating = new();  // Chunks currently executing a DecorationJob
+
+
+    // ==================================================
+    // Biome State
+    // ==================================================
+
+    readonly Dictionary<int3, BiomeData> biomeDataByChunk = new();
+    readonly HashSet<int3> pendingBiome = new();
+
+
+    // ==================================================
+    // Threading / Queues
+    // ==================================================
+
     readonly ConcurrentQueue<(int3 coord, NativeArray<float> density, LODLevel lod)> completedNoiseQueue = new();
-    // Tokens
     CancellationTokenSource cts;
 
-    // --------------------------------------------------
+
+    // ==================================================
     // Flood-Fill System
-    // --------------------------------------------------
-    readonly Queue<int3> frontierQueue = new();                 // chunks waiting to be expanded
-    readonly HashSet<int3> frontierSet = new();                 // hash set for duplication checks
+    // ==================================================
+
+    readonly Queue<int3> frontierQueue = new();      // chunks waiting to be expanded
+    readonly HashSet<int3> frontierSet = new();      // hash set for duplication checks
+
+    readonly HashSet<int3> deferredFrontier = new(); // neighbors to expand later (out of range)
+    private bool firstFloodTriggered = false;
+
+    public HashSet<int3> GetDeferredFrontier() => deferredFrontier;
 
     struct LodUpdateRequest
     {
@@ -127,55 +175,62 @@ public class ChunkManager : MonoBehaviour
         public LODLevel lod;
     }
 
-    readonly Queue<LodUpdateRequest> lodUpdateQueue = new();    // chunks waiting to have lod updated
-    readonly HashSet<int3> lodUpdateSet = new();                // hash set for duplication checks
-    readonly HashSet<int3> deferredFrontier = new();            // neighbors to expand later (out of range)
-
-    private bool firstFloodTriggered = false;
-    public HashSet<int3> GetDeferredFrontier() => deferredFrontier;
-
-    // Reusable temp buffers to avoid GC
-    static readonly List<int3> tmpFrontierList = new List<int3>(512);
-    static readonly List<int3> tmpFrontierRemove = new List<int3>(128);
-    static readonly List<int3> tmpChunkKeys = new List<int3>(256);
-    static readonly List<int3> tmpChunksToRemove = new List<int3>(256);
-
-    static readonly List<int3> tmpWriteChunks = new List<int3>(256);
-    static readonly List<PendingBlockWrite> tmpWriteBuffer = new List<PendingBlockWrite>(512);
+    readonly Queue<LodUpdateRequest> lodUpdateQueue = new();
+    readonly HashSet<int3> lodUpdateSet = new();
 
 
-    // --------------------------------------------------
-    // Resources / Materials
-    // --------------------------------------------------
-    [Header("Resources Materials")]
+    // ==================================================
+    // Temporary Buffers (GC Avoidance)
+    // ==================================================
+
+    static readonly List<int3> tmpFrontierList = new(512);
+    static readonly List<int3> tmpFrontierRemove = new(128);
+    static readonly List<int3> tmpChunkKeys = new(256);
+    static readonly List<int3> tmpChunksToRemove = new(256);
+
+    static readonly List<int3> tmpWriteChunks = new(256);
+    static readonly List<PendingBlockWrite> tmpWriteBuffer = new(512);
+
+
+    // ==================================================
+    // Resources / Native Data
+    // ==================================================
+
+    [Header("Resources")]
     private NativeArray<BlockDatabase.BlockInfoUnmanaged> nativeBlockDatabase;
     private OpenFaceDetector openFaceDetector;  // kernel
 
-    // --------------------------------------------------
+
+    // ==================================================
     // Pooling System
-    // --------------------------------------------------
-    readonly Dictionary<LODLevel, Stack<NativeArray<float>>> densityPoolByLod =
-        new Dictionary<LODLevel, Stack<NativeArray<float>>>();
+    // ==================================================
+
+    readonly Dictionary<LODLevel, Stack<NativeArray<float>>> densityPoolByLod = new();
     readonly object densityPoolLock = new();
+
     readonly Stack<GameObject> chunkGoPool = new();
     public Stack<Mesh> meshPool = new();
 
-    // --------------------------------------------------
-    // Timing / Movement Updates
-    // --------------------------------------------------
-    float lastScheduleTime = -999f;
-    private bool movementTriggered = false;
-    private int updatePhase = 0;
-    private Vector3 lastPlayerPos;
 
-    // System
+    // ==================================================
+    // Timing / Movement State
+    // ==================================================
+
+    float lastScheduleTime = -999f;
+    bool movementTriggered = false;
+    int updatePhase = 0;
+    Vector3 lastPlayerPos;
+
+
+    // ==================================================
+    // Systems
+    // ==================================================
+
     private NoiseSystem noiseSystem;
     private BlockGenSystem blockGenSystem;
     private DecorationSystem decorationSystem;
     private WriteSystem writeSystem;
     private MeshSystem meshSystem;
-
-    //private static readonly object EmptyChunkMarker = new object();
 
     void Awake()
     {
@@ -241,13 +296,16 @@ public class ChunkManager : MonoBehaviour
         Vector3 currentPlayerPos = player.transform.position;
         float moved = math.distance(currentPlayerPos, lastPlayerPos);
 
+        // No profiling on biomeSystem yet.
+        biomeSystem.Updater();
+
         // Periodic scheduling (throttled)
         if (Time.time - lastScheduleTime >= scheduleInterval)
         {
             lastScheduleTime = Time.time;
 
-            if (frontierQueue.Count > 0)
-                ScheduleNoiseTask(currentPlayerPos);
+            if (frontierQueue.Count > 0 || lodUpdateQueue.Count > 0)
+                ScheduleBiomes(currentPlayerPos);
         }
 
         if (moved >= minMoveBeforeUpdate)
@@ -279,7 +337,7 @@ public class ChunkManager : MonoBehaviour
                     ReturnDensityArray(data.lod, data.density);
                 continue;
             }
-            blockGenSystem.GenerateBlocks(data.coord, data.lod, data.density);
+            blockGenSystem.GenerateBlocks(data.coord, data.lod, data.density, biomeDataByChunk[data.coord]);
         }
         UnityEngine.Profiling.Profiler.EndSample();
 
@@ -307,7 +365,6 @@ public class ChunkManager : MonoBehaviour
         AdaptivePerformanceControl();
         UnityEngine.Profiling.Profiler.EndSample();
     }
-
     private void RemeshChunksNeedingRemesh()
     {
         // Re-mesh all chunks that received neighbour writes or decoration this frame
@@ -409,62 +466,23 @@ public class ChunkManager : MonoBehaviour
         }
         Profiler.EndLodLoop();
     }
-    void ScheduleNoiseTask(Vector3 playerPos)
+    void ScheduleBiomes(Vector3 playerPos)
     {
         Profiler.StartSchedLoop();
         if (player == null) return;
-
         int spawnedThisTick = 0;
-        int cap = Math.Max(1, maxConcurrentNoiseTasks);
+        int cap = Math.Max(1, maxConcurrentSchedualTasks);
 
-        // --- LOD upgrades / regen ---
-        if (lodUpdateQueue.Count != 0)
-        {
-            while (spawnedThisTick < cap && TryDequeueLodUpdate(out var lodUpdateToken))
-            {
-                var coord = lodUpdateToken.coord;
-                var targetLod = lodUpdateToken.lod;
-
-                if (!chunks.ContainsKey(coord))
-                    continue;
-
-                // If target LOD uses full-res and we already have full-res blockIds,
-                // there is no need to re-run density + blockgen: just remesh instead.
-                if (lodConfigs[targetLod].sampleRes == 1 &&
-                    fullResBlocksByChunk.TryGetValue(coord, out var existing) &&
-                    existing.IsCreated)
-                {
-                    // Just mark for remesh; block data already exists
-                    MarkChunkForRemesh(coord);
-                    continue;
-                }
-
-                if (generatingSet.Contains(coord))
-                    continue;
-
-                generatingSet.Add(coord);
-                spawnedThisTick++;
-                noiseSystem.RequestDensity(coord, targetLod);
-            }
-        }
-
-        // --- Frontier expansion (new chunks) ---
         if (frontierQueue.Count != 0)
         {
             while (spawnedThisTick < cap && TryDequeueFrontier(out var coord))
             {
                 if (chunks.ContainsKey(coord) || generatingSet.Contains(coord))
                     continue;
-                if (fullResBlocksByChunk.ContainsKey(coord))
-                {
-                    Debug.Log($"Frontier not queued at {coord} because a fullResBlocks was found");
-                    continue;
-                }
 
+                EnsureBiome(coord);
                 generatingSet.Add(coord);
                 spawnedThisTick++;
-                LODLevel lod = GetLODForCoord(coord, playerPos, LODLevel.Mid);
-                noiseSystem.RequestDensity(coord, lod);
             }
         }
         Profiler.EndSchedLoop();
@@ -618,7 +636,7 @@ public class ChunkManager : MonoBehaviour
         // ------------------------------------------------------------
         if (bootstrapMode)
         {
-            maxConcurrentNoiseTasks = coreCount;
+            maxConcurrentSchedualTasks = coreCount;
             currentMeshUploadsPerFrame = maxMeshUploadsPerFrame;
             scheduleInterval = 0.001f;
             meshDebounceFrames = 0;
@@ -676,7 +694,7 @@ public class ChunkManager : MonoBehaviour
         // ------------------------------------------------------------
         if (backlogStressed)
         {
-            maxConcurrentNoiseTasks = Mathf.Max(minConcurrentNoiseTasks, 1);
+            maxConcurrentSchedualTasks = Mathf.Max(minConcurrentNoiseTasks, 1);
             currentMeshUploadsPerFrame = Mathf.Max(minMeshUploadsPerFrame, 1);
 
             scheduleInterval = Mathf.Min(scheduleInterval * 1.15f, 0.30f);
@@ -705,8 +723,8 @@ public class ChunkManager : MonoBehaviour
         // ------------------------------------------------------------
         if (workerStressed)
         {
-            maxConcurrentNoiseTasks =
-                Mathf.Max(minConcurrentNoiseTasks, maxConcurrentNoiseTasks - 1);
+            maxConcurrentSchedualTasks =
+                Mathf.Max(minConcurrentNoiseTasks, maxConcurrentSchedualTasks - 1);
 
             lastDecisionString = "Worker Saturation";
             ChunkProfiler.AP_LastDecision = lastDecisionString;
@@ -717,8 +735,8 @@ public class ChunkManager : MonoBehaviour
         // ------------------------------------------------------------
         if (!stressed && goodPerfTimer > 1.0f)
         {
-            maxConcurrentNoiseTasks =
-                Mathf.Min(maxConcurrentNoiseTasks + 1, coreCount);
+            maxConcurrentSchedualTasks =
+                Mathf.Min(maxConcurrentSchedualTasks + 1, coreCount);
 
             currentMeshUploadsPerFrame =
                 Mathf.Min(currentMeshUploadsPerFrame + 1, maxMeshUploadsPerFrame);
@@ -758,7 +776,7 @@ public class ChunkManager : MonoBehaviour
                 }
 
         // Immediately run a flood-fill tick (respects throttling)
-        ScheduleNoiseTask(playerPos);
+        ScheduleBiomes(playerPos);
     }
     void UnloadChunks(Vector3 currentPlayerChunk)
     {    
@@ -821,6 +839,10 @@ public class ChunkManager : MonoBehaviour
     }
     private void InitializeSystems()
     {
+        // BiomeSystem setup - Already initialized via editor
+        biomeSystem.SetSeed(seed);
+        biomeSystem.OnBiomeCompleted += HandleBiomeCompleted;
+
         // NoiseSystem set-up
         noiseSystem = new NoiseSystem();
         noiseSystem.Initialize(
@@ -829,7 +851,7 @@ public class ChunkManager : MonoBehaviour
                 seed = seed,
                 frequency = frequency,
                 chunkSize = chunkSize,
-                maxConcurrentNoiseTasks =  maxConcurrentNoiseTasks
+                maxConcurrentNoiseTasks =  maxConcurrentSchedualTasks
             },
             lod => RentDensityArray(lod),
             (lod, arr) => ReturnDensityArray(lod, arr)
@@ -935,6 +957,13 @@ public class ChunkManager : MonoBehaviour
     {
         generatingSet.Remove(coord);
     }
+    private void HandleBiomeCompleted(int3 coord, BiomeData biome)
+    {
+        biomeDataByChunk[coord] = biome;
+        pendingBiome.Remove(coord);
+        LODLevel lod = GetLODForCoord(coord, lastPlayerPos, LODLevel.Mid);
+        noiseSystem.RequestDensity(coord, lod, biomeDataByChunk[coord]);
+    }
     private void HandleMeshReady(int3 coord, MeshData meshData)
     {
         bool empty = !meshData.vertices.IsCreated || meshData.vertices.Length == 0;
@@ -1014,6 +1043,14 @@ public class ChunkManager : MonoBehaviour
         if (writes.IsCreated)
             writes.Dispose();
 
+        // Done with the biome data
+        if (biomeDataByChunk.TryGetValue(coord, out var biome))
+        {
+            if (biome.grid.IsCreated)
+                biome.grid.Dispose();
+
+            biomeDataByChunk.Remove(coord);
+        }
         MarkChunkForRemesh(coord);
 
         var faces = DetectTerrainFlowFromBlocks(blockIds, LODLevel.Near);
@@ -1068,6 +1105,17 @@ public class ChunkManager : MonoBehaviour
     // =============================
     // ===== HELPER FUNCTIONS ======
     // =============================
+    void EnsureBiome(int3 coord)
+    {
+        if (biomeDataByChunk.ContainsKey(coord))
+            return;
+
+        if (pendingBiome.Contains(coord))
+            return;
+
+        biomeSystem.RequestBiome(coord, chunkSize);
+        pendingBiome.Add(coord);
+    }
     public void MarkChunkForRemesh(int3 coord)
     {
         if (chunksNeedingRemeshSet.Add(coord))
@@ -1187,6 +1235,32 @@ public class ChunkManager : MonoBehaviour
     {
         deferredFrontier.Add(coord); // If a chunk is removed it must then become a new frontier for terrain generation
 
+        // Biome cleanup
+        if (pendingBiome.Contains(coord))
+        {
+            biomeSystem.CancelBiome(coord);
+            pendingBiome.Remove(coord);
+        }
+
+        if (biomeDataByChunk.TryGetValue(coord, out var biome))
+        {
+            if (biome.grid.IsCreated)
+                biome.grid.Dispose();
+            biomeDataByChunk.Remove(coord);
+        }
+
+        // Clear stored block data
+        if (fullResBlocksByChunk.TryGetValue(coord, out var arr))
+        {
+            if (arr.IsCreated) arr.Dispose();
+            fullResBlocksByChunk.Remove(coord);
+        }
+
+        // Also clear any “future” writes never applied
+        writeSystem.Clear(coord);
+        lodByCoord.Remove(coord);
+        chunksNeedingRemesh.Remove(coord);
+
         if (!chunks.TryGetValue(coord, out var chunk))
             return;
 
@@ -1198,17 +1272,6 @@ public class ChunkManager : MonoBehaviour
         }
 
         chunks.Remove(coord);
-
-        if (fullResBlocksByChunk.TryGetValue(coord, out var arr))
-        {
-            if (arr.IsCreated) arr.Dispose();
-            fullResBlocksByChunk.Remove(coord);
-        }
-
-        // Also clear any “future” writes never applied
-        writeSystem.Clear(coord);
-        lodByCoord.Remove(coord);
-        chunksNeedingRemesh.Remove(coord);
     }
     public Vector3 ChunkToWorld(int3 coord)
     {

@@ -434,7 +434,7 @@ MonoBehaviour:
   seed: 44512
   frequency: 0.7
   chunkSize: 64
-  viewDistance: 8
+  viewDistance: 4
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 8
   renderShape: 1
@@ -453,7 +453,7 @@ MonoBehaviour:
   nearMaterial: {fileID: 0}
   midMaterial: {fileID: 0}
   farMaterial: {fileID: 2100000, guid: 2bf2215389819b342a877f12b9473126, type: 3}
-  maxConcurrentSchedualTasks: 4
+  maxConcurrentNoiseTasks: 24
   minConcurrentNoiseTasks: 12
   maxMeshUploadsPerFrame: 2
   minMeshUploadsPerFrame: 1
@@ -563,7 +563,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BiomeSystem
   biomeResolution: 32
-  frequency: 0.004
 --- !u!1 &832329037
 GameObject:
   m_ObjectHideFlags: 0

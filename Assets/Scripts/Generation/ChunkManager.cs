@@ -44,6 +44,7 @@ public class ChunkManager : MonoBehaviour
     public GameObject player;
 
     [SerializeField] public BiomeSystem biomeSystem;
+    [SerializeField] public BiomeDataManager biomeDataManager;
 
     [SerializeField] private BlockDatabase blockDatabase;
     [SerializeField] public BlockTextureArrayBuilder textureArrayBuilder;
@@ -62,7 +63,7 @@ public class ChunkManager : MonoBehaviour
     [SerializeField] int farRange = 20;
 
     [SerializeField] Material nearMaterial;
-    [SerializeField] Material midMaterial;
+    //[SerializeField] Material midMaterial;
     [SerializeField] Material farMaterial;
 
 
@@ -242,12 +243,13 @@ public class ChunkManager : MonoBehaviour
 
         // load texture array
         var texture = textureArrayBuilder.GetTextureArray();
-        voxelMaterial.SetTexture("_Textures", texture);
+        nearMaterial.SetTexture("_Textures", texture);
+        farMaterial.SetTexture("_Textures", texture);
         waterMaterial.SetTexture("_Textures", texture);
 
         //Define LODs
-        lodConfigs[LODLevel.Near] = new LODSettings { meshRes = 1, sampleRes = 1, blockSize = 1, detailedBlocks = true, material = voxelMaterial };
-        lodConfigs[LODLevel.Mid] = new LODSettings { meshRes = 2, sampleRes = 1, blockSize = 2, detailedBlocks = false, material = midMaterial };
+        lodConfigs[LODLevel.Near] = new LODSettings { meshRes = 1, sampleRes = 1, blockSize = 1, detailedBlocks = true, material = nearMaterial };
+        lodConfigs[LODLevel.Mid] = new LODSettings { meshRes = 2, sampleRes = 1, blockSize = 2, detailedBlocks = false, material = farMaterial };
         lodConfigs[LODLevel.Far] = new LODSettings { meshRes = 4, sampleRes = 1, blockSize = 4, detailedBlocks = false, material = farMaterial };
         // Compute density counts per LOD
         foreach (var kv in lodConfigs.ToArray())
@@ -305,7 +307,7 @@ public class ChunkManager : MonoBehaviour
             lastScheduleTime = Time.time;
 
             if (frontierQueue.Count > 0 || lodUpdateQueue.Count > 0)
-                ScheduleBiomes(currentPlayerPos);
+                InjectChunkRequestIntoPipeline(currentPlayerPos);
         }
 
         if (moved >= minMoveBeforeUpdate)
@@ -462,17 +464,48 @@ public class ChunkManager : MonoBehaviour
 
             // Trigger regen only if not already generating
             if (!generatingSet.Contains(coord))
-                EnqueueLodResolutionUpgrade(coord, desired);
+                EnqueueLodUpdate(coord, desired);
         }
         Profiler.EndLodLoop();
     }
-    void ScheduleBiomes(Vector3 playerPos)
+    void InjectChunkRequestIntoPipeline(Vector3 playerPos)
     {
         Profiler.StartSchedLoop();
         if (player == null) return;
         int spawnedThisTick = 0;
         int cap = Math.Max(1, maxConcurrentSchedualTasks);
 
+        if (lodUpdateQueue.Count != 0)
+        {
+            while (spawnedThisTick < cap && TryDequeueLodUpdate(out var lodUpdateToken))
+            {
+                var coord = lodUpdateToken.coord;
+                var targetLod = lodUpdateToken.lod;
+
+                if (!chunks.ContainsKey(coord))
+                    continue;
+
+                // If target LOD uses full-res and we already have full-res blockIds,
+                // there is no need to re-run density + blockgen: just remesh instead.
+                if (lodConfigs[targetLod].sampleRes == 1 &&
+                    fullResBlocksByChunk.TryGetValue(coord, out var existing) &&
+                    existing.IsCreated)
+                {
+                    // Just mark for remesh; block data already exists
+                    MarkChunkForRemesh(coord);
+                    continue;
+                }
+
+                if (generatingSet.Contains(coord))
+                    continue;
+
+                // If target chunk did not previously exist due to low resolution,
+                // schedual it now
+                EnsureBiome(coord);
+                generatingSet.Add(coord);
+                spawnedThisTick++;
+            }
+        }
         if (frontierQueue.Count != 0)
         {
             while (spawnedThisTick < cap && TryDequeueFrontier(out var coord))
@@ -776,7 +809,7 @@ public class ChunkManager : MonoBehaviour
                 }
 
         // Immediately run a flood-fill tick (respects throttling)
-        ScheduleBiomes(playerPos);
+        InjectChunkRequestIntoPipeline(playerPos);
     }
     void UnloadChunks(Vector3 currentPlayerChunk)
     {    
@@ -839,8 +872,20 @@ public class ChunkManager : MonoBehaviour
     }
     private void InitializeSystems()
     {
-        // BiomeSystem setup - Already initialized via editor
+        if (biomeDataManager == null)
+        {
+            Debug.LogError("BiomeDataManager not assigned!");
+            return;
+        }
+        biomeDataManager.Initialize();
+
+        if (biomeSystem == null)
+        {
+            Debug.LogError("biomeSystem not assigned!");
+            return;
+        }
         biomeSystem.SetSeed(seed);
+        biomeSystem.biomeDataManager = biomeDataManager;
         biomeSystem.OnBiomeCompleted += HandleBiomeCompleted;
 
         // NoiseSystem set-up
@@ -851,7 +896,8 @@ public class ChunkManager : MonoBehaviour
                 seed = seed,
                 frequency = frequency,
                 chunkSize = chunkSize,
-                maxConcurrentNoiseTasks =  maxConcurrentSchedualTasks
+                maxConcurrentNoiseTasks =  maxConcurrentSchedualTasks,
+                biomeDataManager = biomeDataManager
             },
             lod => RentDensityArray(lod),
             (lod, arr) => ReturnDensityArray(lod, arr)
@@ -864,7 +910,8 @@ public class ChunkManager : MonoBehaviour
             new BlockGenSystem.Config
             {
                 chunkSize = chunkSize,
-                GetSampleRes = lod => lodConfigs[lod].sampleRes
+                GetSampleRes = lod => lodConfigs[lod].sampleRes,
+                biomeDataManager = biomeDataManager
             },
             (lod, density) => ReturnDensityArray(lod, density)
         );
@@ -879,7 +926,8 @@ public class ChunkManager : MonoBehaviour
             chunkSize = chunkSize,
             indexSize = chunkSize + 1,
             seed = seed,
-            GetBootstrapMode = () => bootstrapMode
+            GetBootstrapMode = () => bootstrapMode,
+            biomeDataManager = biomeDataManager
         });
         decorationSystem.OnDecorationStarted += HandleDecorationStarted;
         decorationSystem.OnDecorationCompleted += HandleDecorationCompleted;
@@ -1005,7 +1053,7 @@ public class ChunkManager : MonoBehaviour
         }
         else // Apply mesh normally
         {   
-            chunk.chunkMaterial = voxelMaterial;
+            chunk.chunkMaterial = lodConfigs[meshData.lod].material;
             chunk.lod = meshData.lod;
             chunk.ApplyMesh(meshData, meshPool);
         }
@@ -1083,8 +1131,14 @@ public class ChunkManager : MonoBehaviour
             // Normal case: first time full-res is generated for this chunk
             fullResBlocksByChunk[coord] = blockIds;
 
+            // Pass BiomeData to decoration system
+            if (!biomeDataByChunk.TryGetValue(coord, out var biomeData))
+            {
+                Debug.LogError($"[BlockGen] No biome data for {coord} when scheduling decoration!");
+                return;
+            }
             // Run decoration on full-res chunks only
-            decorationSystem.ScheduleDecoration(coord, lod, blockIds);
+            decorationSystem.ScheduleDecoration(coord, lod, blockIds, biomeData);
             return;
         }
 
@@ -1209,7 +1263,7 @@ public class ChunkManager : MonoBehaviour
         c = default;
         return false;
     }
-    void EnqueueLodResolutionUpgrade(int3 c, LODLevel l) // Currently does not do any extra sorting
+    void EnqueueLodUpdate(int3 c, LODLevel l) // Currently does not do any extra sorting
     {
         if (lodUpdateSet.Add(c)) lodUpdateQueue.Enqueue(new LodUpdateRequest {coord = c, lod = l});
     }

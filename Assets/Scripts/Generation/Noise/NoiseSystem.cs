@@ -14,19 +14,17 @@ public class NoiseSystem
         public int chunkSize;
         public float frequency;
         public int maxConcurrentNoiseTasks;
+        public BiomeDataManager biomeDataManager;
     }
 
     private NoiseConfig config;
     private NoiseGenerator noiseGenerator;
-
     private SemaphoreSlim limiter;
     private CancellationTokenSource cts;
 
-    // These are provided by ChunkManager so pooling stays there
     private Func<LODLevel, NativeArray<float>> rentDensity;
     private Action<LODLevel, NativeArray<float>> returnDensity;
 
-    // Optional: for stats
     private readonly HashSet<int3> activeNoiseTasks = new HashSet<int3>();
     public int ActiveTasks => activeNoiseTasks.Count;
 
@@ -58,7 +56,12 @@ public class NoiseSystem
 
     public void RequestDensity(int3 coord, LODLevel lod, BiomeData biome)
     {
-        // Decide sampleRes per LOD - OUTDATED
+        if (config.biomeDataManager == null || !config.biomeDataManager.IsInitialized)
+        {
+            Debug.LogError("BiomeDataManager not initialized!");
+            return;
+        }
+
         int sampleRes = lod switch
         {
             LODLevel.Near => 1,
@@ -71,10 +74,13 @@ public class NoiseSystem
         lock (activeNoiseTasks)
             activeNoiseTasks.Add(coord);
 
+        // Capture curve data reference (thread-safe, NativeArray is blittable)
+        NativeArray<float> curveData = config.biomeDataManager.GetCurveData();
+        NativeArray<TerrainTypeData> terrainTypes = config.biomeDataManager.GetTerrainTypeData();
+
         Task.Run(async () =>
         {
             bool acquired = false;
-
             try
             {
                 await limiter.WaitAsync(cts.Token);
@@ -91,7 +97,10 @@ public class NoiseSystem
                         config.chunkSize,
                         config.frequency,
                         sampleRes,
-                        biome));
+                        biome,
+                        curveData,
+                        terrainTypes
+                    ));
 
                 Profiler.EndNoise();
 

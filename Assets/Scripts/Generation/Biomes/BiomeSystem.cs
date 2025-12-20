@@ -7,12 +7,15 @@ using UnityEngine;
 
 public sealed class BiomeSystem : MonoBehaviour
 {
+    [Header("References")]
+    public BiomeDataManager biomeDataManager;
+
     [Header("Biome Settings")]
     [Tooltip("Biome samples per axis per chunk (e.g. 8, 16, 32)")]
     public int biomeResolution = 32;
     public float frequency = 0.0012f;
-
     int seed = 1337;
+
     public void SetSeed(int value) => seed = value;
 
     struct PendingBiome
@@ -21,31 +24,23 @@ public sealed class BiomeSystem : MonoBehaviour
         public NativeArray<BiomeHint> grid;
     }
 
-    // Pending biome jobs
     readonly Dictionary<int3, PendingBiome> pending = new();
 
-    // --------------------------------------------------
-    // Events
-    // --------------------------------------------------
-
-    /// <summary>
-    /// Fired when a biome job completes.
-    /// Ownership of BiomeData.grid transfers to listener.
-    /// </summary>
     public System.Action<int3, BiomeData> OnBiomeCompleted;
-
-    // --------------------------------------------------
-    // Public API
-    // --------------------------------------------------
 
     public void RequestBiome(int3 chunkCoord, int chunkSize)
     {
         if (pending.ContainsKey(chunkCoord))
             return;
 
+        if (biomeDataManager == null || !biomeDataManager.IsInitialized)
+        {
+            Debug.LogError("BiomeDataManager not initialized!");
+            return;
+        }
+
         int side = biomeResolution + 1;
         int count = side * side;
-
         var grid = new NativeArray<BiomeHint>(
             count,
             Allocator.Persistent,
@@ -59,11 +54,20 @@ public sealed class BiomeSystem : MonoBehaviour
             resolution = biomeResolution,
             seed = (uint)seed,
             frequency = frequency,
+
+            terrainTypes = biomeDataManager.GetTerrainTypeData(),
+            terrainAllowedBiomes = biomeDataManager.GetTerrainAllowedBiomes(),
+            biomes = biomeDataManager.GetBiomeDefinitions(),
+            waterLevel = biomeDataManager.GetWaterLevel(),
+
+            // Blend control (expose these as public fields if you want to tune in inspector)
+            terrainBlendWidth = 0.3f,  // 0.1 = sharp transitions, 1.0 = very gradual
+            biomeBlendWidth = 1f,
+
             output = grid
         };
 
         JobHandle handle = job.Schedule(count, 64);
-
         pending.Add(chunkCoord, new PendingBiome
         {
             handle = handle,
@@ -75,20 +79,19 @@ public sealed class BiomeSystem : MonoBehaviour
     {
         if (!pending.TryGetValue(chunkCoord, out var p))
             return;
-
         p.handle.Complete();
-
         if (p.grid.IsCreated)
             p.grid.Dispose();
-
         pending.Remove(chunkCoord);
     }
 
     static readonly List<int3> tmpKeys = new List<int3>(128);
+
     public void Updater()
     {
         if (pending.Count == 0)
             return;
+
         tmpKeys.Clear();
         tmpKeys.AddRange(pending.Keys);
 
@@ -102,16 +105,14 @@ public sealed class BiomeSystem : MonoBehaviour
 
             p.handle.Complete();
 
-            var biome = new BiomeData
+            var biomeData = new BiomeData
             {
                 resolution = biomeResolution,
                 grid = p.grid
             };
 
             pending.Remove(coord);
-
-            // Emit completion
-            OnBiomeCompleted?.Invoke(coord, biome);
+            OnBiomeCompleted?.Invoke(coord, biomeData);
         }
     }
 

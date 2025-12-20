@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
+using UnityEditor.PackageManager.UI;
 using UnityEngine;
 using UnityEngine.Profiling;
+using static UnityEngine.Rendering.DebugUI.Table;
 
 public class BlockGenSystem
 {
@@ -12,11 +14,10 @@ public class BlockGenSystem
     {
         public int chunkSize;
         public Func<LODLevel, int> GetSampleRes;
+        public BiomeDataManager biomeDataManager;
     }
 
     private Config cfg;
-
-    // Return density buffer to pool (owned by ChunkManager)
     private Action<LODLevel, NativeArray<float>> returnDensity;
 
     private struct BlockJobInfo
@@ -30,7 +31,6 @@ public class BlockGenSystem
     private readonly Dictionary<int3, BlockJobInfo> jobs = new();
     public int ActiveJobs => jobs.Count;
 
-    // Fired when blocks are ready. Ownership of blockIds is transferred to ChunkManager.
     public event Action<int3, LODLevel, NativeArray<byte>> OnBlockGenCompleted;
 
     private static readonly List<int3> tmpCoords = new();
@@ -43,6 +43,12 @@ public class BlockGenSystem
 
     public void GenerateBlocks(int3 coord, LODLevel lod, NativeArray<float> density, BiomeData biomeData)
     {
+        if (cfg.biomeDataManager == null || !cfg.biomeDataManager.IsInitialized)
+        {
+            Debug.LogError("BiomeDataManager not initialized!");
+            return;
+        }
+
         // If somehow we already have a job for this coord, complete and clean it first
         if (jobs.TryGetValue(coord, out var existing))
         {
@@ -68,7 +74,12 @@ public class BlockGenSystem
             blockIds = blockIds,
             chunkSize = chunkLodSize,
             chunkCoord = coord,
-            biomeData = biomeData
+            waterLevel = cfg.biomeDataManager.GetWaterLevel(),
+
+            // Pass biome data
+            biomeHints = biomeData.grid,
+            biomeResolution = biomeData.resolution,
+            biomes = cfg.biomeDataManager.GetBiomeDefinitions()
         };
 
         Profiler.StartBlock();
@@ -101,11 +112,9 @@ public class BlockGenSystem
             info.handle.Complete();
             Profiler.EndBlock();
 
-            // Return density to pool
             if (info.density.IsCreated)
                 returnDensity(info.lod, info.density);
 
-            // Hand blockIds to ChunkManager (it now owns disposal)
             OnBlockGenCompleted?.Invoke(coord, info.lod, info.blockIds);
 
             jobs.Remove(coord);

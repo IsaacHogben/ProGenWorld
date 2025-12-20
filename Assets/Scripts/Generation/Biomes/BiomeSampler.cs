@@ -26,19 +26,4 @@ public static class BiomeSampler
 
         return grid[x + z * side];
     }
-
-
-
-    /// <summary>
-    /// Converts a BiomeHint to primary/secondary weights.
-    /// </summary>
-    public static void DecodeWeights(
-        in BiomeHint hint,
-        out float primaryWeight,
-        out float secondaryWeight)
-    {
-        float t = hint.blend * (1f / 255f);
-        primaryWeight = 1f - t;
-        secondaryWeight = t;
-    }
 }

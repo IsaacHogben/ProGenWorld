@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
+using UnityEngine;
 
 public class DecorationSystem
 {
@@ -12,11 +13,10 @@ public class DecorationSystem
         public int indexSize;
         public int seed;
         public Func<bool> GetBootstrapMode;
+        public BiomeDataManager biomeDataManager;
     }
 
     private DecorationConfig config;
-
-    // Per-chunk job tracking
     private readonly Dictionary<int3, JobHandle> jobHandles = new();
     private readonly Dictionary<int3, NativeList<PendingBlockWrite>> outputLists = new();
     private readonly Dictionary<int3, (NativeArray<byte> blockIds, LODLevel lod)> inputs = new();
@@ -34,8 +34,14 @@ public class DecorationSystem
         this.config = config;
     }
 
-    public void ScheduleDecoration(int3 coord, LODLevel lod, NativeArray<byte> blockIds)
+    public void ScheduleDecoration(int3 coord, LODLevel lod, NativeArray<byte> blockIds, BiomeData biomeData)
     {
+        if (config.biomeDataManager == null || !config.biomeDataManager.IsInitialized)
+        {
+            Debug.LogError("BiomeDataManager not initialized!");
+            return;
+        }
+
         var writes = new NativeList<PendingBlockWrite>(Allocator.Persistent);
 
         var job = new DecorationJob
@@ -46,16 +52,21 @@ public class DecorationSystem
             lod = lod,
             rng = new Unity.Mathematics.Random((uint)(config.seed ^ coord.GetHashCode())),
             blockIds = blockIds,
-            pendingWrites = writes
+            pendingWrites = writes,
+
+            biomeHints = biomeData.grid,
+            biomeResolution = biomeData.resolution,
+            biomes = config.biomeDataManager.GetBiomeDefinitions(),
+            decorations = config.biomeDataManager.GetDecorationData(),
+            spawnBlocks = config.biomeDataManager.GetDecorationSpawnBlocks(),
+            waterLevel = config.biomeDataManager.GetWaterLevel()
         };
 
         Profiler.StartDeco();
         JobHandle handle = job.Schedule();
-
         jobHandles[coord] = handle;
         outputLists[coord] = writes;
         inputs[coord] = (blockIds, lod);
-
         OnDecorationStarted?.Invoke(coord);
     }
 
@@ -76,9 +87,10 @@ public class DecorationSystem
         {     
             if (completes >= maxCompletesPerFrame)
                 break;
-            int3 coord = keyBuffer[i];
 
+            int3 coord = keyBuffer[i];
             var handle = jobHandles[coord];
+
             if (!handle.IsCompleted)
                 continue;
 
@@ -87,7 +99,6 @@ public class DecorationSystem
             completes++;
 
             var writesNative = outputLists[coord];
-
             jobHandles.Remove(coord);
             outputLists.Remove(coord);
             inputs.Remove(coord);
@@ -106,5 +117,4 @@ public class DecorationSystem
         foreach (var kv in jobHandles)
             keyBuffer[keyCount++] = kv.Key;
     }
-    private static readonly List<int3> tmpKeys = new();
 }

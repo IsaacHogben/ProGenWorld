@@ -393,7 +393,6 @@ GameObject:
   m_Component:
   - component: {fileID: 695623963}
   - component: {fileID: 695623964}
-  - component: {fileID: 695623968}
   - component: {fileID: 695623965}
   - component: {fileID: 695623966}
   - component: {fileID: 695623967}
@@ -431,10 +430,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 44512
-  frequency: 0.7
+  seed: 636333
+  frequency: 0.85
   chunkSize: 64
-  viewDistance: 8
+  viewDistance: 5
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 8
   renderShape: 1
@@ -442,7 +441,8 @@ MonoBehaviour:
   maxChunks: 4400
   chunkUnloadBuffer: 400
   player: {fileID: 2024416877}
-  biomeSystem: {fileID: 695623968}
+  biomeSystem: {fileID: 1148720672}
+  biomeDataManager: {fileID: 1148720671}
   blockDatabase: {fileID: 11400000, guid: f9b2a5fcc2fa09d4caac36b7d550818c, type: 2}
   textureArrayBuilder: {fileID: 11400000, guid: 3f71b64aadbc3bf498224a3efb12f316, type: 2}
   voxelMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
@@ -450,9 +450,8 @@ MonoBehaviour:
   nearRange: 9
   midRange: 15
   farRange: 17
-  nearMaterial: {fileID: 0}
-  midMaterial: {fileID: 0}
-  farMaterial: {fileID: 2100000, guid: 2bf2215389819b342a877f12b9473126, type: 3}
+  nearMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
+  farMaterial: {fileID: 2100000, guid: 32e68a70545044440ba9739f8303acfa, type: 2}
   maxConcurrentSchedualTasks: 4
   minConcurrentNoiseTasks: 12
   maxMeshUploadsPerFrame: 2
@@ -478,9 +477,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkProfiler
   chunkManager: {fileID: 695623964}
-  showOnScreen: 0
-  showMeshStats: 0
-  showSystemStats: 1
+  showOnScreen: 1
+  showMeshStats: 1
+  showSystemStats: 0
   showMainThreadLoopTimes: 0
   showOnMoveStats: 1
   showFrameGraph: 1
@@ -550,20 +549,6 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
---- !u!114 &695623968
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 695623961}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 62fdc97cca14d084d9e4d5ee7dc53d66, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::BiomeSystem
-  biomeResolution: 32
-  frequency: 0.004
 --- !u!1 &832329037
 GameObject:
   m_ObjectHideFlags: 0
@@ -755,6 +740,73 @@ Transform:
   m_Children:
   - {fileID: 330585546}
   m_Father: {fileID: 2024416878}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1148720670
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1148720673}
+  - component: {fileID: 1148720672}
+  - component: {fileID: 1148720671}
+  m_Layer: 0
+  m_Name: BiomeManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1148720671
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1148720670}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4b9efe45b66dcc54d8b0f33ffa781854, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BiomeDataManager
+  terrainTypes:
+  - {fileID: 11400000, guid: f2982441869ef7b46a67d6774cef5d77, type: 2}
+  - {fileID: 11400000, guid: 50ea700ddd358de42b9c5c8e9c0ae405, type: 2}
+  biomes:
+  - {fileID: 11400000, guid: a8d26d0dab5f8a3438cfd5279cd4138b, type: 2}
+  - {fileID: 11400000, guid: 552e3d9646cb9f94f8ad27960569127c, type: 2}
+  waterLevel: -64
+--- !u!114 &1148720672
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1148720670}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 62fdc97cca14d084d9e4d5ee7dc53d66, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BiomeSystem
+  biomeDataManager: {fileID: 1148720671}
+  biomeResolution: 64
+  frequency: 0.002
+--- !u!4 &1148720673
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1148720670}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1366480631
 GameObject:
@@ -1008,8 +1060,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2024416877}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: -0.7053864, z: 0, w: -0.708823}
-  m_LocalPosition: {x: 1106.3175, y: -82.95501, z: 1054.9836}
+  m_LocalRotation: {x: 0, y: -0.15566303, z: 0, w: -0.98781025}
+  m_LocalPosition: {x: 117.66106, y: -59.389423, z: 102.254486}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -1161,6 +1213,7 @@ SceneRoots:
   - {fileID: 410087041}
   - {fileID: 832575519}
   - {fileID: 695623963}
+  - {fileID: 1148720673}
   - {fileID: 2024416878}
   - {fileID: 832329041}
   - {fileID: 1366480635}

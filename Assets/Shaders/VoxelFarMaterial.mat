@@ -20,8 +20,8 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: TextureArrayMaterial
-  m_Shader: {fileID: -6465566751694194690, guid: 7de8e37c97c0fbd49b27052753481288, type: 3}
+  m_Name: VoxelFarMaterial
+  m_Shader: {fileID: -6465566751694194690, guid: ee0c9d4d4cbc5a04182246fbc537c461, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords: []
@@ -37,6 +37,10 @@ Material:
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs:
+    - _SampleTexture2D_0179da50548043e7a2985cd65d621bf9_Texture_1_Texture2D:
+        m_Texture: {fileID: 2800000, guid: eca8611ffcb08b04682aff02689a1c6f, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _Texture2DAsset_972acb9937844bdeaee914604d4286a9_Out_0_Texture2D:
         m_Texture: {fileID: 2800000, guid: af8c2309a0289eb48a415b322a9bd93c, type: 3}
         m_Scale: {x: 1, y: 1}
@@ -73,5 +77,6 @@ Material:
     - _SmallScale: 2
     m_Colors:
     - _Atmosphere_Color: {r: 0.61960787, g: 0.69803923, b: 0.7607844, a: 1}
+    - _Color: {r: 0.44061902, g: 0.5568628, b: 0.25490198, a: 0}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

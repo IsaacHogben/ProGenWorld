@@ -135,8 +135,8 @@ public class NoiseGenerator
 
                     // Normalize Y based on expected terrain range
                     // Adjust these values based on your world scale
-                    float minTerrainY = -500f;  // Bottom of world
-                    float maxTerrainY = 500f;   // Top of world
+                    float minTerrainY = -320f;  // Bottom of world
+                    float maxTerrainY = 320f;   // Top of world
                     float normalizedY = (worldY - minTerrainY) / (maxTerrainY - minTerrainY);
                     normalizedY = math.clamp(normalizedY, 0f, 1f);
 

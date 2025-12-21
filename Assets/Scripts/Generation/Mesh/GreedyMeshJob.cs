@@ -124,55 +124,95 @@ public struct GreedyMeshJob : IJob
                         BlockVisibility currentVis = blockDb[currentBlock].visibility;
                         BlockVisibility compareVis = blockDb[compareBlock].visibility;
 
-                        // Decision table: [current][compare] -> (shouldDraw, whichBlock, normal)
-                        // Invisible = 0, Translucent = 1, Opaque = 2
-
                         bool shouldDrawFace = false;
                         byte faceBlock = 0;
                         short faceNormal = 0;
 
-                        if (currentVis == BlockVisibility.Invisible)
+                        // Invisible (air) cases
+                        if (currentVis == BlockVisibility.Invisible && compareVis == BlockVisibility.Invisible)
                         {
-                            if (compareVis != BlockVisibility.Invisible)
-                            {
-                                // Air next to visible block - draw visible block
-                                shouldDrawFace = true;
-                                faceBlock = compareBlock;
-                                faceNormal = 1;
-                            }
+                            // Air to air - no face
+                            shouldDrawFace = false;
+                        }
+                        else if (currentVis == BlockVisibility.Invisible)
+                        {
+                            // Air to something visible - draw the visible block's face
+                            shouldDrawFace = true;
+                            faceBlock = compareBlock;
+                            faceNormal = 1;
                         }
                         else if (compareVis == BlockVisibility.Invisible)
                         {
-                            // Visible block next to air - draw visible block
+                            // Something visible to air - draw this block's face
                             shouldDrawFace = true;
                             faceBlock = currentBlock;
                             faceNormal = -1;
                         }
-                        else if (currentVis == BlockVisibility.Opaque || compareVis == BlockVisibility.Opaque)
+                        // STACKED LOGIC - Both stacked
+                        else if (currentVis == BlockVisibility.Stacked && compareVis == BlockVisibility.Stacked)
                         {
-                            // At least one opaque - draw the opaque one
-                            if (currentVis == BlockVisibility.Opaque && compareVis != BlockVisibility.Opaque)
+                            // Both stacked - draw BOTH faces (normal = 2 signals double-sided)
+                            if (meshData.lod == LODLevel.Near)
                             {
                                 shouldDrawFace = true;
+                                faceBlock = currentBlock;  // Could be either, doesn't matter much
+                                faceNormal = 2;  // Special case: render both sides
+                            }
+                            else
+                            {   // Do nothing at farther lod
+                                shouldDrawFace = false;
                                 faceBlock = currentBlock;
-                                faceNormal = -1;
+                                faceNormal = 0;
                             }
-                            else if (compareVis == BlockVisibility.Opaque && currentVis != BlockVisibility.Opaque)
-                            {
-                                shouldDrawFace = true;
-                                faceBlock = compareBlock;
-                                faceNormal = 1;
-                            }
-                            // Both opaque - no face needed
                         }
-                        else // Both translucent
+                        // STACKED LOGIC - Current is stacked, compare is not
+                        else if (currentVis == BlockVisibility.Stacked)
                         {
-                            // Only draw if different translucent types (water/glass boundary)
+                            // Stacked block next to solid/translucent - show the solid/translucent face
+                            shouldDrawFace = true;
+                            faceBlock = compareBlock;
+                            faceNormal = 1;
+                        }
+                        // STACKED LOGIC - Compare is stacked, current is not
+                        else if (compareVis == BlockVisibility.Stacked)
+                        {
+                            // Solid/translucent next to stacked - show the solid/translucent face
+                            shouldDrawFace = true;
+                            faceBlock = currentBlock;
+                            faceNormal = -1;
+                        }
+                        // Standard opaque/translucent logic
+                        else if (currentVis == BlockVisibility.Opaque && compareVis == BlockVisibility.Opaque)
+                        {
+                            // Both opaque - no face (fully culled)
+                            shouldDrawFace = false;
+                        }
+                        else if (currentVis == BlockVisibility.Opaque)
+                        {
+                            // Opaque to translucent - draw opaque face
+                            shouldDrawFace = true;
+                            faceBlock = currentBlock;
+                            faceNormal = -1;
+                        }
+                        else if (compareVis == BlockVisibility.Opaque)
+                        {
+                            // Translucent to opaque - draw opaque face
+                            shouldDrawFace = true;
+                            faceBlock = compareBlock;
+                            faceNormal = 1;
+                        }
+                        else if (currentVis == BlockVisibility.Translucent && compareVis == BlockVisibility.Translucent)
+                        {
+                            // Both translucent - only draw if different types
                             if (currentBlock != compareBlock)
                             {
                                 shouldDrawFace = true;
                                 faceBlock = currentBlock;
                                 faceNormal = -1;
+                            }
+                            else
+                            {
+                                shouldDrawFace = false;
                             }
                         }
 
@@ -276,22 +316,116 @@ public struct GreedyMeshJob : IJob
 
     public void CreateQuad(MeshData meshData, ref int vertexCount, FMask mask, int3 axisMask, int width, int height, int3 v1, int3 v2, int3 v3, int3 v4)
     {
-        int3 normal = axisMask * mask.Normal;
+        if (mask.Normal == 2)
+        {
+            // Create both faces with greedy-merged dimensions
+            CreateDoubleSidedQuad(meshData, ref vertexCount, mask, axisMask, width, height, v1, v2, v3, v4);
+        }
+        else
+        {
+            // Original single-sided logic
+            CreateSingleSidedQuad(meshData, ref vertexCount, mask, axisMask, width, height, v1, v2, v3, v4);
+        }
+    }
 
-        // Exit Quad creation if block data requires it.
-        //if (mask.BlockData.DisplayFaces == EBlockDisplayType.OnlySides && normal.Z != 0)
-            //return;
-
-        // apply vertex colour here if able 
+    private void CreateDoubleSidedQuad(MeshData meshData, ref int vertexCount, FMask mask, int3 axisMask,
+        int width, int height, int3 v1, int3 v2, int3 v3, int3 v4)
+    {
         float4 color = new float4(mask.Block, 0, 0, 1);
         float3 s = new float3(blockSize);
-        // Append vertices
+
+        // FRONT FACE
+        int3 normalFront = axisMask * -1;
+
         meshData.vertices.Add(v1 * s);
         meshData.vertices.Add(v2 * s);
         meshData.vertices.Add(v3 * s);
         meshData.vertices.Add(v4 * s);
 
-        // Append triangles
+        meshData.triangles.Add(vertexCount);
+        meshData.triangles.Add(vertexCount + 1);
+        meshData.triangles.Add(vertexCount + 3);
+        meshData.triangles.Add(vertexCount + 3);
+        meshData.triangles.Add(vertexCount + 2);
+        meshData.triangles.Add(vertexCount);
+
+        for (int i = 0; i < 4; i++)
+        {
+            meshData.normals.Add(normalFront);
+            meshData.colors.Add(color);
+        }
+
+        // UVs for front
+        if (axisMask.x != 0)
+        {
+            meshData.UV0s.Add(new float2(width, height));
+            meshData.UV0s.Add(new float2(0, height));
+            meshData.UV0s.Add(new float2(width, 0));
+            meshData.UV0s.Add(new float2(0, 0));
+        }
+        else
+        {
+            meshData.UV0s.Add(new float2(height, width));
+            meshData.UV0s.Add(new float2(height, 0));
+            meshData.UV0s.Add(new float2(0, width));
+            meshData.UV0s.Add(new float2(0, 0));
+        }
+
+        vertexCount += 4;
+
+        // BACK FACE (flipped winding)
+        int3 normalBack = axisMask * 1;
+
+        meshData.vertices.Add(v1 * s);
+        meshData.vertices.Add(v2 * s);
+        meshData.vertices.Add(v3 * s);
+        meshData.vertices.Add(v4 * s);
+
+        meshData.triangles.Add(vertexCount);
+        meshData.triangles.Add(vertexCount + 2);
+        meshData.triangles.Add(vertexCount + 3);
+        meshData.triangles.Add(vertexCount + 3);
+        meshData.triangles.Add(vertexCount + 1);
+        meshData.triangles.Add(vertexCount);
+
+        for (int i = 0; i < 4; i++)
+        {
+            meshData.normals.Add(normalBack);
+            meshData.colors.Add(color);
+        }
+
+        // Same UVs for back
+        if (axisMask.x != 0)
+        {
+            meshData.UV0s.Add(new float2(width, height));
+            meshData.UV0s.Add(new float2(0, height));
+            meshData.UV0s.Add(new float2(width, 0));
+            meshData.UV0s.Add(new float2(0, 0));
+        }
+        else
+        {
+            meshData.UV0s.Add(new float2(height, width));
+            meshData.UV0s.Add(new float2(height, 0));
+            meshData.UV0s.Add(new float2(0, width));
+            meshData.UV0s.Add(new float2(0, 0));
+        }
+
+        vertexCount += 4;
+    }
+
+    private void CreateSingleSidedQuad(MeshData meshData, ref int vertexCount, FMask mask, int3 axisMask,
+        int width, int height, int3 v1, int3 v2, int3 v3, int3 v4)
+    {
+        // Your original CreateQuad code here
+        int3 normal = axisMask * mask.Normal;
+        float4 color = new float4(mask.Block, 0, 0, 1);
+        float3 s = new float3(blockSize);
+
+        meshData.vertices.Add(v1 * s);
+        meshData.vertices.Add(v2 * s);
+        meshData.vertices.Add(v3 * s);
+        meshData.vertices.Add(v4 * s);
+
         meshData.triangles.Add(vertexCount);
         meshData.triangles.Add(vertexCount + 2 + mask.Normal);
         meshData.triangles.Add(vertexCount + 2 - mask.Normal);
@@ -299,19 +433,12 @@ public struct GreedyMeshJob : IJob
         meshData.triangles.Add(vertexCount + 1 - mask.Normal);
         meshData.triangles.Add(vertexCount + 1 + mask.Normal);
 
-        // Append normals
         for (int i = 0; i < 4; i++)
         {
             meshData.normals.Add(normal * -1);
-        }
-
-        // Append colors
-        for (int i = 0; i < 4; i++)
-        {
             meshData.colors.Add(color);
         }
 
-        // Append UV coordinates
         if (normal.x == 1 || normal.x == -1)
         {
             meshData.UV0s.Add(new float2(width, height));

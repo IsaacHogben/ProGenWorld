@@ -13,6 +13,7 @@ public enum BlockVisibility
 {
     Opaque,      // Solid, blocks all visibility (stone, dirt, grass)
     Translucent, // Semi-transparent, visible but see-through (water, glass, ice)
-    Invisible  // Fully transparent, invisible (air)
+    Invisible,  // Fully transparent, invisible (air)
+    Stacked     // Semi-transparent but will show adjacent blocks of the same type
 }
 

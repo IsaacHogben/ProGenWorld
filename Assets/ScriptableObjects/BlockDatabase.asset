@@ -39,7 +39,7 @@ MonoBehaviour:
     visibility: 0
   - type: 4
     name: Log
-    texture: {fileID: 2800000, guid: a203c87306e8cfb49a5c13673f84a202, type: 3}
+    texture: {fileID: 2800000, guid: fbe598f58a881f9439a967518374038e, type: 3}
     isSolid: 1
     hasCollision: 1
     visibility: 0
@@ -51,7 +51,7 @@ MonoBehaviour:
     visibility: 0
   - type: 6
     name: Leaves
-    texture: {fileID: 2800000, guid: ee128746cae161d4d92e54f4b297f346, type: 3}
+    texture: {fileID: 2800000, guid: b5a2e4b0f1d2e6341bd51faa444c6106, type: 3}
     isSolid: 1
     hasCollision: 1
-    visibility: 0
+    visibility: 3

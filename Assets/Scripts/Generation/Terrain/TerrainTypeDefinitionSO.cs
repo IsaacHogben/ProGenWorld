@@ -1,40 +1,35 @@
+using System.Collections.Generic;
+using Unity.Collections;
 using UnityEngine;
 
 [CreateAssetMenu(fileName = "New Terrain Type", menuName = "World Generation/Terrain Type")]
 public class TerrainTypeDefinitionSO : ScriptableObject
 {
     [Header("Identity")]
-    [Tooltip("Unique identifier (0-255)")]
-    public byte terrainTypeID;
 
     [Tooltip("Display name")]
     public string terrainTypeName = "New Terrain";
 
-    [Tooltip("Debug visualization color")]
-    public Color debugColor = Color.white;
+    [Header("Noise Configuration")]
+    [Tooltip("FastNoise encoded node tree string")]
+    [TextArea(3, 10)]
+    public string noiseNodeTree = "";
 
-    [Header("Density Curve")]
+    [Tooltip("Frequency multiplier for this terrain (1.0 = normal, 2.0 = twice as detailed)")]
+    [Range(0.01f, 5.0f)]
+    public float frequencyMultiplier = 1.0f;
+
+    [Tooltip("Vertical offset for sampling (positive = sample higher, negative = sample lower)")]
+    [Range(-500, 500)]
+    public int yOffset = 0;
+
+    [Header("Density Curve (Replaced by NodeTree)")]
     [Tooltip("Density modification by height. X = normalized height (0-1), Y = density modifier")]
     public AnimationCurve densityCurve = AnimationCurve.Linear(0, 0, 1, 0);
 
     [Tooltip("Number of samples to bake from curve")]
     [Range(16, 128)]
     public int curveResolution = 64;
-
-    [Header("Elevation Preferences")]
-    [Tooltip("Preferred elevation relative to water level (-1 = deep, 0 = water level, 1 = high)")]
-    [Range(-1f, 1f)]
-    public float preferredElevation = 0f;
-
-    [Tooltip("How far from preferred elevation this can exist")]
-    [Range(0f, 2f)]
-    public float elevationTolerance = 1f;
-
-    [Tooltip("Can exist underwater?")]
-    public bool allowsUnderwater = false;
-
-    [Tooltip("Can exist above water?")]
-    public bool allowsAboveWater = true;
 
     [Header("Rarity")]
     [Tooltip("Selection weight (higher = more common, 0 = disabled)")]
@@ -43,8 +38,19 @@ public class TerrainTypeDefinitionSO : ScriptableObject
 
     [Header("Biome Assignment")]
     [Tooltip("Which biomes can appear on this terrain type")]
-    public byte[] allowedBiomes = new byte[0];
+    public List<BiomeType> allowedBiomes = new List<BiomeType>();
 
+    [Header("Auto-Generated (Read Only)")]
+    [SerializeField, ReadOnly]
+    private byte terrainID;
+
+    public byte TerrainID => terrainID;
+
+    // Called by BiomeDataManager during initialization
+    public void SetTerrainID(byte id)
+    {
+        terrainID = id;
+    }
     public float[] BakeCurve()
     {
         float[] samples = new float[curveResolution];
@@ -60,16 +66,11 @@ public class TerrainTypeDefinitionSO : ScriptableObject
     {
         return new TerrainTypeData
         {
-            terrainTypeID = terrainTypeID,
             curveStartIndex = curveStartIndex,
             curveResolution = curveResolution,
-            preferredElevation = preferredElevation,
-            elevationTolerance = elevationTolerance,
-            allowsUnderwater = allowsUnderwater ? (byte)1 : (byte)0,
-            allowsAboveWater = allowsAboveWater ? (byte)1 : (byte)0,
             rarityWeight = rarityWeight,
             allowedBiomesStartIndex = allowedBiomesStartIndex,
-            allowedBiomesCount = allowedBiomes.Length
+            allowedBiomesCount = allowedBiomes.Count
         };
     }
 

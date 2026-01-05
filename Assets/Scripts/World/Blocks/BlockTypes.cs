@@ -1,12 +1,25 @@
 public enum BlockType : byte
 {
-    Air = 0,
-    Water = 1,
-    Stone = 2,
-    Dirt = 3,
-    Grass = 4,
-    Log = 5,
-    Leaves = 6,
+    Air,
+
+    Stone,
+    DarkStone,
+    PearlStone,
+
+    Dirt,
+    CrackedDirt,
+
+    Grass,
+    Grass_yellow,
+    Grass_low,
+
+    Log,
+    Leaves,
+
+    Sand,
+    PearlSand,
+
+    Water
 }
 
 public enum BlockVisibility

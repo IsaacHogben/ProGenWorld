@@ -6220,7 +6220,7 @@
     "m_ObjectId": "9475c3140d304522959e7965d79e06bf",
     "m_Title": "Absorption",
     "m_Position": {
-        "x": -13.000082969665528,
+        "x": -12.999993324279786,
         "y": 3443.0
     }
 }
@@ -6984,8 +6984,8 @@
     "m_ObjectId": "adb1b89f14bc42498f35708f09615e91",
     "m_Title": "Depth",
     "m_Position": {
-        "x": -34.000083923339847,
-        "y": 3949.999755859375
+        "x": -33.999969482421878,
+        "y": 3950.000244140625
     }
 }
 
@@ -7486,7 +7486,7 @@
     "m_Hidden": false,
     "m_ShaderOutputName": "Smoothness",
     "m_StageCapability": 2,
-    "m_Value": 0.49000000953674319,
+    "m_Value": 0.25,
     "m_DefaultValue": 0.5,
     "m_Labels": []
 }
@@ -8019,7 +8019,7 @@
     "m_ShaderOutputName": "Offset",
     "m_StageCapability": 3,
     "m_Value": 0.0,
-    "m_DefaultValue": 0.0,
+    "m_DefaultValue": 0.5,
     "m_Labels": []
 }
 
@@ -10008,7 +10008,7 @@
     "m_Title": "Settings",
     "m_Position": {
         "x": 545.0000610351563,
-        "y": 2799.00048828125
+        "y": 2799.0
     }
 }
 

@@ -4,43 +4,45 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 
+// Original working logic + FastNoise optimization + Climate Grid support
 [BurstCompile]
 public struct BiomeJob : IJobParallelFor
 {
     public int3 chunkCoord;
     public int chunkSize;
     public int resolution;
-    public uint seed;
-    public float frequency;
     public int waterLevel;
 
     [ReadOnly] public NativeArray<TerrainTypeData> terrainTypes;
     [ReadOnly] public NativeArray<byte> terrainAllowedBiomes;
     [ReadOnly] public NativeArray<BiomeDefinition> biomes;
 
+    // Climate Grid data
+    public int humidityDivisions;
+    public int temperatureDivisions;
+    public byte defaultBiome;
+    [ReadOnly] public NativeArray<ClimateGridCell> climateGrid;
+    [ReadOnly] public NativeArray<byte> climateCellBiomes; // All biomes from all cells, flattened
+    [ReadOnly] public NativeArray<float> biomeRarityWeights; // Indexed by BiomeType
+    [ReadOnly] public NativeArray<int> biomePriority; // Indexed by BiomeType, value = array position (lower = higher priority)
+
+    // Pre-computed noise grids (using FastNoise)
+    [ReadOnly] public NativeArray<float> terrainNoiseGrid;
+    [ReadOnly] public NativeArray<float> humidityNoiseGrid;
+    [ReadOnly] public NativeArray<float> temperatureNoiseGrid;
+
     [WriteOnly] public NativeArray<BiomeHint> output;
 
     public float terrainBlendWidth;
     public float biomeBlendWidth;
+    public uint randomSeed;
 
     public void Execute(int index)
     {
-        int side = resolution + 1;
-        int x = index % side;
-        int z = index / side;
-
-        float fx = (float)x / resolution;
-        float fz = (float)z / resolution;
-
-        float worldX = chunkCoord.x * chunkSize + fx * chunkSize;
-        float worldZ = chunkCoord.z * chunkSize + fz * chunkSize;
-
-        // Single noise for terrain selection (no climate)
-        float noiseValue = FractalNoise2D(worldX, worldZ, frequency, seed, 3);
-
-        // Separate climate noise
-        float humidity = FractalNoise2D(worldX, worldZ, frequency * 0.8f, seed + 1000, 3);
-        float temperature = FractalNoise2D(worldX, worldZ, frequency * 0.7f, seed + 5000, 3);
+        // Read pre-computed noise values
+        float noiseValue = terrainNoiseGrid[index];
+        float humidity = humidityNoiseGrid[index];
+        float temperature = temperatureNoiseGrid[index];
 
         // Select terrain types based on noise only (no climate)
         byte primaryTerrain = 0;
@@ -57,17 +59,18 @@ public struct BiomeJob : IJobParallelFor
             );
         }
 
-        // Select biomes from primary terrain's allowed list based on climate
+        // Select biomes using climate grid + terrain allowed list
         byte primaryBiome = 0;
         byte secondaryBiome = 0;
         byte biomeBlend = 0;
 
-        if (biomes.Length > 0 && primaryTerrain < terrainTypes.Length)
+        if (climateGrid.Length > 0 && primaryTerrain < terrainTypes.Length)
         {
-            SelectBiomesFromTerrain(
+            SelectBiomesFromClimateGrid(
                 primaryTerrain,
                 humidity,
                 temperature,
+                index,
                 out primaryBiome,
                 out secondaryBiome,
                 out biomeBlend
@@ -86,7 +89,7 @@ public struct BiomeJob : IJobParallelFor
     }
 
     // ========================================================================
-    // TERRAIN TYPE SELECTION - Based on noise only, evenly distributed
+    // TERRAIN TYPE SELECTION - Original working version with even distribution
     // ========================================================================
 
     void SelectTerrainTypes(
@@ -111,30 +114,33 @@ public struct BiomeJob : IJobParallelFor
             return;
         }
 
-        // Use golden ratio for even distribution in 1D noise space
-        float goldenRatio = 1.618033988749895f;
+        // Calculate total weight
+        float totalWeight = 0f;
+        for (int i = 0; i < terrainTypes.Length; i++)
+        {
+            totalWeight += math.max(0.1f, terrainTypes[i].rarityWeight);
+        }
 
+        // Build weighted ranges and find closest + second closest
         float closestDist = 999f;
         float secondClosestDist = 999f;
         int closestIndex = 0;
         int secondClosestIndex = 1;
 
+        float cumulative = 0f;
+
         for (int i = 0; i < terrainTypes.Length; i++)
         {
             TerrainTypeData terrain = terrainTypes[i];
+            float weight = math.max(0.1f, terrain.rarityWeight);
+            float normalizedWeight = weight / totalWeight;
 
-            if (terrain.rarityWeight <= 0f)
-                continue;
+            // This terrain's center point in [0,1] space
+            float terrainCenter = cumulative + (normalizedWeight * 0.5f);
 
-            // Generate evenly-spaced point for this terrain type
-            float terrainPoint = (i * goldenRatio) % 1.0f;
-
-            // Distance in 1D noise space (wrapped)
-            float dist = math.abs(noiseValue - terrainPoint);
+            // Distance from noise to this terrain's center (with wrapping)
+            float dist = math.abs(noiseValue - terrainCenter);
             dist = math.min(dist, 1.0f - dist); // Wrap around
-
-            // Apply rarity as distance modifier
-            dist /= math.max(0.1f, terrain.rarityWeight);
 
             if (dist < closestDist)
             {
@@ -148,6 +154,8 @@ public struct BiomeJob : IJobParallelFor
                 secondClosestDist = dist;
                 secondClosestIndex = i;
             }
+
+            cumulative += normalizedWeight;
         }
 
         primary = (byte)closestIndex;
@@ -170,198 +178,217 @@ public struct BiomeJob : IJobParallelFor
     }
 
     // ========================================================================
-    // BIOME SELECTION - From allowed list, scored by climate
+    // BIOME SELECTION - Climate Grid + Terrain Filtering + Weighted Random
     // ========================================================================
 
-    void SelectBiomesFromTerrain(
+    void SelectBiomesFromClimateGrid(
         byte terrainTypeID,
         float humidity,
         float temperature,
+        int randomIndex,
         out byte primary,
         out byte secondary,
         out byte blend)
     {
-        TerrainTypeData terrain = terrainTypes[terrainTypeID];
+        // Get climate cell
+        int humIndex = (int)(humidity * humidityDivisions);
+        int tempIndex = (int)(temperature * temperatureDivisions);
+        humIndex = math.clamp(humIndex, 0, humidityDivisions - 1);
+        tempIndex = math.clamp(tempIndex, 0, temperatureDivisions - 1);
 
-        // No allowed biomes
-        if (terrain.allowedBiomesCount == 0)
-        {
-            primary = 0;
-            secondary = 0;
-            blend = 0;
+        // Try current cell first
+        if (TrySelectFromCell(terrainTypeID, humIndex, tempIndex, randomIndex, out primary, out secondary, out blend))
             return;
+
+        // No valid biomes in current cell - search neighbors in spiral pattern
+        int maxSearchRadius = math.max(humidityDivisions, temperatureDivisions);
+
+        for (int radius = 1; radius <= maxSearchRadius; radius++)
+        {
+            // Check cells at this radius
+            for (int dx = -radius; dx <= radius; dx++)
+            {
+                for (int dy = -radius; dy <= radius; dy++)
+                {
+                    // Skip if not on the edge of this radius
+                    if (math.abs(dx) != radius && math.abs(dy) != radius)
+                        continue;
+
+                    int checkHumIndex = humIndex + dx;
+                    int checkTempIndex = tempIndex + dy;
+
+                    // Skip out of bounds
+                    if (checkHumIndex < 0 || checkHumIndex >= humidityDivisions ||
+                        checkTempIndex < 0 || checkTempIndex >= temperatureDivisions)
+                        continue;
+
+                    if (TrySelectFromCell(terrainTypeID, checkHumIndex, checkTempIndex, randomIndex, out primary, out secondary, out blend))
+                        return;
+                }
+            }
         }
 
-        // Only one allowed biome
-        if (terrain.allowedBiomesCount == 1)
+        // Fallback: try to find ANY allowed biome from terrain (ignore climate)
+        TerrainTypeData terrain = terrainTypes[terrainTypeID];
+        if (terrain.allowedBiomesCount > 0)
         {
-            int biomeIndex = terrain.allowedBiomesStartIndex;
-            primary = terrainAllowedBiomes[biomeIndex];
+            // Just pick the first allowed biome
+            primary = terrainAllowedBiomes[terrain.allowedBiomesStartIndex];
             secondary = primary;
             blend = 0;
             return;
         }
 
-        // Score all allowed biomes by climate match
-        float bestScore = -999f;
-        float secondBestScore = -999f;
-        byte bestBiome = 0;
-        byte secondBestBiome = 0;
+        // Ultimate fallback
+        primary = defaultBiome;
+        secondary = defaultBiome;
+        blend = 0;
+    }
 
-        int allowedEnd = terrain.allowedBiomesStartIndex + terrain.allowedBiomesCount;
+    bool TrySelectFromCell(
+        byte terrainTypeID,
+        int humIndex,
+        int tempIndex,
+        int randomIndex,
+        out byte primary,
+        out byte secondary,
+        out byte blend)
+    {
+        primary = 0;
+        secondary = 0;
+        blend = 0;
 
-        for (int i = terrain.allowedBiomesStartIndex; i < allowedEnd; i++)
+        int cellIndex = tempIndex * humidityDivisions + humIndex;
+        ClimateGridCell cell = climateGrid[cellIndex];
+
+        // Get terrain's allowed biomes
+        TerrainTypeData terrain = terrainTypes[terrainTypeID];
+
+        // No biomes in this cell
+        if (cell.biomeCount == 0)
+            return false;
+
+        // Build list of valid biomes (in cell AND allowed by terrain)
+        const int maxValid = 32;
+        NativeArray<byte> validBiomes = new NativeArray<byte>(maxValid, Allocator.Temp);
+        NativeArray<float> validWeights = new NativeArray<float>(maxValid, Allocator.Temp);
+        int validCount = 0;
+
+        // First, gather terrain's allowed biomes into a temp array for faster lookup
+        const int maxAllowed = 32;
+        NativeArray<byte> terrainAllowed = new NativeArray<byte>(maxAllowed, Allocator.Temp);
+        int terrainAllowedCount = math.min(terrain.allowedBiomesCount, maxAllowed);
+
+        for (int i = 0; i < terrainAllowedCount; i++)
         {
-            byte biomeID = terrainAllowedBiomes[i];
+            terrainAllowed[i] = terrainAllowedBiomes[terrain.allowedBiomesStartIndex + i];
+        }
 
-            // Bounds check
-            if (biomeID >= biomes.Length)
-                continue;
+        // Now check each biome in the climate cell
+        for (int i = 0; i < cell.biomeCount && validCount < maxValid; i++)
+        {
+            byte biomeID = climateCellBiomes[cell.biomeStartIndex + i];
 
-            BiomeDefinition biome = biomes[biomeID];
-
-            // Score based on climate match
-            float score = ScoreBiomeClimate(biome, humidity, temperature);
-
-            if (score > bestScore)
+            // Check if terrain allows this biome
+            bool allowed = false;
+            for (int j = 0; j < terrainAllowedCount; j++)
             {
-                secondBestScore = bestScore;
-                secondBestBiome = bestBiome;
-                bestScore = score;
-                bestBiome = biomeID;
+                if (terrainAllowed[j] == biomeID)
+                {
+                    allowed = true;
+                    break;
+                }
             }
-            else if (score > secondBestScore)
+
+            if (allowed)
             {
-                secondBestScore = score;
-                secondBestBiome = biomeID;
+                validBiomes[validCount] = biomeID;
+                // Make sure biomeID is within bounds of rarityWeights array
+                if (biomeID < biomeRarityWeights.Length)
+                {
+                    validWeights[validCount] = biomeRarityWeights[biomeID];
+                }
+                else
+                {
+                    validWeights[validCount] = 1.0f; // Default weight
+                }
+                validCount++;
             }
         }
 
-        primary = bestBiome;
-        secondary = secondBestBiome;
+        terrainAllowed.Dispose();
 
-        // Calculate blend based on score difference
-        float scoreDiff = bestScore - secondBestScore;
-
-        if (scoreDiff > biomeBlendWidth * 2f)
+        // No valid biomes after filtering
+        if (validCount == 0)
         {
-            blend = 0; // Pure primary
-        }
-        else
-        {
-            float t = 1f - (scoreDiff / (biomeBlendWidth * 2f));
-            blend = (byte)(math.clamp(t, 0f, 1f) * 255f);
-        }
-    }
-
-    float ScoreBiomeClimate(BiomeDefinition biome, float humidity, float temperature)
-    {
-        float score = 0f;
-
-        // Humidity match
-        if (humidity >= biome.humidityMin && humidity <= biome.humidityMax)
-        {
-            // Inside preferred range - score based on how centered we are
-            float center = (biome.humidityMin + biome.humidityMax) * 0.5f;
-            float range = biome.humidityMax - biome.humidityMin;
-            float distFromCenter = math.abs(humidity - center);
-            score += (1f - distFromCenter / (range * 0.5f)) * 5f;
-        }
-        else
-        {
-            // Outside range - penalize based on distance
-            float distToRange = math.min(
-                math.abs(humidity - biome.humidityMin),
-                math.abs(humidity - biome.humidityMax)
-            );
-            score -= distToRange * 10f;
+            validBiomes.Dispose();
+            validWeights.Dispose();
+            return false;
         }
 
-        // Temperature match
-        if (temperature >= biome.temperatureMin && temperature <= biome.temperatureMax)
+        // Only one valid biome
+        if (validCount == 1)
         {
-            float center = (biome.temperatureMin + biome.temperatureMax) * 0.5f;
-            float range = biome.temperatureMax - biome.temperatureMin;
-            float distFromCenter = math.abs(temperature - center);
-            score += (1f - distFromCenter / (range * 0.5f)) * 5f;
-        }
-        else
-        {
-            float distToRange = math.min(
-                math.abs(temperature - biome.temperatureMin),
-                math.abs(temperature - biome.temperatureMax)
-            );
-            score -= distToRange * 10f;
+            primary = validBiomes[0];
+            secondary = validBiomes[0];
+            blend = 0;
+            validBiomes.Dispose();
+            validWeights.Dispose();
+            return true;
         }
 
-        return score;
-    }
+        // Weighted random selection for primary
+        float totalWeight = 0f;
+        for (int i = 0; i < validCount; i++)
+            totalWeight += validWeights[i];
 
-    // ========================================================================
-    // NOISE FUNCTIONS
-    // ========================================================================
+        // Generate pseudo-random value [0,1]
+        uint hash = (uint)randomIndex * 374761393u + randomSeed;
+        hash ^= hash >> 16;
+        hash *= 0x7feb352d;
+        hash ^= hash >> 15;
+        float random = (hash & 0x00FFFFFF) * (1f / 16777216f);
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    static uint Hash(uint x)
-    {
-        x ^= x >> 16;
-        x *= 0x7feb352d;
-        x ^= x >> 15;
-        x *= 0x846ca68b;
-        x ^= x >> 16;
-        return x;
-    }
+        // Select primary biome
+        float roll = random * totalWeight;
+        float cumulative = 0f;
+        int primaryIndex = 0;
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    static float Hash01(int x, int z, uint seed)
-    {
-        uint h =
-            (uint)x * 374761393u ^
-            (uint)z * 668265263u ^
-            seed * 1442695041u;
-        return (Hash(h) & 0x00FFFFFF) * (1f / 16777216f);
-    }
-
-    static float ValueNoise2D(float x, float z, float freq, uint seed)
-    {
-        x *= freq;
-        z *= freq;
-
-        int xi = (int)math.floor(x);
-        int zi = (int)math.floor(z);
-        float xf = x - xi;
-        float zf = z - zi;
-
-        float v00 = Hash01(xi, zi, seed);
-        float v10 = Hash01(xi + 1, zi, seed);
-        float v01 = Hash01(xi, zi + 1, seed);
-        float v11 = Hash01(xi + 1, zi + 1, seed);
-
-        float u = xf * xf * (3f - 2f * xf);
-        float v = zf * zf * (3f - 2f * zf);
-
-        return math.lerp(
-            math.lerp(v00, v10, u),
-            math.lerp(v01, v11, u),
-            v
-        );
-    }
-
-    static float FractalNoise2D(float x, float z, float freq, uint seed, int octaves)
-    {
-        float sum = 0f;
-        float amplitude = 1f;
-        float amplitudeSum = 0f;
-
-        for (int i = 0; i < octaves; i++)
+        for (int i = 0; i < validCount; i++)
         {
-            sum += ValueNoise2D(x, z, freq, seed + (uint)i * 100) * amplitude;
-            amplitudeSum += amplitude;
-
-            freq *= 2f;
-            amplitude *= 0.5f;
+            cumulative += validWeights[i];
+            if (roll < cumulative)
+            {
+                primaryIndex = i;
+                break;
+            }
         }
 
-        return sum / amplitudeSum;
+        primary = validBiomes[primaryIndex];
+
+        // Select secondary - use the biome with lowest priority value (earliest in BiomeDataManager array)
+        int lowestPriority = int.MaxValue;
+        int secondaryIndex = primaryIndex;
+
+        for (int i = 0; i < validCount; i++)
+        {
+            byte biomeID = validBiomes[i];
+            int priority = biomeID < biomePriority.Length ? biomePriority[biomeID] : int.MaxValue;
+
+            if (i != primaryIndex && priority < lowestPriority)
+            {
+                lowestPriority = priority;
+                secondaryIndex = i;
+            }
+        }
+
+        secondary = validBiomes[secondaryIndex];
+
+        // No real blending - just use primary (blend = 0)
+        blend = 0;
+
+        validBiomes.Dispose();
+        validWeights.Dispose();
+        return true;
     }
 }

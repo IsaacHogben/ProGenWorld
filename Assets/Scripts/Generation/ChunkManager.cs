@@ -298,8 +298,9 @@ public class ChunkManager : MonoBehaviour
         Vector3 currentPlayerPos = player.transform.position;
         float moved = math.distance(currentPlayerPos, lastPlayerPos);
 
-        // No profiling on biomeSystem yet.
+        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: BiomeSystem.Updater");
         biomeSystem.Updater();
+        UnityEngine.Profiling.Profiler.EndSample();
 
         // Periodic scheduling (throttled)
         if (Time.time - lastScheduleTime >= scheduleInterval)
@@ -1019,7 +1020,7 @@ public class ChunkManager : MonoBehaviour
         // Try get existing chunk entry
         chunks.TryGetValue(coord, out var chunk);
 
-        if (empty)
+        if (empty && !meshData.requestWaterMesh.Value)
         {
             // Assign
             chunks[coord] = null;
@@ -1051,7 +1052,7 @@ public class ChunkManager : MonoBehaviour
             chunk.waterMaterial = waterMaterial;
             chunk.ApplyWaterMesh(meshData, meshPool);
         }
-        else // Apply mesh normally
+        else if (!empty) // Apply mesh normally
         {   
             chunk.chunkMaterial = lodConfigs[meshData.lod].material;
             chunk.lod = meshData.lod;

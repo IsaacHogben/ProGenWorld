@@ -1,0 +1,34 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ffb976060e97e294396dcbe054503ff5, type: 3}
+  m_Name: PineForest
+  m_EditorClassIdentifier: Assembly-CSharp::BiomeDefinitionSO
+  biomeType: 0
+  rarityWeight: 1
+  humidityRange: {x: 0, y: 1}
+  temperatureRange: {x: 0, y: 1}
+  surfaceBlock: 8
+  subsurfaceBlock: 4
+  deepBlock: 1
+  sedimentBlock: 3
+  gradientThreshold1: 0.005
+  gradientThreshold2: 0.002
+  trees:
+  - treeType: 0
+    spawnChance: 19
+    spawnOnBlocks: 0804
+  - treeType: 1
+    spawnChance: 7
+    spawnOnBlocks: 08
+  vegetation: []
+  rocks: []
+  aliens: []

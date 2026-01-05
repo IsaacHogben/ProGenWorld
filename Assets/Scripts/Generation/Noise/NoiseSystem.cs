@@ -40,6 +40,7 @@ public class NoiseSystem
         this.returnDensity = returnDensity;
 
         noiseGenerator = new NoiseGenerator(cfg.seed);
+        noiseGenerator.InitializeTerrainNoises(config.biomeDataManager.terrainTypes);
         cts = new CancellationTokenSource();
 
         int cap = Math.Max(1, cfg.maxConcurrentNoiseTasks);
@@ -98,8 +99,7 @@ public class NoiseSystem
                         config.frequency,
                         sampleRes,
                         biome,
-                        curveData,
-                        terrainTypes
+                        config.biomeDataManager.terrainTypes
                     ));
 
                 Profiler.EndNoise();

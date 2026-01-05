@@ -21,3 +21,5 @@ MemoryCaptures/
 .DS_Store
 Thumbs.db
 /Assets/KinematicCharacterController
+/Assets/Scripts/Generation/Noise/FastNoiseLite.cs
+/Assets/Scripts/Generation/Noise/FastNoiseLite.cs.meta

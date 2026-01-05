@@ -29,6 +29,7 @@ public class ChunkProfiler : MonoBehaviour
     public bool showFrameGraph = true;
     public float logInterval = 5f;
 
+    public static float avgBiome;
     public static float avgNoise;
     public static float avgBlock;
     public static float avgDeco;
@@ -87,6 +88,7 @@ public class ChunkProfiler : MonoBehaviour
     {
         if (!showOnScreen) return;
         MergeThreadedQueues();
+        avgBiome = Avg(Profiler.biomeTimes, Profiler.biomeLock);
         avgNoise = Avg(Profiler.noiseTimes, Profiler.noiseLock);
         avgBlock = Avg(Profiler.blockTimes, Profiler.blockLock);
         avgDeco = Avg(Profiler.decoTimes, Profiler.decoLock);
@@ -145,6 +147,7 @@ public class ChunkProfiler : MonoBehaviour
         GUILayout.Space(6);
 
         GUILayout.Label("<b>Chunk Generation Costs</b>", label);
+        GUILayout.Label($"Biome:      {avgBiome:F2} ms");
         GUILayout.Label($"Noise:      {avgNoise:F2} ms");
         GUILayout.Label($"BlockGen:   {avgBlock:F2} ms");
         GUILayout.Label($"Decorate:   {avgDeco:F2} ms");
@@ -328,6 +331,7 @@ public class ChunkProfiler : MonoBehaviour
 
     void MergeThreadedQueues()
     {
+        TrimQueue(Profiler.biomeLock, Profiler.biomeTimes);
         TrimQueue(Profiler.noiseLock, Profiler.noiseTimes);
         TrimQueue(Profiler.blockLock, Profiler.blockTimes);
         TrimQueue(Profiler.decoLock, Profiler.decoTimes);
@@ -401,12 +405,14 @@ public static class ChunkProfilerTimes
 }
 public static class Profiler
 {
+    public static readonly object biomeLock = new();
     public static readonly object noiseLock = new();
     public static readonly object blockLock = new();
     public static readonly object decoLock = new();
     public static readonly object meshLock = new();
     public static readonly object uploadLock = new();
 
+    public static readonly Queue<float> biomeTimes = new();
     public static readonly Queue<float> noiseTimes = new();
     public static readonly Queue<float> blockTimes = new();
     public static readonly Queue<float> decoTimes = new();
@@ -464,12 +470,14 @@ public static class Profiler
         return threadWatch;
     }
 
+    public static void StartBiome() => GetWatch().Restart();
     public static void StartNoise() => GetWatch().Restart();
     public static void StartBlock() => GetWatch().Restart();
     public static void StartDeco() => GetWatch().Restart();
     public static void StartMesh() => GetWatch().Restart();
     public static void StartUpload() => GetWatch().Restart();
 
+    public static void EndBiome() { lock (biomeLock) biomeTimes.Enqueue((float)GetWatch().Elapsed.TotalMilliseconds); }
     public static void EndNoise() { lock (noiseLock) noiseTimes.Enqueue((float)GetWatch().Elapsed.TotalMilliseconds); }
     public static void EndBlock() { lock (blockLock) blockTimes.Enqueue((float)GetWatch().Elapsed.TotalMilliseconds); }
     public static void EndDeco() { lock (decoLock) decoTimes.Enqueue((float)GetWatch().Elapsed.TotalMilliseconds); }

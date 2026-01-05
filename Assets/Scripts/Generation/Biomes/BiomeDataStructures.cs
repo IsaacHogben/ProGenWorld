@@ -2,6 +2,17 @@ using Unity.Collections;
 using UnityEngine;
 
 // ============================================================================
+// BIOME ENUM
+// ============================================================================
+public enum BiomeType : byte
+{
+    PineForest,
+    stone,
+    YellowDesrt,
+    Plains
+}
+
+// ============================================================================
 // TERRAIN TYPE DATA
 // ============================================================================
 
@@ -79,6 +90,13 @@ public struct BiomeDefinition
     public float temperatureMin;
     public float temperatureMax;
 }
+
+public struct ClimateGridCell
+{
+    public int biomeStartIndex;
+    public int biomeCount;
+}
+
 // ============================================================================
 // DECORATION DATA
 // ============================================================================

@@ -430,10 +430,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 636333
-  frequency: 0.85
+  seed: 1526162
+  frequency: 1
   chunkSize: 64
-  viewDistance: 5
+  viewDistance: 7
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 8
   renderShape: 1
@@ -447,9 +447,9 @@ MonoBehaviour:
   textureArrayBuilder: {fileID: 11400000, guid: 3f71b64aadbc3bf498224a3efb12f316, type: 2}
   voxelMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
   waterMaterial: {fileID: 2100000, guid: 69040e81b2415104b96d7de415c84b42, type: 2}
-  nearRange: 9
-  midRange: 15
-  farRange: 17
+  nearRange: 10
+  midRange: 20
+  farRange: 30
   nearMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
   farMaterial: {fileID: 2100000, guid: 32e68a70545044440ba9739f8303acfa, type: 2}
   maxConcurrentSchedualTasks: 4
@@ -549,117 +549,6 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
---- !u!1 &832329037
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 832329041}
-  - component: {fileID: 832329040}
-  - component: {fileID: 832329039}
-  - component: {fileID: 832329038}
-  m_Layer: 0
-  m_Name: f
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!65 &832329038
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 832329037}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1, y: 1, z: 1}
-  m_Center: {x: 0, y: 0, z: 0}
---- !u!23 &832329039
-MeshRenderer:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 832329037}
-  m_Enabled: 1
-  m_CastShadows: 1
-  m_ReceiveShadows: 1
-  m_DynamicOccludee: 1
-  m_StaticShadowCaster: 0
-  m_MotionVectors: 1
-  m_LightProbeUsage: 1
-  m_ReflectionProbeUsage: 1
-  m_RayTracingMode: 2
-  m_RayTraceProcedural: 0
-  m_RayTracingAccelStructBuildFlagsOverride: 0
-  m_RayTracingAccelStructBuildFlags: 1
-  m_SmallMeshCulling: 1
-  m_ForceMeshLod: -1
-  m_MeshLodSelectionBias: 0
-  m_RenderingLayerMask: 1
-  m_RendererPriority: 0
-  m_Materials:
-  - {fileID: 2100000, guid: 471ae97f00ee3ea4b8e2974d969eaeca, type: 2}
-  m_StaticBatchInfo:
-    firstSubMesh: 0
-    subMeshCount: 0
-  m_StaticBatchRoot: {fileID: 0}
-  m_ProbeAnchor: {fileID: 0}
-  m_LightProbeVolumeOverride: {fileID: 0}
-  m_ScaleInLightmap: 1
-  m_ReceiveGI: 1
-  m_PreserveUVs: 0
-  m_IgnoreNormalsForChartDetection: 0
-  m_ImportantGI: 0
-  m_StitchLightmapSeams: 1
-  m_SelectedEditorRenderState: 3
-  m_MinimumChartSize: 4
-  m_AutoUVMaxDistance: 0.5
-  m_AutoUVMaxAngle: 89
-  m_LightmapParameters: {fileID: 0}
-  m_GlobalIlluminationMeshLod: 0
-  m_SortingLayerID: 0
-  m_SortingLayer: 0
-  m_SortingOrder: 0
-  m_AdditionalVertexStreams: {fileID: 0}
---- !u!33 &832329040
-MeshFilter:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 832329037}
-  m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
---- !u!4 &832329041
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 832329037}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 30, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &832575517
 GameObject:
   m_ObjectHideFlags: 0
@@ -772,12 +661,16 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDataManager
   terrainTypes:
-  - {fileID: 11400000, guid: f2982441869ef7b46a67d6774cef5d77, type: 2}
-  - {fileID: 11400000, guid: 50ea700ddd358de42b9c5c8e9c0ae405, type: 2}
+  - {fileID: 11400000, guid: 2c5a77699c169574c825ad1b57c2dd69, type: 2}
+  - {fileID: 11400000, guid: 11f75994683330e43a5048c9b809631b, type: 2}
+  - {fileID: 11400000, guid: ac30749d934c76b488557c1d909942de, type: 2}
   biomes:
+  - {fileID: 11400000, guid: 68efab62a3085fb49b7eb2c1eceb8ebe, type: 2}
+  - {fileID: 11400000, guid: bdf93638ce508f24c946a8bbd360e96e, type: 2}
   - {fileID: 11400000, guid: a8d26d0dab5f8a3438cfd5279cd4138b, type: 2}
   - {fileID: 11400000, guid: 552e3d9646cb9f94f8ad27960569127c, type: 2}
-  waterLevel: -64
+  climateGrid: {fileID: 11400000, guid: 615cdc73382d8644e9981737a89b5125, type: 2}
+  waterLevel: -63
 --- !u!114 &1148720672
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -792,7 +685,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::BiomeSystem
   biomeDataManager: {fileID: 1148720671}
   biomeResolution: 64
-  frequency: 0.002
+  baseFrequency: 0.001
+  terrainFrequencyMultiplier: 0.28
+  climateFrequencyMultiplier: 0.5
+  terrainBlendWidth: 1
+  biomeBlendWidth: 2
 --- !u!4 &1148720673
 Transform:
   m_ObjectHideFlags: 0
@@ -1060,8 +957,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2024416877}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: -0.15566303, z: 0, w: -0.98781025}
-  m_LocalPosition: {x: 117.66106, y: -59.389423, z: 102.254486}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 97.11, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -1080,7 +977,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a762154b5432d5d48b1a5189f4af8fc3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SpectatorController
-  moveSpeed: 12
+  moveSpeed: 13
   sprintMultiplier: 2
   lookSensitivity: 0.07
   verticalLookLimit: 85
@@ -1212,9 +1109,8 @@ SceneRoots:
   m_Roots:
   - {fileID: 410087041}
   - {fileID: 832575519}
-  - {fileID: 695623963}
-  - {fileID: 1148720673}
   - {fileID: 2024416878}
-  - {fileID: 832329041}
+  - {fileID: 1148720673}
+  - {fileID: 695623963}
   - {fileID: 1366480635}
   - {fileID: 1531823942}

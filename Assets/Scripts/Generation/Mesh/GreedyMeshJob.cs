@@ -159,7 +159,7 @@ public struct GreedyMeshJob : IJob
                                 faceNormal = 2;  // Special case: render both sides
                             }
                             else
-                            {   // Do nothing at farther lod
+                            {   // Do nothing at further lod
                                 shouldDrawFace = false;
                                 faceBlock = currentBlock;
                                 faceNormal = 0;
@@ -220,11 +220,11 @@ public struct GreedyMeshJob : IJob
                         {
                             bool isWaterBlock = faceBlock == (byte)BlockType.Water; // Do our current mesh type check, currently only seperates water into its own mesh
                                                                                     // Handled by a request that will start another MeshJob.
-                            if (isWaterBlock)
+                            if (isWaterBlock)// && meshData.lod == LODLevel.Near)
                                 meshData.requestWaterMesh.Value = true;             // Flag for that request.
 
                             // Only add face if it matches the mesh type we're building
-                            if (isWaterBlock == isWaterMesh)
+                            if (isWaterBlock == isWaterMesh)// || meshData.lod != LODLevel.Near)
                             {
                                 mask[n++] = new FMask { Block = faceBlock, Normal = faceNormal };
                             }

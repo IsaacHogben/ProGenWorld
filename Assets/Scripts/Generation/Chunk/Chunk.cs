@@ -1,27 +1,29 @@
-using UnityEngine;
-using UnityEngine.Rendering;
-using Unity.Mathematics;
+using System.Collections;
 using System.Collections.Generic;
+using UnityEngine;
+using Unity.Mathematics;
+using UnityEngine.Rendering;
+using System.Threading.Tasks;
 
 public class Chunk : MonoBehaviour
 {
     public Material chunkMaterial;
     public Material waterMaterial;
 
-    // separate filter & renderer for water
     private MeshFilter waterMF;
     private MeshRenderer waterMR;
 
     public LODLevel lod;
 
-    // Tune hard cap on pooled meshes per world
     const int MaxMeshPoolSizePerWorld = 102;
+
+    // Track if physics baking is in progress
+    private bool isPhysicsBaking = false;
 
     public void ApplyMesh(MeshData meshData, Stack<Mesh> meshPool)
     {
         Profiler.StartUpload();
 
-        // Ensure components
         var mf = GetComponent<MeshFilter>();
         if (mf == null) mf = gameObject.AddComponent<MeshFilter>();
 
@@ -31,12 +33,10 @@ public class Chunk : MonoBehaviour
         if (chunkMaterial != null && mr.sharedMaterial != chunkMaterial)
             mr.sharedMaterial = chunkMaterial;
 
-        // Get or reuse mesh
         Mesh mesh = mf.sharedMesh;
 
         if (mesh == null)
         {
-            // Try from pool first
             if (meshPool != null && meshPool.Count > 0)
             {
                 mesh = meshPool.Pop();
@@ -51,11 +51,9 @@ public class Chunk : MonoBehaviour
             mf.sharedMesh = mesh;
         }
 
-        // Allocate writable MeshData and copy directly
         var meshArray = Mesh.AllocateWritableMeshData(1);
         Mesh.MeshData dst = meshArray[0];
 
-        // Vertex layout
         dst.SetVertexBufferParams(
             meshData.vertices.Length,
             new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3, stream: 0),
@@ -64,10 +62,8 @@ public class Chunk : MonoBehaviour
             new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 2, stream: 3)
         );
 
-        // Index buffer
         dst.SetIndexBufferParams(meshData.triangles.Length, IndexFormat.UInt32);
 
-        // Copy vertex/index data
         meshData.vertices.AsArray().CopyTo(dst.GetVertexData<float3>(0));
         meshData.normals.AsArray().CopyTo(dst.GetVertexData<float3>(1));
         meshData.colors.AsArray().CopyTo(dst.GetVertexData<float4>(2));
@@ -77,27 +73,51 @@ public class Chunk : MonoBehaviour
         dst.subMeshCount = 1;
         dst.SetSubMesh(0, new SubMeshDescriptor(0, meshData.triangles.Length));
 
-        // Apply to mesh (also disposes MeshDataArray)
         Mesh.ApplyAndDisposeWritableMeshData(meshArray, mesh);
         mesh.RecalculateBounds();
-        mesh.UploadMeshData(false); // keep CPU copy for collider & future rewrites
-        
-        // Collider handling:
+        mesh.UploadMeshData(false);
+
+        // ASYNC COLLIDER: Handle collision in background
         if (lod == LODLevel.Near)
         {
-            var mc = GetComponent<MeshCollider>();
-            if (mc == null) mc = gameObject.AddComponent<MeshCollider>();
-            mc.sharedMesh = mesh;
+            if (!isPhysicsBaking)
+            {
+                StartCoroutine(ApplyCollisionAsync(mesh));
+            }
         }
         else
         {
-            // Ensure we do not keep old collider meshes alive on non-near LODs
             var mc = GetComponent<MeshCollider>();
             if (mc != null)
+            {
                 mc.sharedMesh = null;
+                Destroy(mc);
+            }
         }
 
         Profiler.EndUpload();
+    }
+
+    private IEnumerator ApplyCollisionAsync(Mesh mesh)
+    {
+        isPhysicsBaking = true;
+
+        // Bake physics on background thread
+        int meshID = mesh.GetInstanceID();
+        Task bakeTask = Task.Run(() => Physics.BakeMesh(meshID, false));
+
+        // Wait for completion without blocking
+        while (!bakeTask.IsCompleted)
+        {
+            yield return null;
+        }
+
+        // Now assign on main thread (fast operation)
+        var mc = GetComponent<MeshCollider>();
+        if (mc == null) mc = gameObject.AddComponent<MeshCollider>();
+        mc.sharedMesh = mesh;
+
+        isPhysicsBaking = false;
     }
     public void ApplyWaterMesh(MeshData meshData, Stack<Mesh> meshPool)
     {

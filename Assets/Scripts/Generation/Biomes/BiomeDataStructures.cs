@@ -62,7 +62,7 @@ public struct BiomeData
     public int decorationStartIndex;
     public int decorationCount;
 
-    // ADDED: For BiomeSystem compatibility
+    //For BiomeSystem compatibility
     public int resolution;
     public NativeArray<BiomeHint> grid;
 }
@@ -188,7 +188,7 @@ public class TreeDecoration
 {
     public DecorationType.Tree treeType;
 
-    [Tooltip("Spawn chance per thousand blocks (4.5 = 0.45%)")]
+    [Tooltip("Spawn chance per ten thousand blocks (4.5 = 0.45%)")]
     [Range(0f, 10000f)]
     public float spawnChance = 5f;
 

@@ -285,14 +285,16 @@ public class ChunkManager : MonoBehaviour
         #if UNITY_EDITOR
             if (UnityEditor.EditorApplication.isPlaying)
                 UnityEngine.Rendering.OnDemandRendering.renderFrameInterval = 1;
-        #endif
+#endif
 
+        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: ProfilerStats");
         ChunkProfiler.ActiveNoiseTasks = noiseSystem.ActiveTasks;
         ChunkProfiler.ActiveBlockJobs = blockGenSystem.ActiveJobs;
         ChunkProfiler.ActiveDecoJobs = decorationSystem.ActiveJobs;
         ChunkProfiler.ActiveMeshJobs = meshSystem.ActiveJobs;
         ChunkProfiler.PendingWriteChunks = writeSystem.PendingWritesCount;
         ChunkProfiler.TotalChunks = chunks.Count;
+        UnityEngine.Profiling.Profiler.EndSample();
 
         // --- Flood-fill activation when entering new chunk ---
         Vector3 currentPlayerPos = player.transform.position;
@@ -303,6 +305,7 @@ public class ChunkManager : MonoBehaviour
         UnityEngine.Profiling.Profiler.EndSample();
 
         // Periodic scheduling (throttled)
+        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: InjectChunkRequestIntoPipeline, Throttled");
         if (Time.time - lastScheduleTime >= scheduleInterval)
         {
             lastScheduleTime = Time.time;
@@ -310,6 +313,7 @@ public class ChunkManager : MonoBehaviour
             if (frontierQueue.Count > 0 || lodUpdateQueue.Count > 0)
                 InjectChunkRequestIntoPipeline(currentPlayerPos);
         }
+        UnityEngine.Profiling.Profiler.EndSample();
 
         if (moved >= minMoveBeforeUpdate)
         {
@@ -357,7 +361,7 @@ public class ChunkManager : MonoBehaviour
         UnityEngine.Profiling.Profiler.EndSample();
 
         UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: RemeshNeedingChunks");
-        RemeshChunksNeedingRemesh(); // extracted loop into its own method
+        RemeshChunksNeedingRemesh();
         UnityEngine.Profiling.Profiler.EndSample();
 
         UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: MeshSystem.Update");
@@ -473,9 +477,11 @@ public class ChunkManager : MonoBehaviour
     {
         Profiler.StartSchedLoop();
         if (player == null) return;
+
         int spawnedThisTick = 0;
         int cap = Math.Max(1, maxConcurrentSchedualTasks);
 
+        UnityEngine.Profiling.Profiler.BeginSample("InjectChunk: LOD Updates");
         if (lodUpdateQueue.Count != 0)
         {
             while (spawnedThisTick < cap && TryDequeueLodUpdate(out var lodUpdateToken))
@@ -507,18 +513,43 @@ public class ChunkManager : MonoBehaviour
                 spawnedThisTick++;
             }
         }
+        UnityEngine.Profiling.Profiler.EndSample();
+
+        UnityEngine.Profiling.Profiler.BeginSample("InjectChunk: Frontier Queue");
         if (frontierQueue.Count != 0)
         {
+            UnityEngine.Profiling.Profiler.BeginSample("Frontier: Dequeue Loop");
+            int frontierIterations = 0;
             while (spawnedThisTick < cap && TryDequeueFrontier(out var coord))
             {
-                if (chunks.ContainsKey(coord) || generatingSet.Contains(coord))
+                frontierIterations++;
+
+                UnityEngine.Profiling.Profiler.BeginSample("Frontier: Dict Lookups");
+                bool chunkExists = chunks.ContainsKey(coord);
+                bool isGenerating = generatingSet.Contains(coord);
+                UnityEngine.Profiling.Profiler.EndSample();
+
+                if (chunkExists || isGenerating)
                     continue;
 
+                UnityEngine.Profiling.Profiler.BeginSample("Frontier: EnsureBiome");
                 EnsureBiome(coord);
+                UnityEngine.Profiling.Profiler.EndSample();
+
+                UnityEngine.Profiling.Profiler.BeginSample("Frontier: Add to GeneratingSet");
                 generatingSet.Add(coord);
+                UnityEngine.Profiling.Profiler.EndSample();
+
                 spawnedThisTick++;
             }
+            UnityEngine.Profiling.Profiler.EndSample();
+
+            // DIAGNOSTIC
+            if (frontierIterations > 100)
+                Debug.LogWarning($"[FRONTIER SPIKE] Iterated {frontierIterations} times, spawned {spawnedThisTick}");
         }
+        UnityEngine.Profiling.Profiler.EndSample();
+
         Profiler.EndSchedLoop();
     }
     void ExpandFrontierFromFaces(int3 coord, Vector3 playerPos, OpenFaces faces)

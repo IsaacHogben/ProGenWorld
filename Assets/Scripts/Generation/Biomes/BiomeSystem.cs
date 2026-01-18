@@ -39,6 +39,11 @@ public sealed class BiomeSystem : MonoBehaviour
     FastNoiseLite humidityNoise;
     FastNoiseLite temperatureNoise;
 
+    // Task throttleing
+    private int biomeRequestsThisFrame = 0;
+    private const int MAX_BIOME_REQUESTS_PER_FRAME = 2;
+    private Queue<(int3 coord, int chunkSize)> deferredBiomeRequests = new Queue<(int3, int)>();
+
     public void SetSeed(int value)
     {
         seed = value;
@@ -94,6 +99,24 @@ public sealed class BiomeSystem : MonoBehaviour
 
     public void RequestBiome(int3 chunkCoord, int chunkSize)
     {
+        if (pending.ContainsKey(chunkCoord))
+            return;
+
+        // Throttle: defer if we've hit the limit this frame
+        if (biomeRequestsThisFrame >= MAX_BIOME_REQUESTS_PER_FRAME)
+        {
+            if (!deferredBiomeRequests.Contains((chunkCoord, chunkSize)))
+                deferredBiomeRequests.Enqueue((chunkCoord, chunkSize));
+            return;
+        }
+
+        RequestBiomeInternal(chunkCoord, chunkSize);
+    }
+
+    private void RequestBiomeInternal(int3 chunkCoord, int chunkSize)
+    {
+        UnityEngine.Profiling.Profiler.BeginSample("BiomeSystem: RequestBiomeInternal");
+        biomeRequestsThisFrame++;
         if (pending.ContainsKey(chunkCoord))
             return;
 
@@ -183,6 +206,7 @@ public sealed class BiomeSystem : MonoBehaviour
             humidityNoise = humidityNoiseGrid,
             temperatureNoise = temperatureNoiseGrid
         });
+        UnityEngine.Profiling.Profiler.EndSample();
     }
 
     public void CancelBiome(int3 chunkCoord)
@@ -203,6 +227,16 @@ public sealed class BiomeSystem : MonoBehaviour
 
     public void Updater()
     {
+        // Reset counter each frame
+        biomeRequestsThisFrame = 0;
+
+        // Process deferred requests from previous frames
+        while (deferredBiomeRequests.Count > 0 && biomeRequestsThisFrame < MAX_BIOME_REQUESTS_PER_FRAME)
+        {
+            var (coord, size) = deferredBiomeRequests.Dequeue();
+            RequestBiomeInternal(coord, size);
+        }
+
         if (pending.Count == 0)
             return;
 

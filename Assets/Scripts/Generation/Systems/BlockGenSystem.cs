@@ -3,10 +3,7 @@ using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
-using UnityEditor.PackageManager.UI;
 using UnityEngine;
-using UnityEngine.Profiling;
-using static UnityEngine.Rendering.DebugUI.Table;
 
 public class BlockGenSystem
 {

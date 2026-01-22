@@ -119,6 +119,41 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1 &106807571 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 426794050635997831, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+  m_PrefabInstance: {fileID: 8197220575024738206}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &106807573
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 106807571}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 84e863f9c8b4db344805e7f9625323c3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::AtmosphericFogController
+  fogStartDistance: 256
+  fogEndDistance: 756
+  maxFogDensity: 1
+  enableHeightFog: 0
+  fogBaseHeight: 0
+  fogFalloff: 0.05
+  heightFogDensity: 1
+  enableRayleighScattering: 1
+  rayleighIntensity: 1.39
+  scatteringCoefficients: {x: 5.8, y: 13.5, z: 33.1}
+  fogColor: {r: 0.41251338, g: 0.630785, b: 0.8490566, a: 1}
+  skyColor: {r: 0.032840855, g: 0.32384738, b: 0.7735849, a: 1}
+  sunColor: {r: 1, g: 0.9, b: 0.7, a: 1}
+  sunLight: {fileID: 410087040}
+  useSunLightColor: 1
+  timeOfDay: 12
+  autoTimeOfDay: 0
+  timeSpeed: 0.1
 --- !u!1 &132527074
 GameObject:
   m_ObjectHideFlags: 0
@@ -959,10 +994,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 1555253
+  seed: 733777
   frequency: 1.2
   chunkSize: 64
-  viewDistance: 12
+  viewDistance: 4
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 8
   renderShape: 1
@@ -976,7 +1011,7 @@ MonoBehaviour:
   textureArrayBuilder: {fileID: 11400000, guid: 3f71b64aadbc3bf498224a3efb12f316, type: 2}
   voxelMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
   waterMaterial: {fileID: 2100000, guid: 69040e81b2415104b96d7de415c84b42, type: 2}
-  nearRange: 8
+  nearRange: 9
   midRange: 20
   farRange: 30
   nearMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
@@ -1945,6 +1980,7 @@ MonoBehaviour:
   terrainTypes:
   - {fileID: 11400000, guid: 59dfe4ca60ca77f418be4d902401fa9a, type: 2}
   - {fileID: 11400000, guid: 632becd1e2360234891b98199dd2e6eb, type: 2}
+  - {fileID: 11400000, guid: ac30749d934c76b488557c1d909942de, type: 2}
   biomes:
   - {fileID: 11400000, guid: bdf93638ce508f24c946a8bbd360e96e, type: 2}
   - {fileID: 11400000, guid: a8d26d0dab5f8a3438cfd5279cd4138b, type: 2}
@@ -2331,6 +2367,37 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1558913029}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!1 &1746699434
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1746699435}
+  m_Layer: 0
+  m_Name: Atmo
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1746699435
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1746699434}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1836949852
 GameObject:
   m_ObjectHideFlags: 0
@@ -2564,6 +2631,10 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 1049967513549347672, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: m_RequiresDepthTextureOption
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 3628657420819779894, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: m_Constraints
       value: 0
@@ -2571,6 +2642,26 @@ PrefabInstance:
     - target: {fileID: 4832851365894791019, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: m_Name
       value: Three
+      objectReference: {fileID: 0}
+    - target: {fileID: 4914354004547253365, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: m_ClearFlags
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 4914354004547253365, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: m_BackGroundColor.a
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 4914354004547253365, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: m_BackGroundColor.b
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4914354004547253365, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: m_BackGroundColor.g
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4914354004547253365, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: m_BackGroundColor.r
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5213598380493358545, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: m_LocalPosition.x
@@ -2619,13 +2710,17 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 426794050635997831, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 106807573}
   m_SourcePrefab: {fileID: 100100000, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
   - {fileID: 410087041}
+  - {fileID: 1746699435}
   - {fileID: 832575519}
   - {fileID: 8197220575024738206}
   - {fileID: 1148720673}

@@ -14,8 +14,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::TerrainTypeDefinitionSO
   terrainTypeName: Hills
   noiseNodeTree: EwDNzMw+EQACAAAAAAAAQBAAexSuPhkAGQATAB+F6z8lAAAAgD/D9eg/AACAPwAAgD8RAAQAAACuRwFAEAAK12NADQADAAAAAAAAQBAAAAAAPwcAAJqZmT4AKVwPPwDXo3A/AM3MzD0AzcyMPwAUrgdAAQAAj8J1PQEEAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHsULj8AMzMzPwAAAAA/
-  frequencyMultiplier: 0.7
-  yOffset: -32
+  frequencyMultiplier: 0.65
+  yOffset: 0
   densityCurve:
     serializedVersion: 2
     m_Curve:
@@ -51,5 +51,5 @@ MonoBehaviour:
     m_RotationOrder: 4
   curveResolution: 64
   rarityWeight: 1
-  allowedBiomes: 00
+  allowedBiomes: 01
   terrainID: 0

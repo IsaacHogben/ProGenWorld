@@ -10,16 +10,16 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: ffb976060e97e294396dcbe054503ff5, type: 3}
-  m_Name: Stone
+  m_Name: Alien Shore
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDefinitionSO
   biomeType: 1
   rarityWeight: 1
   humidityRange: {x: 0, y: 1}
   temperatureRange: {x: 0, y: 1}
-  surfaceBlock: 12
+  surfaceBlock: 7
   subsurfaceBlock: 3
   deepBlock: 2
-  sedimentBlock: 3
+  sedimentBlock: 12
   gradientThreshold1: 0.005
   gradientThreshold2: 0.002
   trees: []

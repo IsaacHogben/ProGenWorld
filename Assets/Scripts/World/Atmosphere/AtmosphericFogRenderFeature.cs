@@ -2,7 +2,6 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.Rendering.RenderGraphModule;
-using UnityEngine.Rendering.Universal.Internal;
 
 public class AtmosphericFogRenderFeature : ScriptableRendererFeature
 {
@@ -41,6 +40,7 @@ public class AtmosphericFogRenderFeature : ScriptableRendererFeature
     {
         private Settings settings;
         private Material fogMaterial;
+        private static AtmosphericFogController cachedController;
 
         // Shader property IDs
         private static readonly int FogStartDistanceID = Shader.PropertyToID("_FogStartDistance");
@@ -60,8 +60,6 @@ public class AtmosphericFogRenderFeature : ScriptableRendererFeature
         private class PassData
         {
             internal Material fogMaterial;
-            internal AtmosphericFogController fogController;
-            internal Camera camera;
         }
 
         public AtmosphericFogRenderPass(Settings settings)
@@ -79,38 +77,25 @@ public class AtmosphericFogRenderFeature : ScriptableRendererFeature
             UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
 
             if (fogMaterial == null)
-            {
-                Debug.LogError("Fog material is null!");
                 return;
+
+            // Find fog controller globally (not on camera)
+            if (cachedController == null)
+            {
+                cachedController = Object.FindFirstObjectByType<AtmosphericFogController>();
             }
 
-            // Get fog controller from camera
-            var fogController = cameraData.camera.GetComponent<AtmosphericFogController>();
-            if (fogController == null)
-            {
-                // This is normal for Scene view camera, just skip silently
+            if (cachedController == null || !cachedController.enabled)
                 return;
-            }
-
-            if (!fogController.enabled)
-            {
-                return;
-            }
-
-            Debug.Log($"Processing fog for camera: {cameraData.camera.name}");
 
             var source = resourceData.activeColorTexture;
             if (!source.IsValid())
-            {
-                Debug.LogError("Source texture is invalid!");
                 return;
-            }
 
             var descriptor = cameraData.cameraTargetDescriptor;
             descriptor.depthBufferBits = 0;
             descriptor.msaaSamples = 1;
 
-            // Create temp texture for double buffering
             TextureHandle tempColor = UniversalRenderer.CreateRenderGraphTexture(
                 renderGraph,
                 descriptor,
@@ -127,8 +112,6 @@ public class AtmosphericFogRenderFeature : ScriptableRendererFeature
 
                 builder.SetRenderFunc((PassData data, RasterGraphContext context) =>
                 {
-                    Debug.Log(">>> COPY TO TEMP <<<");
-                    // Use Blit utility which properly sets up _BlitTexture
                     Blitter.BlitTexture(context.cmd, source, new Vector4(1, 1, 0, 0), 0, false);
                 });
             }
@@ -137,8 +120,6 @@ public class AtmosphericFogRenderFeature : ScriptableRendererFeature
             using (var builder = renderGraph.AddRasterRenderPass<PassData>("Apply Fog", out var passData))
             {
                 passData.fogMaterial = fogMaterial;
-                passData.fogController = fogController;
-                passData.camera = cameraData.camera;
 
                 builder.UseTexture(tempColor);
                 builder.SetRenderAttachment(source, 0);
@@ -146,16 +127,13 @@ public class AtmosphericFogRenderFeature : ScriptableRendererFeature
 
                 builder.SetRenderFunc((PassData data, RasterGraphContext context) =>
                 {
-                    Debug.Log(">>> APPLY FOG <<<");
-                    UpdateShaderProperties(data.fogMaterial, data.fogController, data.camera);
-
-                    // Use Blit utility which automatically sets _BlitTexture to tempColor
+                    UpdateShaderProperties(data.fogMaterial, cachedController);
                     Blitter.BlitTexture(context.cmd, tempColor, new Vector4(1, 1, 0, 0), data.fogMaterial, 0);
                 });
             }
         }
 
-        private void UpdateShaderProperties(Material material, AtmosphericFogController controller, Camera camera)
+        private void UpdateShaderProperties(Material material, AtmosphericFogController controller)
         {
             material.SetFloat(FogStartDistanceID, controller.fogStartDistance);
             material.SetFloat(FogEndDistanceID, controller.fogEndDistance);
@@ -167,6 +145,7 @@ public class AtmosphericFogRenderFeature : ScriptableRendererFeature
             material.SetVector(ScatteringCoeffID, controller.scatteringCoefficients * 0.0001f);
             material.SetColor(FogColorID, controller.fogColor);
             material.SetColor(SkyColorID, controller.skyColor);
+            material.SetFloat(HorizonHeightID, controller.horizonHeight);
 
             if (controller.sunLight != null)
             {

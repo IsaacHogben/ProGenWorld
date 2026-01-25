@@ -60,10 +60,9 @@ Shader "Custom/AtmosphericFogURP"
                 // Reconstruct view direction (unnormalized)
                 float2 ndc = uv * 2.0 - 1.0;
                 
-                // FLIP Y for correct orientation
-                #if UNITY_UV_STARTS_AT_TOP
-                    ndc.y = -ndc.y;
-                #endif
+                // Flip BOTH X and Y for correct orientation
+                ndc.x = -ndc.x;
+                ndc.y = -ndc.y;
                 
                 float3 viewDir = mul(unity_CameraInvProjection, float4(ndc, 1.0, 1.0)).xyz;
                 
@@ -135,7 +134,7 @@ Shader "Custom/AtmosphericFogURP"
                     // Regular geometry
                     worldPos = GetWorldPositionFromDepth(input.texcoord, depth);
                     
-                    // Calculate actual 3D world-space distance
+                    // Calculate actual 3D world-space distance (not just depth)
                     distance = length(worldPos - cameraPos);
                 }
                 
@@ -159,8 +158,7 @@ Shader "Custom/AtmosphericFogURP"
                 float3 rayleighColor = CalculateRayleighScattering(viewDir, distance);
                 
                 // Blend based on view direction Y
-                // Use positive viewDir.y 
-                float skyAmount = viewDir.y * 0.5 + 0.5; // Map from -1/+1 to 0/1
+                float skyAmount = viewDir.y * 0.5 + 0.5;
                 
                 float3 atmosphereColor = lerp(_FogColor.rgb, _SkyColor.rgb, skyAmount);
                 

@@ -16,12 +16,12 @@ MonoBehaviour:
   rarityWeight: 1
   humidityRange: {x: 0, y: 1}
   temperatureRange: {x: 0, y: 1}
-  surfaceBlock: 5
-  subsurfaceBlock: 2
-  deepBlock: 1
+  surfaceBlock: 2
+  subsurfaceBlock: 5
+  deepBlock: 2
   sedimentBlock: 2
-  gradientThreshold1: 0.005
-  gradientThreshold2: 0.002
+  gradientThreshold1: 0.0131
+  gradientThreshold2: 0.0035
   trees: []
   vegetation: []
   rocks: []

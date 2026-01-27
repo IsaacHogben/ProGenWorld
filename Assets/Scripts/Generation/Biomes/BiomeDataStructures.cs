@@ -126,12 +126,13 @@ public static class DecorationType
 {
     public enum Tree : byte
     {
-        SmallPine = 0,
-        LargePine = 1,
-        Oak = 2,
-        Birch = 3,
-        DeadTree = 4,
-        AlienSpire = 5
+        SmallPine,
+        MediumPine,
+        LargePine,
+        Oak,
+        Birch,
+        DeadTree,
+        AlienSpire
     }
 
     public enum Vegetation : byte

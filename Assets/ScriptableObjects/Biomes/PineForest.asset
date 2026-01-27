@@ -29,6 +29,9 @@ MonoBehaviour:
   - treeType: 1
     spawnChance: 7
     spawnOnBlocks: 08
+  - treeType: 2
+    spawnChance: 0.5
+    spawnOnBlocks: 08
   vegetation: []
   rocks: []
   aliens: []

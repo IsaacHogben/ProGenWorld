@@ -20,7 +20,7 @@ RenderSettings:
   m_FogDensity: 0.01
   m_LinearFogStart: 0
   m_LinearFogEnd: 300
-  m_AmbientSkyColor: {r: 0.212, g: 0.227, b: 0.259, a: 1}
+  m_AmbientSkyColor: {r: 0.2, g: 0.2, b: 0.29803923, a: 1}
   m_AmbientEquatorColor: {r: 0.114, g: 0.125, b: 0.133, a: 1}
   m_AmbientGroundColor: {r: 0.11320752, g: 0.10377356, b: 0.08490564, a: 1}
   m_AmbientIntensity: 1
@@ -32,7 +32,7 @@ RenderSettings:
   m_FlareFadeSpeed: 3
   m_HaloTexture: {fileID: 0}
   m_SpotCookie: {fileID: 10001, guid: 0000000000000000e000000000000000, type: 0}
-  m_DefaultReflectionMode: 0
+  m_DefaultReflectionMode: 1
   m_DefaultReflectionResolution: 128
   m_ReflectionBounces: 1
   m_ReflectionIntensity: 0.399
@@ -94,7 +94,7 @@ LightmapSettings:
     m_TrainingDataDestination: TrainingData
     m_LightProbeSampleCountMultiplier: 4
   m_LightingDataAsset: {fileID: 20201, guid: 0000000000000000f000000000000000, type: 0}
-  m_LightingSettings: {fileID: 0}
+  m_LightingSettings: {fileID: 4890085278179872738, guid: d7794799d69b53c41ae36aed47151f6d, type: 2}
 --- !u!196 &4
 NavMeshSettings:
   serializedVersion: 2
@@ -992,7 +992,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 55112
+  seed: 2147483647
   frequency: 1.2
   chunkSize: 64
   viewDistance: 6
@@ -1463,7 +1463,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &832575518
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1471,7 +1471,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 832575517}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 172515602e62fb746b5d573b38a5fe58, type: 3}
   m_Name: 
@@ -1976,8 +1976,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDataManager
   terrainTypes:
-  - {fileID: 11400000, guid: 59dfe4ca60ca77f418be4d902401fa9a, type: 2}
   - {fileID: 11400000, guid: 908aec708f3ba4841b1a18072dd335d5, type: 2}
+  - {fileID: 11400000, guid: 59dfe4ca60ca77f418be4d902401fa9a, type: 2}
   - {fileID: 11400000, guid: 632becd1e2360234891b98199dd2e6eb, type: 2}
   - {fileID: 11400000, guid: ac30749d934c76b488557c1d909942de, type: 2}
   biomes:
@@ -2002,7 +2002,7 @@ MonoBehaviour:
   biomeDataManager: {fileID: 1148720671}
   biomeResolution: 64
   baseFrequency: 0.001
-  terrainFrequencyMultiplier: 0.2
+  terrainFrequencyMultiplier: 0.3
   climateFrequencyMultiplier: 0.5
   terrainBlendWidth: 0.186
   biomeBlendWidth: 2
@@ -2185,19 +2185,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0eb17b42ea7010f4aae14dcdd0fb46de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TimeOfDayManager
-  timeOfDay: 12
+  timeOfDay: 6.5
   autoProgress: 1
-  timeSpeed: 0.2
+  timeSpeed: 0.005
   sunLight: {fileID: 0}
-  sunAxisRotation: 180
+  sunAxisRotation: 160
   fadeSunIntensity: 1
   maxSunIntensity: 1
   minSunIntensity: 0
   controlAmbientLight: 1
   dayAmbientIntensity: 1
-  nightAmbientIntensity: 0
+  nightAmbientIntensity: -0.3
   dayAmbientColor: {r: 0.5, g: 0.6, b: 0.7, a: 1}
-  nightAmbientColor: {r: 0.2, g: 0.2, b: 0.3, a: 1}
+  nightAmbientColor: {r: 0.124288015, g: 0.124288015, b: 0.1792453, a: 1}
   controlFogPresets: 1
   fogPresetManager: {fileID: 1746699436}
   dawnStart: 5
@@ -2491,8 +2491,8 @@ MonoBehaviour:
     skyColor: {r: 0.14489143, g: 0.48530066, b: 0.8301887, a: 1}
     sunColor: {r: 1, g: 0.95, b: 0.85, a: 1}
   - presetName: Foggy Morning
-    fogStartDistance: 20
-    fogEndDistance: 200
+    fogStartDistance: 0
+    fogEndDistance: 500
     maxFogDensity: 0.95
     enableHeightFog: 1
     fogBaseHeight: 0
@@ -2505,8 +2505,8 @@ MonoBehaviour:
     skyColor: {r: 0.75, g: 0.8, b: 0.85, a: 1}
     sunColor: {r: 1, g: 0.9, b: 0.7, a: 1}
   - presetName: Sunset
-    fogStartDistance: 50
-    fogEndDistance: 500
+    fogStartDistance: 0
+    fogEndDistance: 800
     maxFogDensity: 0.75
     enableHeightFog: 0
     fogBaseHeight: -10
@@ -2519,17 +2519,17 @@ MonoBehaviour:
     skyColor: {r: 1, g: 0.5, b: 0.4, a: 1}
     sunColor: {r: 1, g: 0.6, b: 0.3, a: 1}
   - presetName: Night
-    fogStartDistance: 30
-    fogEndDistance: 300
+    fogStartDistance: 600
+    fogEndDistance: 800
     maxFogDensity: 0.85
     enableHeightFog: 0
     fogBaseHeight: 0
     fogFalloff: 0.05
     heightFogDensity: 1
-    enableRayleighScattering: 1
+    enableRayleighScattering: 0
     rayleighIntensity: 0.3
     scatteringCoefficients: {x: 5.8, y: 13.5, z: 33.1}
-    fogColor: {r: 0.15, g: 0.15, b: 0.25, a: 1}
+    fogColor: {r: 0.090423636, g: 0.090423636, b: 0.1509434, a: 1}
     skyColor: {r: 0.05, g: 0.05, b: 0.15, a: 1}
     sunColor: {r: 0.3, g: 0.3, b: 0.4, a: 1}
   currentPresetIndex: 0
@@ -2810,7 +2810,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4914354004547253365, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: m_ClearFlags
-      value: 1
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 4914354004547253365, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: far clip plane
+      value: 1299.7
       objectReference: {fileID: 0}
     - target: {fileID: 4914354004547253365, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: m_BackGroundColor.a
@@ -2884,7 +2888,7 @@ SceneRoots:
   - {fileID: 410087041}
   - {fileID: 832575519}
   - {fileID: 8197220575024738206}
-  - {fileID: 1148720673}
-  - {fileID: 695623963}
   - {fileID: 1201536341}
   - {fileID: 444542669}
+  - {fileID: 1148720673}
+  - {fileID: 695623963}

@@ -1,4 +1,8 @@
 using UnityEngine;
+using UnityEngine.Rendering;
+#if UNITY_PIPELINE_URP
+using UnityEngine.Rendering.Universal;
+#endif
 
 public class TimeOfDayManager : MonoBehaviour
 {
@@ -33,17 +37,17 @@ public class TimeOfDayManager : MonoBehaviour
     [Tooltip("Control ambient light intensity based on time")]
     public bool controlAmbientLight = true;
 
-    [Tooltip("Ambient intensity during day")]
+    [Tooltip("Day ambient intensity multiplier")]
     public float dayAmbientIntensity = 1.0f;
 
-    [Tooltip("Ambient intensity at night")]
+    [Tooltip("Night ambient intensity multiplier")]
     public float nightAmbientIntensity = 0.3f;
 
     [Tooltip("Day ambient color")]
     public Color dayAmbientColor = new Color(0.5f, 0.6f, 0.7f);
 
     [Tooltip("Night ambient color")]
-    public Color nightAmbientColor = new Color(0.2f, 0.2f, 0.3f);
+    public Color nightAmbientColor = new Color(0.1f, 0.1f, 0.15f);
     [Header("Fog Preset Integration")]
     [Tooltip("Automatically change fog presets based on time")]
     public bool controlFogPresets = true;
@@ -158,15 +162,26 @@ public class TimeOfDayManager : MonoBehaviour
             sunHeight = -sunLight.transform.forward.y;
         }
 
-        // Interpolate ambient intensity and color based on sun height
-        float t = Mathf.Clamp01(sunHeight * 2f + 0.5f); // -0.5 to 0.5 maps to 0 to 1
+        // Interpolate color based on sun height
+        //sunHeight = Mathf.Clamp01(-sunLight.transform.forward.y);
+        //float t = Mathf.SmoothStep(0f, 1f, sunHeight);
+        float t = Mathf.Clamp01(sunHeight * 2f + 0.5f);
+        Color targetColor = Color.Lerp(nightAmbientColor, dayAmbientColor, t);
+        float targetIntensity = Mathf.Lerp(nightAmbientIntensity, dayAmbientIntensity, t);
 
-        float ambientIntensity = Mathf.Lerp(nightAmbientIntensity, dayAmbientIntensity, t);
-        Color ambientColor = Color.Lerp(nightAmbientColor, dayAmbientColor, t);
+        // Set ambient mode to Color
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
 
-        // Apply to render settings
-        RenderSettings.ambientIntensity = ambientIntensity;
-        RenderSettings.ambientLight = ambientColor;
+        // Set the ambient light color
+        RenderSettings.ambientLight = targetColor;
+
+        // Set ambient intensity multiplier
+        RenderSettings.ambientIntensity = targetIntensity;
+
+        // Also set the sky color for gradient mode (in case it switches)
+        RenderSettings.ambientSkyColor = targetColor;
+        RenderSettings.ambientEquatorColor = targetColor;
+        RenderSettings.ambientGroundColor = targetColor * 0.5f;
     }
 
     void UpdateTimePeriod()

@@ -13,7 +13,7 @@ public struct DecorationJob : IJob
     [ReadOnly] public int indexSize;
     [ReadOnly] public LODLevel lod;
     [ReadOnly] public int waterLevel;
-    [ReadOnly] public Unity.Mathematics.Random rng;
+    public Unity.Mathematics.Random rng;
 
     // Block data
     public NativeArray<byte> blockIds;
@@ -141,32 +141,11 @@ public struct DecorationJob : IJob
 
     private void PlaceTree(DecorationType.Tree treeType, int x, int y, int z)
     {
-        switch (treeType)
-        {
-            case DecorationType.Tree.SmallPine:
-                MakeSmallPine(x, y, z);
-                break;
-
-            case DecorationType.Tree.LargePine:
-                MakeLargePine(x, y, z);
-                break;
-
-            case DecorationType.Tree.Oak:
-                // MakeOak(x, y, z);
-                break;
-
-            case DecorationType.Tree.Birch:
-                // MakeBirch(x, y, z);
-                break;
-
-            case DecorationType.Tree.DeadTree:
-                // MakeDeadTree(x, y, z);
-                break;
-
-            case DecorationType.Tree.AlienSpire:
-                // MakeAlienSpire(x, y, z);
-                break;
-        }
+        TreeGenerator.Generate(
+            treeType,
+            x, y, z,
+            ref rng,
+            ApplyBlock);
     }
 
     // ========================================================================
@@ -276,18 +255,8 @@ public struct DecorationJob : IJob
     }
 
     // ========================================================================
-    // UTILITY FUNCTIONS
+    // BLOCK PLACEMENT
     // ========================================================================
-
-    private readonly int GetIndex(int z, int y, int x)
-    {
-        return x + y * indexSize + z * indexSize * indexSize;
-    }
-
-    private int GetWorldYValue(int y)
-    {
-        return y + chunkCoord.y * chunkSize;
-    }
 
     void ApplyBlock(int x, int y, int z, BlockType block)
     {
@@ -326,151 +295,16 @@ public struct DecorationJob : IJob
     }
 
     // ========================================================================
-    // EXISTING TREE FUNCTIONS
+    // UTILITY FUNCTIONS
     // ========================================================================
 
-    private void MakeSmallPine(int x, int y, int z)
+    private readonly int GetIndex(int z, int y, int x)
     {
-        int trunkHeight = rng.NextInt(8, 30);
-        int bareHeightFromBottom = trunkHeight / 4;
-        int foliageHeight = trunkHeight - bareHeightFromBottom;
-
-        for (int i = 0; i < trunkHeight; i++)
-        {
-            ApplyBlock(x, y + i, z, BlockType.Log);
-        }
-
-        int numLayers = foliageHeight / 2 + 2;
-        int foliageStartY = y + bareHeightFromBottom;
-
-        for (int layer = 0; layer < numLayers; layer++)
-        {
-            int layerY = foliageStartY + (layer * foliageHeight / numLayers);
-            float progress = (float)layer / (numLayers - 1);
-            int maxRadius = 4;
-            int radius = Mathf.Max(1, (int)(maxRadius * (1.0f - progress) + 0.5f));
-
-            bool shouldPlace = true;
-            if (layer > 2 && layer < numLayers - 1)
-            {
-                if (rng.NextFloat() < 0.2f)
-                    shouldPlace = false;
-            }
-
-            if (shouldPlace)
-            {
-                MakePineLayer(x, layerY, z, radius);
-            }
-        }
-
-        ApplyBlock(x, y + trunkHeight, z, BlockType.Leaves);
-        ApplyBlock(x, y + trunkHeight + 1, z, BlockType.Leaves);
+        return x + y * indexSize + z * indexSize * indexSize;
     }
 
-    private void MakeLargePine(int x, int y, int z)
+    private int GetWorldYValue(int y)
     {
-        z -= 1;
-        int trunkHeight = rng.NextInt(22, 46);
-        int bareHeightFromBottom = trunkHeight / 4;
-        int foliageHeight = trunkHeight - bareHeightFromBottom;
-
-        for (int i = 0; i < trunkHeight; i++)
-        {
-            ApplyBlock(x, y + i, z, BlockType.Log);
-            ApplyBlock(x + 1, y + i, z, BlockType.Log);
-            ApplyBlock(x, y + i, z + 1, BlockType.Log);
-            ApplyBlock(x + 1, y + i, z + 1, BlockType.Log);
-        }
-
-        int numLayers = foliageHeight / 2 + 3;
-        int foliageStartY = y + bareHeightFromBottom;
-        int radiusVariation = 0;
-
-        for (int layer = 0; layer < numLayers; layer++)
-        {
-            int layerY = foliageStartY + (layer * foliageHeight / numLayers);
-            float progress = (float)layer / (numLayers - 1);
-            int maxRadius = 7;
-            int radius = Mathf.Max(2, (int)(maxRadius * (1.0f - progress) + 0.5f));
-
-            if (radiusVariation >= 0)
-                radiusVariation = rng.NextInt(-1, 2);
-            else
-                radiusVariation = 2;
-            radius = Mathf.Max(2, radius + radiusVariation);
-
-            bool shouldPlace = true;
-            if (layer > 3 && layer < numLayers - 2)
-            {
-                if (rng.NextFloat() < 0.2f)
-                    shouldPlace = false;
-            }
-
-            if (shouldPlace)
-            {
-                MakePineLayerCentered(x, layerY, z, radius);
-
-                if (layer < numLayers / 2 && rng.NextFloat() > 0.7f && radius > 3)
-                {
-                    MakePineLayerCentered(x, layerY + 1, z, radius - 1);
-                }
-            }
-        }
-
-        int tipY = y + trunkHeight;
-        ApplyBlock(x, tipY, z, BlockType.Leaves);
-        ApplyBlock(x + 1, tipY, z, BlockType.Leaves);
-        ApplyBlock(x, tipY, z + 1, BlockType.Leaves);
-        ApplyBlock(x + 1, tipY, z + 1, BlockType.Leaves);
-        ApplyBlock(x, tipY + 1, z, BlockType.Leaves);
-        ApplyBlock(x + 1, tipY + 1, z + 1, BlockType.Leaves);
-    }
-
-    private void MakePineLayer(int cx, int cy, int cz, int radius)
-    {
-        int radiusSquared = radius * radius;
-
-        for (int dx = -radius; dx <= radius; dx++)
-        {
-            for (int dz = -radius; dz <= radius; dz++)
-            {
-                int distSquared = dx * dx + dz * dz;
-
-                if (distSquared <= radiusSquared)
-                {
-                    if (distSquared < radiusSquared * 0.7f || rng.NextFloat() > 0.3f)
-                    {
-                        ApplyBlock(cx + dx, cy, cz + dz, BlockType.Leaves);
-                    }
-                }
-            }
-        }
-    }
-
-    private void MakePineLayerCentered(int trunkX, int cy, int trunkZ, int radius)
-    {
-        float centerX = trunkX + 0.5f;
-        float centerZ = trunkZ + 0.5f;
-        int radiusSquared = radius * radius;
-
-        for (int dx = -radius; dx <= radius + 1; dx++)
-        {
-            for (int dz = -radius; dz <= radius + 1; dz++)
-            {
-                float blockX = trunkX + dx;
-                float blockZ = trunkZ + dz;
-                float distX = blockX - centerX;
-                float distZ = blockZ - centerZ;
-                float distSquared = distX * distX + distZ * distZ;
-
-                if (distSquared <= radiusSquared)
-                {
-                    if (distSquared < radiusSquared * 0.7f || rng.NextFloat() > 0.3f)
-                    {
-                        ApplyBlock(trunkX + dx, cy, trunkZ + dz, BlockType.Leaves);
-                    }
-                }
-            }
-        }
+        return y + chunkCoord.y * chunkSize;
     }
 }

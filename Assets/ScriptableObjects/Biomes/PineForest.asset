@@ -19,18 +19,18 @@ MonoBehaviour:
   surfaceBlock: 8
   subsurfaceBlock: 4
   deepBlock: 1
-  sedimentBlock: 3
-  gradientThreshold1: 0.005
-  gradientThreshold2: 0.002
+  sedimentBlock: 2
+  gradientThreshold1: 0.009
+  gradientThreshold2: 0.008
   trees:
   - treeType: 0
     spawnChance: 19
     spawnOnBlocks: 0804
   - treeType: 1
-    spawnChance: 7
+    spawnChance: 6
     spawnOnBlocks: 08
   - treeType: 2
-    spawnChance: 0.5
+    spawnChance: 8
     spawnOnBlocks: 08
   vegetation: []
   rocks: []

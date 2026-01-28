@@ -992,10 +992,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 2147483647
+  seed: 66234
   frequency: 1.2
   chunkSize: 64
-  viewDistance: 6
+  viewDistance: 12
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 8
   renderShape: 1
@@ -1976,10 +1976,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDataManager
   terrainTypes:
-  - {fileID: 11400000, guid: 908aec708f3ba4841b1a18072dd335d5, type: 2}
-  - {fileID: 11400000, guid: 59dfe4ca60ca77f418be4d902401fa9a, type: 2}
+  - {fileID: 11400000, guid: ef68c6e2c0b149a4ca19b6a9a8f24575, type: 2}
   - {fileID: 11400000, guid: 632becd1e2360234891b98199dd2e6eb, type: 2}
-  - {fileID: 11400000, guid: ac30749d934c76b488557c1d909942de, type: 2}
   biomes:
   - {fileID: 11400000, guid: bdf93638ce508f24c946a8bbd360e96e, type: 2}
   - {fileID: 11400000, guid: a8d26d0dab5f8a3438cfd5279cd4138b, type: 2}
@@ -2002,7 +2000,7 @@ MonoBehaviour:
   biomeDataManager: {fileID: 1148720671}
   biomeResolution: 64
   baseFrequency: 0.001
-  terrainFrequencyMultiplier: 0.3
+  terrainFrequencyMultiplier: 0.2
   climateFrequencyMultiplier: 0.5
   terrainBlendWidth: 0.186
   biomeBlendWidth: 2
@@ -2185,7 +2183,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0eb17b42ea7010f4aae14dcdd0fb46de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TimeOfDayManager
-  timeOfDay: 6.5
+  timeOfDay: 9
   autoProgress: 1
   timeSpeed: 0.005
   sunLight: {fileID: 0}
@@ -2478,23 +2476,23 @@ MonoBehaviour:
   presets:
   - presetName: Clear Day
     fogStartDistance: 100
-    fogEndDistance: 800
-    maxFogDensity: 0.6
+    fogEndDistance: 750
+    maxFogDensity: 0.9
     enableHeightFog: 0
     fogBaseHeight: 0
     fogFalloff: 0.02
     heightFogDensity: 1
-    enableRayleighScattering: 1
+    enableRayleighScattering: 0
     rayleighIntensity: 1.5
     scatteringCoefficients: {x: 5.8, y: 13.5, z: 33.1}
-    fogColor: {r: 0.40583837, g: 0.6557494, b: 0.9056604, a: 1}
-    skyColor: {r: 0.14489143, g: 0.48530066, b: 0.8301887, a: 1}
+    fogColor: {r: 0.24007656, g: 0.51154774, b: 0.7830189, a: 1}
+    skyColor: {r: 0.13968495, g: 0.41261348, b: 0.6886792, a: 1}
     sunColor: {r: 1, g: 0.95, b: 0.85, a: 1}
   - presetName: Foggy Morning
     fogStartDistance: 0
     fogEndDistance: 500
     maxFogDensity: 0.95
-    enableHeightFog: 1
+    enableHeightFog: 0
     fogBaseHeight: 0
     fogFalloff: 0.08
     heightFogDensity: 0.08
@@ -2534,7 +2532,7 @@ MonoBehaviour:
     sunColor: {r: 0.3, g: 0.3, b: 0.4, a: 1}
   currentPresetIndex: 0
   smoothTransition: 1
-  transitionDuration: 3
+  transitionDuration: 5
 --- !u!114 &1746699437
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2796,6 +2794,10 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 1049967513549347672, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: m_Antialiasing
+      value: 3
+      objectReference: {fileID: 0}
     - target: {fileID: 1049967513549347672, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: m_RequiresDepthTextureOption
       value: 1

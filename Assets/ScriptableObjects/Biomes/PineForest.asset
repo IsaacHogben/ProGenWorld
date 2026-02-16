@@ -21,7 +21,7 @@ MonoBehaviour:
   deepBlock: 1
   sedimentBlock: 2
   gradientThreshold1: 0.009
-  gradientThreshold2: 0.008
+  gradientThreshold2: 0.007
   trees:
   - treeType: 0
     spawnChance: 19

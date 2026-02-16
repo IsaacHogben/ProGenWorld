@@ -41,7 +41,7 @@ public static class PineGenerator
         ref Unity.Mathematics.Random rng,
         ApplyBlockDelegate applyBlock)
     {
-        int trunkHeight = rng.NextInt(10, 16);
+        int trunkHeight = rng.NextInt(8, 16);
 
         // Place trunk
         for (int i = 0; i < trunkHeight; i++)
@@ -49,91 +49,47 @@ public static class PineGenerator
             applyBlock(x, y + i, z, BlockType.Log);
         }
 
-        // Improved tip cluster - layer of leaves around trunk before the spire
+        // Simple tip cluster
         int tipY = y + trunkHeight;
         applyBlock(x + 1, tipY - 1, z, BlockType.Leaves);
         applyBlock(x - 1, tipY - 1, z, BlockType.Leaves);
         applyBlock(x, tipY - 1, z + 1, BlockType.Leaves);
         applyBlock(x, tipY - 1, z - 1, BlockType.Leaves);
 
-        // Tip spire
         applyBlock(x, tipY, z, BlockType.Leaves);
         applyBlock(x, tipY + 1, z, BlockType.Leaves);
         applyBlock(x, tipY + 2, z, BlockType.Leaves);
 
-        // Create branch whorls with spiral rotation
-        int numWhorls = (int)(trunkHeight / 2);
-        int startHeight = (int)(trunkHeight * 0.4f);
-        float spiralRotation = 0f; // Accumulate rotation for spiral
+        // Simple branch layers - just 4 cardinal directions
+        int numWhorls = trunkHeight / 2;
+        int startHeight = (int)(trunkHeight * 0.3f);
 
         for (int whorl = 0; whorl < numWhorls; whorl++)
         {
             int whorlY = y + startHeight + (whorl * 2);
-            if (whorlY >= y + trunkHeight) break;
+            if (whorlY >= y + trunkHeight - 1) break;
 
-            // Calculate branch length
-            float heightProgress = (float)(whorlY - y - startHeight) / (trunkHeight - startHeight);
-            int branchLength = 2 - (int)(3 * heightProgress);
-            if (branchLength < 0) branchLength = 0;
+            // Simple branch length calculation
+            int branchLength = 2 - whorl / 2;
+            if (branchLength < 1) branchLength = 1;
 
-            int numBranches = rng.NextInt(4, 6);
-            for (int b = 0; b < numBranches; b++)
+            // Place simple branches in cardinal directions with connected leaves
+            for (int i = 1; i <= branchLength; i++)
             {
-                float angle = (b / (float)numBranches) * math.PI * 2f + spiralRotation;
-
-                // 5% chance for branch length variation
-                int finalBranchLength = branchLength;
-                float lengthRoll = rng.NextFloat();
-                if (lengthRoll < 0.05f)
-                    finalBranchLength = branchLength + 1;
-                else if (lengthRoll < 0.10f)
-                    finalBranchLength = math.max(1, branchLength - 1);
-
-                int dx = (int)math.round(math.cos(angle) * finalBranchLength);
-                int dz = (int)math.round(math.sin(angle) * finalBranchLength);
-
-                PlaceSmallBranch(x, whorlY, z, dx, dz, ref rng, applyBlock);
+                PlaceSimpleBranch(x + i, whorlY, z, applyBlock);
+                PlaceSimpleBranch(x - i, whorlY, z, applyBlock);
+                PlaceSimpleBranch(x, whorlY, z + i, applyBlock);
+                PlaceSimpleBranch(x, whorlY, z - i, applyBlock);
             }
-
-            // Add spiral rotation for next whorl (about 30 degrees per layer)
-            spiralRotation += math.PI / 6f;
         }
     }
 
-    private static void PlaceSmallBranch(
-        int trunkX, int trunkY, int trunkZ,
-        int targetDx, int targetDz,
-        ref Unity.Mathematics.Random rng,
+    private static void PlaceSimpleBranch(
+        int bx, int by, int bz,
         ApplyBlockDelegate applyBlock)
     {
-        // Create branch extending from trunk
-        int steps = math.max(math.abs(targetDx), math.abs(targetDz));
-
-        for (int i = 1; i <= steps; i++)
-        {
-            float t = i / (float)steps;
-            int bx = trunkX + (int)math.round(targetDx * t);
-            int bz = trunkZ + (int)math.round(targetDz * t);
-            int by = trunkY + (i > steps / 2 ? -1 : 0); // Slight droop at the end
-
-            applyBlock(bx, by, bz, BlockType.Leaves);
-
-            // Add leaves along and at end of branch
-            if (i >= steps - 1 || rng.NextFloat() > 0.6f)
-            {
-                //applyBlock(bx, by + 1, bz, BlockType.Leaves);
-                //applyBlock(bx, by - 1, bz, BlockType.Leaves);
-
-                // End cluster
-                if (i == steps)
-                {
-                    applyBlock(bx + 1, by, bz, BlockType.Leaves);
-                    applyBlock(bx - 1, by, bz, BlockType.Leaves);
-                    applyBlock(bx, by, bz + 1, BlockType.Leaves);
-                    applyBlock(bx, by, bz - 1, BlockType.Leaves);
-                }
-            }
-        }
+        // Place leaf at the end
+        applyBlock(bx, by, bz, BlockType.Leaves);
     }
 
     // ========================================================================
@@ -185,7 +141,7 @@ public static class PineGenerator
 
         // Create branch whorls with spiral rotation
         int numWhorls = (int)(trunkHeight / 3);
-        int startHeight = (int)(trunkHeight * 0.3f);
+        int startHeight = (int)(trunkHeight * 0.2f);
         float spiralRotation = 0f;
 
         for (int whorl = 0; whorl < numWhorls; whorl++)
@@ -193,28 +149,46 @@ public static class PineGenerator
             int whorlY = y + startHeight + (whorl * 3);
             if (whorlY >= y + trunkHeight - 1) break;
 
-            // Calculate branch length
+            // Calculate branch length - LONG at top, SHORT at bottom
             float heightProgress = (float)(whorlY - y - startHeight) / (trunkHeight - startHeight);
             int branchLength = 6 - (int)(4 * heightProgress);
             if (branchLength < 2) branchLength = 2;
 
-            int numBranches = rng.NextInt(5, 9);
+            // Number of branches increases from top to bottom
+            // Top (progress=1): 4-6 branches, Bottom (progress=0): 7-10 branches
+            float invertedProgress = 1.0f - heightProgress; // Invert so bottom = 1, top = 0
+            int minBranches = 4 + (int)(3 * invertedProgress); // 4 at top -> 7 at bottom
+            int maxBranches = 6 + (int)(4 * invertedProgress); // 6 at top -> 10 at bottom
+            int numBranches = rng.NextInt(minBranches, maxBranches + 1);
+
             for (int b = 0; b < numBranches; b++)
             {
                 float angle = (b / (float)numBranches) * math.PI * 2f + spiralRotation;
 
-                // 5% chance for branch length variation
+                // 10% chance for small angle variation
+                float angleRoll = rng.NextFloat();
+                if (angleRoll < 0.10f)
+                {
+                    angle += (rng.NextFloat() - 0.5f) * 0.4f; // ±0.2 radians (~11 degrees)
+                }
+
+                // 15% chance for branch length variation (increased from 5%)
                 int finalBranchLength = branchLength;
                 float lengthRoll = rng.NextFloat();
-                if (lengthRoll < 0.05f)
+                if (lengthRoll < 0.075f)
                     finalBranchLength = branchLength + 1;
-                else if (lengthRoll < 0.10f)
+                else if (lengthRoll < 0.15f)
                     finalBranchLength = math.max(2, branchLength - 1);
+
+                // 5% chance for branch to start one block lower
+                int branchY = whorlY;
+                if (rng.NextFloat() < 0.05f)
+                    branchY -= 1;
 
                 int dx = (int)math.round(math.cos(angle) * finalBranchLength);
                 int dz = (int)math.round(math.sin(angle) * finalBranchLength);
 
-                PlaceMediumBranch(x, whorlY, z, dx, dz, ref rng, applyBlock);
+                PlaceMediumBranch(x, branchY, z, dx, dz, ref rng, applyBlock);
             }
 
             // Add spiral rotation for next whorl
@@ -243,11 +217,15 @@ public static class PineGenerator
 
             applyBlock(bx, by, bz, BlockType.Log);
 
-            // Leaves along branch
+            // Leaves on the sides of branch (perpendicular to branch direction)
             if (i >= steps - 2 || (i > 2 && rng.NextFloat() > 0.5f))
             {
-                applyBlock(bx, by + 1, bz, BlockType.Leaves);
-                applyBlock(bx, by - 1, bz, BlockType.Leaves);
+                // Calculate perpendicular directions
+                int perpDx = targetDz != 0 ? 1 : 0;
+                int perpDz = targetDx != 0 ? 1 : 0;
+
+                applyBlock(bx + perpDx, by, bz + perpDz, BlockType.Leaves);
+                applyBlock(bx - perpDx, by, bz - perpDz, BlockType.Leaves);
 
                 if (i == steps)
                 {
@@ -290,7 +268,7 @@ public static class PineGenerator
             }
         }
 
-        // Tip cluster
+        // Improved tip cluster - layer of leaves around trunk before the spire
         int tipY = y + trunkHeight;
         for (int dx = -1; dx <= 3; dx++)
         {
@@ -327,28 +305,46 @@ public static class PineGenerator
             int whorlY = y + startHeight + (whorl * 4);
             if (whorlY >= y + trunkHeight - 1) break;
 
-            // Calculate branch length
+            // Calculate branch length - LONG at top, SHORT at bottom
             float heightProgress = (float)(whorlY - y - startHeight) / (trunkHeight - startHeight);
             int branchLength = 9 - (int)(6 * heightProgress);
             if (branchLength < 3) branchLength = 3;
 
-            int numBranches = rng.NextInt(5, 12);
+            // Number of branches increases from top to bottom
+            // Top (progress=1): 5-7 branches, Bottom (progress=0): 10-13 branches
+            float invertedProgress = 1.0f - heightProgress; // Invert so bottom = 1, top = 0
+            int minBranches = 5 + (int)(5 * invertedProgress); // 5 at top -> 10 at bottom
+            int maxBranches = 7 + (int)(6 * invertedProgress); // 7 at top -> 13 at bottom
+            int numBranches = rng.NextInt(minBranches, maxBranches + 1);
+
             for (int b = 0; b < numBranches; b++)
             {
                 float angle = (b / (float)numBranches) * math.PI * 2f + spiralRotation;
 
-                // 5% chance for branch length variation
+                // 10% chance for small angle variation
+                float angleRoll = rng.NextFloat();
+                if (angleRoll < 0.10f)
+                {
+                    angle += (rng.NextFloat() - 0.5f) * 0.4f; // ±0.2 radians (~11 degrees)
+                }
+
+                // 15% chance for branch length variation (increased from 5%)
                 int finalBranchLength = branchLength;
                 float lengthRoll = rng.NextFloat();
-                if (lengthRoll < 0.05f)
+                if (lengthRoll < 0.075f)
                     finalBranchLength = branchLength + 1;
-                else if (lengthRoll < 0.10f)
+                else if (lengthRoll < 0.15f)
                     finalBranchLength = math.max(3, branchLength - 1);
+
+                // 5% chance for branch to start one block lower
+                int branchY = whorlY;
+                if (rng.NextFloat() < 0.05f)
+                    branchY -= 1;
 
                 int dx = (int)math.round(math.cos(angle) * finalBranchLength);
                 int dz = (int)math.round(math.sin(angle) * finalBranchLength);
 
-                PlaceLargeBranch(x + 1, whorlY, z + 1, dx, dz, ref rng, applyBlock);
+                PlaceLargeBranch(x + 1, branchY, z + 1, dx, dz, ref rng, applyBlock);
             }
 
             // Add spiral rotation for next whorl
@@ -378,12 +374,15 @@ public static class PineGenerator
                 applyBlock(bx, by + 1, bz, BlockType.Log);
             }
 
-            // Leaves along branch
+            // Leaves on the SIDES of branch (perpendicular to branch direction)
             if (i >= steps - 3 || (i > 3 && rng.NextFloat() > 0.4f))
             {
-                applyBlock(bx, by + 1, bz, BlockType.Leaves);
-                applyBlock(bx, by - 1, bz, BlockType.Leaves);
-                applyBlock(bx, by + 2, bz, BlockType.Leaves);
+                // Calculate perpendicular directions
+                int perpDx = targetDz != 0 ? 1 : 0;
+                int perpDz = targetDx != 0 ? 1 : 0;
+
+                applyBlock(bx + perpDx, by, bz + perpDz, BlockType.Leaves);
+                applyBlock(bx - perpDx, by, bz - perpDz, BlockType.Leaves);
 
                 if (i == steps)
                 {
@@ -399,7 +398,6 @@ public static class PineGenerator
                             }
                         }
                     }
-                    applyBlock(bx, by + 3, bz, BlockType.Leaves);
                 }
             }
         }

@@ -112,7 +112,7 @@ Blocks have a 32 x 32 texture applied over 2 x 2 blocks using tri-planer mapping
 <img width="940" alt="Near LOD showing high detail" src="https://github.com/user-attachments/assets/5125f4a2-d73f-493b-b4ee-720ed40d3e33" />
 <img width="940" alt="Far LOD showing reduced detail" src="https://github.com/user-attachments/assets/ad8a7a12-20db-43cd-ac41-56176d8a9f4e" />
 
-*Comparison of Near LOD (top) vs Far LOD (bottom) - demonstrating automatic detail reduction for performance optimization*
+*Comparison of Far LOD (top) vs Near LOD (bottom) - demonstrating automatic detail reduction for performance optimization*
 
 ---
 

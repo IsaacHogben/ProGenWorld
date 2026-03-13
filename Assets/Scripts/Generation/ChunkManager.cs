@@ -1011,7 +1011,8 @@ public class ChunkManager : MonoBehaviour
                     colors = new NativeList<float4>(Allocator.Persistent),
                     UV0s = new NativeList<float2>(Allocator.Persistent),
                     isWaterMesh = new NativeReference<bool>(Allocator.Persistent),
-                    requestWaterMesh = new NativeReference<bool>(Allocator.Persistent)
+                    requestWaterMesh = new NativeReference<bool>(Allocator.Persistent),
+                    ecsSpawns = new NativeList<ECSSpawnPoint>(Allocator.Persistent)
                 };
             },
             freeMeshData: data =>
@@ -1023,6 +1024,7 @@ public class ChunkManager : MonoBehaviour
                 if (data.UV0s.IsCreated) data.UV0s.Dispose();
                 if (data.isWaterMesh.IsCreated) data.requestWaterMesh.Dispose();
                 if (data.requestWaterMesh.IsCreated) data.requestWaterMesh.Dispose();
+                if (data.ecsSpawns.IsCreated) data.ecsSpawns.Dispose();
             },
             markMeshed: coord => lastMeshFrame[coord] = Time.frameCount,
             canMeshNow: coord => CanMeshNow(coord)
@@ -1043,6 +1045,26 @@ public class ChunkManager : MonoBehaviour
         pendingBiome.Remove(coord);
         LODLevel lod = GetLODForCoord(coord, lastPlayerPos, LODLevel.Mid);
         noiseSystem.RequestDensity(coord, lod, biomeDataByChunk[coord]);
+    }
+    private void HandleECSSpawns(int3 coord, MeshData meshData)
+    {
+        if (meshData.lod != LODLevel.Near) return;
+        if (meshData.isWaterMesh.Value) return;
+        if (!meshData.ecsSpawns.IsCreated || meshData.ecsSpawns.Length == 0) return;
+
+        float3 worldOffset = (float3)ChunkToWorld(coord);
+
+        // Destroy previous ECS decorations for this chunk (remesh case)
+        ECSSpawnSystem.DestroyChunk(new int3(coord.x, coord.y, coord.z));
+
+        // RequestSpawn copies data into a blob — ecsSpawns stays owned by MeshData pool
+        ECSSpawnSystem.RequestSpawn(
+            new int3(coord.x, coord.y, coord.z),
+            worldOffset,
+            meshData.ecsSpawns.AsArray()  // read-only view, not transferred
+        );
+
+        // Don't dispose — MeshData pool owns ecsSpawns, freeMeshData handles it
     }
     private void HandleMeshReady(int3 coord, MeshData meshData)
     {
@@ -1088,6 +1110,9 @@ public class ChunkManager : MonoBehaviour
             chunk.chunkMaterial = lodConfigs[meshData.lod].material;
             chunk.lod = meshData.lod;
             chunk.ApplyMesh(meshData, meshPool);
+
+            // ECS spawns only on Near non-water mesh
+            HandleECSSpawns(coord, meshData);
         }
 
         if (meshData.requestWaterMesh.Value == meshData.isWaterMesh.Value) // This means we are still waiting on a water mesh
@@ -1320,6 +1345,9 @@ public class ChunkManager : MonoBehaviour
     void ReleaseChunk(int3 coord)
     {
         deferredFrontier.Add(coord); // If a chunk is removed it must then become a new frontier for terrain generation
+
+        //ECS Cleanup
+        ECSSpawnSystem.DestroyChunk(new int3(coord.x, coord.y, coord.z));
 
         // Biome cleanup
         if (pendingBiome.Contains(coord))

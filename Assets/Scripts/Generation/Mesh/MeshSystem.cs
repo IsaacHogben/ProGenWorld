@@ -83,6 +83,7 @@ public class MeshSystem
         meshData.lod = lod;
         meshData.requestWaterMesh.Value = false;
         meshData.isWaterMesh.Value = isWaterMesh;
+        meshData.ecsSpawns.Clear();
 
         var job = new GreedyMeshJob
         {
@@ -91,7 +92,8 @@ public class MeshSystem
             chunkSize = config.chunkSize / sampleRes,
             blockSize = blockSize,
             meshData = meshData,
-            isWaterMesh = isWaterMesh
+            isWaterMesh = isWaterMesh,
+            collectECSSpawns = (lod == LODLevel.Near && !isWaterMesh)
         };
 
         Profiler.StartMesh();

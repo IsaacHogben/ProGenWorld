@@ -21,6 +21,7 @@ public struct GreedyMeshJob : IJob
     public MeshData meshData;
     public int vertexCount;
     public bool isWaterMesh;
+    public bool collectECSSpawns; // only true for Near LOD, non-water pass
 
     public struct FMask
     {
@@ -236,6 +237,32 @@ public struct GreedyMeshJob : IJob
                         else
                         {
                             mask[n++] = new FMask { Normal = 0 };
+                        }
+
+                        // Detect upward top-surface face: Y axis (axis==1), solid block below air (normal==-1)
+                        if (collectECSSpawns
+                            && shouldDrawFace
+                            && axis == 1
+                            && faceNormal == -1
+                            && !isWaterMesh
+                            && currentBlock == (byte)BlockType.Grass)
+                        {
+                            // chunkItr is in mesh-space (divided by meshRes)
+                            // The surface position is the top of the current voxel
+                            float3 localPos = new float3(
+                                chunkItr.x * blockSize,
+                                (chunkItr[axis]) * blockSize,   // top face Y = slice + 1
+                                chunkItr.z * blockSize
+                            );
+
+                            meshData.ecsSpawns.Add(new ECSSpawnPoint
+                            {
+                                position = localPos,
+                                category = (byte)DecorationCategory.Vegetation,
+                                decorationType = (byte)DecorationType.Vegetation.Grass,
+                                biomeIndex = 0,   // no biome data in mesh job — handle tint in shader
+                                flags = 0
+                            });
                         }
                     }
                 }

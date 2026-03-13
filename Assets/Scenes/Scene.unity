@@ -992,10 +992,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 71112
+  seed: 1125552
   frequency: 1.2
   chunkSize: 64
-  viewDistance: 14
+  viewDistance: 3
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 8
   renderShape: 1
@@ -1956,6 +1956,7 @@ GameObject:
   - component: {fileID: 1148720673}
   - component: {fileID: 1148720672}
   - component: {fileID: 1148720671}
+  - component: {fileID: 1148720674}
   m_Layer: 0
   m_Name: BiomeManager
   m_TagString: Untagged
@@ -1976,9 +1977,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDataManager
   terrainTypes:
-  - {fileID: 11400000, guid: ef68c6e2c0b149a4ca19b6a9a8f24575, type: 2}
   - {fileID: 11400000, guid: ac30749d934c76b488557c1d909942de, type: 2}
-  - {fileID: 11400000, guid: 11f75994683330e43a5048c9b809631b, type: 2}
   biomes:
   - {fileID: 11400000, guid: bdf93638ce508f24c946a8bbd360e96e, type: 2}
   - {fileID: 11400000, guid: a8d26d0dab5f8a3438cfd5279cd4138b, type: 2}
@@ -2020,6 +2019,23 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1148720674
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1148720670}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d83003c5b7787314d9a4e421f5195bf7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ECSDecorationBootstrap
+  entries:
+  - category: 1
+    vegetationType: 0
+    mesh: {fileID: -5668833170292645477, guid: 56fbff01c669df74ebfa9a56980546e9, type: 3}
+    material: {fileID: 2100000, guid: 113d666b2ad339344b1274d599706c13, type: 2}
 --- !u!1 &1201536337
 GameObject:
   m_ObjectHideFlags: 0

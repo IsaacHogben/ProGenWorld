@@ -14,4 +14,5 @@ public struct MeshData
     [NonSerialized] public LODLevel lod;
     [NonSerialized] public NativeReference<bool> isWaterMesh;
     [NonSerialized] public NativeReference<bool> requestWaterMesh;
+    [NonSerialized] public NativeList<ECSSpawnPoint> ecsSpawns;
 }

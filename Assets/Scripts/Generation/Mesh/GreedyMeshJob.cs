@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -50,43 +51,46 @@ public struct GreedyMeshJob : IJob
     static bool CompareMask(FMask a, FMask b) => a.Normal == b.Normal && a.Block == b.Block;
 
     byte SampleLOD(int3 coord)
-{
-    int s = meshData.meshRes;
-    if (s == 1)
-        return GetBlock(coord);
+    {
+        int s = meshData.meshRes;
+        if (s == 1)
+            return GetBlock(coord);
 
-    int3 basePos = new int3(coord.x * s, coord.y * s, coord.z * s);
+        int3 basePos = new int3(coord.x * s, coord.y * s, coord.z * s);
 
-    int3 limit = new int3(s, s, s);
+        int3 limit = new int3(s, s, s);
 
-    // When sampling at chunk face (coord==0), reduce one layer from that axis
-    if (coord.x == 0) limit.x -= 1;
-    if (coord.y == 0) limit.y -= 1;
-    if (coord.z == 0) limit.z -= 1;
+        // When sampling at chunk face (coord==0), reduce one layer from that axis
+        if (coord.x == 0) limit.x -= 1;
+        if (coord.y == 0) limit.y -= 1;
+        if (coord.z == 0) limit.z -= 1;
 
-    byte best = 0;
+        byte best = 0;
 
-    for (int dx = 0; dx < limit.x; dx++)
-        for (int dy = 0; dy < limit.y; dy++)
-            for (int dz = 0; dz < limit.z; dz++)
-            {
-                int xi = basePos.x + dx;
-                int yi = basePos.y + dy;
-                int zi = basePos.z + dz;
-
-                if (xi <= chunkSize && yi <= chunkSize && zi <= chunkSize)
+        for (int dx = 0; dx < limit.x; dx++)
+            for (int dy = 0; dy < limit.y; dy++)
+                for (int dz = 0; dz < limit.z; dz++)
                 {
-                    byte v = GetBlock(new int3(xi, yi, zi));
-                    if (v > best)
-                        best = v;
-                }
-            }
+                    int xi = basePos.x + dx;
+                    int yi = basePos.y + dy;
+                    int zi = basePos.z + dz;
 
-    return best;
-}
+                    if (xi <= chunkSize && yi <= chunkSize && zi <= chunkSize)
+                    {
+                        byte v = GetBlock(new int3(xi, yi, zi));
+                        if (v > best)
+                            best = v;
+                    }
+                }
+
+        return best;
+    }
 
     public void GenerateMesh(NativeArray<FMask> mask)
     {
+        uint seed = (uint)(meshData.coord.x * 73856093 ^ meshData.coord.y * 19349663 ^ meshData.coord.z * 83492791) | 1u;
+        var rng = new Unity.Mathematics.Random(seed);
+
         // Sweep over each axis (X, Y, Z)
         for (int axis = 0; axis < 3; ++axis)
         {
@@ -128,9 +132,20 @@ public struct GreedyMeshJob : IJob
                         bool shouldDrawFace = false;
                         byte faceBlock = 0;
                         short faceNormal = 0;
+                        bool isSeamBoundary = meshData.lod != LODLevel.Near
+                            && (axis == 0 || axis == 2) // X and Z only
+                            && (chunkItr[axis] == 0 || chunkItr[axis] == mainAxisLimit - 1)
+                            && !isWaterMesh;
 
+                        // Force show block face on low lod boundary to cover seams
+                        if (isSeamBoundary && currentVis != BlockVisibility.Invisible)
+                        {
+                            shouldDrawFace = true;
+                            faceBlock = currentBlock;
+                            faceNormal = (chunkItr[axis] == 0) ? (short)1 : (short)-1;
+                        }
                         // Invisible (air) cases
-                        if (currentVis == BlockVisibility.Invisible && compareVis == BlockVisibility.Invisible)
+                        else if (currentVis == BlockVisibility.Invisible && compareVis == BlockVisibility.Invisible)
                         {
                             // Air to air - no face
                             shouldDrawFace = false;
@@ -238,14 +253,15 @@ public struct GreedyMeshJob : IJob
                         {
                             mask[n++] = new FMask { Normal = 0 };
                         }
-
+                        
                         // Detect upward top-surface face: Y axis (axis==1), solid block below air (normal==-1)
                         if (collectECSSpawns
                             && shouldDrawFace
                             && axis == 1
                             && faceNormal == -1
                             && !isWaterMesh
-                            && currentBlock == (byte)BlockType.Grass)
+                            && currentBlock == (byte)BlockType.Grass
+                            && rng.NextFloat(0, 1) > 0.9f) // flat grass spawn chance
                         {
                             // chunkItr is in mesh-space (divided by meshRes)
                             // The surface position is the top of the current voxel

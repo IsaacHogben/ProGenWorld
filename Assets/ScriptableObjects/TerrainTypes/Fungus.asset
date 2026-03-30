@@ -1,0 +1,46 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c8e6ef5b6bd5b14409c5a75ac224f3b8, type: 3}
+  m_Name: Fungus
+  m_EditorClassIdentifier: Assembly-CSharp::TerrainTypeDefinitionSO
+  terrainTypeName: Fungus
+  noiseNodeTree: FAAdACEAJQAAAIA/PQp3QAAAgD8AAIA/EwBxPYpADQAFAAAAUrjePwcAAClcjz4AAAAAABAA7FE4QREAAgAAAGZmBkAQAOxROD4ZACIAj8KFQD0K1z4nAAEAAAATAFyPwj4NAAMAAAAAACBACQAAZmYmPwAAAAA/AQQAAAAAAOF6VEAAAAAAAAAAAAAAAADhepQ/AAAAAAAAAAAAzczMPgCF69E/AAAAAD8ACtcjPACkcD0/ARkAGQAdAB4ABAAAAAAAcT0KPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACPwvW+AAAAgD8BEQADAAAAhevhQBAAuB4FPyIAAACAPwAAAD8nAAEAAAAZABMAcT2KPw0AAgAAAHE9yj8LAAAAAAAAAAAAAQAAAAAAAAAAAACAPwAK16M+AAAAAAAAj8L1PQCuR2E+AOxRuD4AAAAAAAEZABMAFK5HPxAA7FG4PxkAHgAEAAAAAADXo+xBAAAAAAAAAAAAAAAACtcjPgAAAAAAAAAAAAAAAAABFAAZABkAFAAdABcAAACAvwAAgD8AAIC/AAAAABkAHgAQAFyPIkEEAAAAAAAAAGDBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAArXozwAAAAAAAEeAAQAAAAAADMzu0IAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzcxMPwAAAAAAAAAAAAABGQAUAP//JAAAAAAAAACamRk/AAAAAAAAAAAAAAEUAP//JAAAAAAAAAAzMzM/AAAAAAAAAAAAAAEUAP//JAAAAAAAAABmZmY/AAAAAAAAAAAAAAAAAAAAAK5H4b4AAAAAAAAAAAAAAAAAAAABGwATAArXoz0UAP//JAAAAAAAAAAK16M9AAAAAAAAAAAAAABcj4I/AAAAAAAAhetRvwAAAAAAAAAAAAA=
+  frequencyMultiplier: 0.4
+  yOffset: -31
+  densityCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  curveResolution: 64
+  rarityWeight: 1
+  allowedBiomes: 01
+  terrainID: 0

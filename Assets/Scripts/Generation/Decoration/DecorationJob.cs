@@ -141,11 +141,15 @@ public struct DecorationJob : IJob
 
     private void PlaceTree(DecorationType.Tree treeType, int x, int y, int z)
     {
-        TreeGenerator.Generate(
-            treeType,
-            x, y, z,
-            ref rng,
-            ApplyBlock);
+        var writer = new BlockWriter
+        {
+            chunkCoord = chunkCoord,
+            chunkSize = chunkSize,
+            indexSize = indexSize,
+            blockIds = blockIds,
+            pendingWrites = pendingWrites
+        };
+        TreeGenerator.Generate(treeType, x, y, z, ref rng, ref writer);
     }
 
     // ========================================================================

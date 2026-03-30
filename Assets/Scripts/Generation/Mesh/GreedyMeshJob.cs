@@ -134,11 +134,10 @@ public struct GreedyMeshJob : IJob
                         short faceNormal = 0;
                         bool isSeamBoundary = meshData.lod != LODLevel.Near
                             && (axis == 0 || axis == 2) // X and Z only
-                            && (chunkItr[axis] == 0 || chunkItr[axis] == mainAxisLimit - 1)
-                            && !isWaterMesh;
+                            && (chunkItr[axis] == 0 || chunkItr[axis] == mainAxisLimit - 1);
 
-                        // Force show block face on low lod boundary to cover seams
-                        if (isSeamBoundary && currentVis != BlockVisibility.Invisible)
+                        // Force show block face on low lod boundary to cover seams - only for solid blocks
+                        if (isSeamBoundary && currentVis == BlockVisibility.Opaque)
                         {
                             shouldDrawFace = true;
                             faceBlock = currentBlock;
@@ -260,7 +259,7 @@ public struct GreedyMeshJob : IJob
                             && axis == 1
                             && faceNormal == -1
                             && !isWaterMesh
-                            && currentBlock == (byte)BlockType.Grass
+                            && currentBlock == (byte)BlockType.Grass_red
                             && rng.NextFloat(0, 1) > 0.9f) // flat grass spawn chance
                         {
                             // chunkItr is in mesh-space (divided by meshRes)
@@ -275,7 +274,7 @@ public struct GreedyMeshJob : IJob
                             {
                                 position = localPos,
                                 category = (byte)DecorationCategory.Vegetation,
-                                decorationType = (byte)DecorationType.Vegetation.Grass,
+                                decorationType = (byte)DecorationType.Vegetation.Fern,
                                 biomeIndex = 0,   // no biome data in mesh job — handle tint in shader
                                 flags = 0
                             });

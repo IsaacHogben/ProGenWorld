@@ -18,14 +18,14 @@ public static class TreeGenerator
         DecorationType.Tree treeType,
         int x, int y, int z,
         ref Unity.Mathematics.Random rng,
-        ApplyBlockDelegate applyBlock)
+        ref BlockWriter writer)
     {
         switch (treeType)
         {
             case DecorationType.Tree.SmallPine:
             case DecorationType.Tree.MediumPine:
             case DecorationType.Tree.LargePine:
-                PineGenerator.Generate(treeType, x, y, z, ref rng, applyBlock);
+                PineGenerator.Generate(treeType, x, y, z, ref rng, ref writer);
                 break;
 
             case DecorationType.Tree.Oak:

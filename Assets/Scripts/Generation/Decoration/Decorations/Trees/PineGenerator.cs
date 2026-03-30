@@ -14,20 +14,20 @@ public static class PineGenerator
         DecorationType.Tree treeType,
         int x, int y, int z,
         ref Unity.Mathematics.Random rng,
-        ApplyBlockDelegate applyBlock)
+        ref BlockWriter writer)
     {
         switch (treeType)
         {
             case DecorationType.Tree.SmallPine:
-                MakeSmallPine(x, y, z, ref rng, applyBlock);
+                MakeSmallPine(x, y, z, ref rng, writer.ApplyBlock);
                 break;
 
             case DecorationType.Tree.MediumPine:
-                MakeMediumPine(x, y, z, ref rng, applyBlock);
+                MakeMediumPine(x, y, z, ref rng, writer.ApplyBlock);
                 break;
 
             case DecorationType.Tree.LargePine:
-                MakeLargePine(x, y, z, ref rng, applyBlock);
+                MakeLargePine(x, y, z, ref rng, writer.ApplyBlock);
                 break;
         }
     }

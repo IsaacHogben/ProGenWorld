@@ -5,12 +5,18 @@ public enum BlockType : byte
     Stone,
     DarkStone,
     PearlStone,
+    Slate,
 
     Dirt,
+    RedDirt,
+    DarkDirt,
     CrackedDirt,
+    Pebbles,
+    Gravel,
 
     Grass,
     Grass_yellow,
+    Grass_red,
     Grass_low,
 
     Log,

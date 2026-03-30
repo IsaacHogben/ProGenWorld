@@ -24,7 +24,7 @@ MonoBehaviour:
   gradientThreshold2: 0.002
   trees:
   - treeType: 0
-    spawnChance: 0
+    spawnChance: 8
     spawnOnBlocks: 06
   vegetation: []
   rocks: []

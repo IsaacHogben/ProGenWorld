@@ -9,7 +9,9 @@ public enum BiomeType : byte
     PineForest,
     stone,
     YellowDesrt,
-    Plains
+    Plains,
+    Cavern,
+    RedGrass
 }
 
 // ============================================================================

@@ -42,5 +42,5 @@ MonoBehaviour:
     m_RotationOrder: 4
   curveResolution: 64
   rarityWeight: 1
-  allowedBiomes: 02
-  terrainID: 1
+  allowedBiomes: 04
+  terrainID: 2

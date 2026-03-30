@@ -14,6 +14,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::TerrainTypeDefinitionSO
   terrainTypeName: Flat
   noiseNodeTree: BAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+  frequencyMultiplier: 1
+  yOffset: 62
   densityCurve:
     serializedVersion: 2
     m_Curve:
@@ -66,6 +68,6 @@ MonoBehaviour:
     m_PostInfinity: 2
     m_RotationOrder: 4
   curveResolution: 64
-  rarityWeight: 1
-  allowedBiomes: 02
-  terrainID: 3
+  rarityWeight: 0.62
+  allowedBiomes: 01
+  terrainID: 2

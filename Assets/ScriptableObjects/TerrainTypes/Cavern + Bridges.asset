@@ -10,12 +10,12 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c8e6ef5b6bd5b14409c5a75ac224f3b8, type: 3}
-  m_Name: Mega
+  m_Name: Cavern + Bridges
   m_EditorClassIdentifier: Assembly-CSharp::TerrainTypeDefinitionSO
-  terrainTypeName: Mega
-  noiseNodeTree: EwB7FK4/EQACAAAAmpmZPxAAexSuPh8AEQACAAAAAAAAQBAAexSuPhkAGQATAB+F6z8lAAAAgD/D9eg/AACAPwAAgD8RAAQAAACuRwFAEAAK12NADQADAAAAAAAAQBAAAAAAPwcAAJqZmT4AKVwPPwDXo3A/AM3MzD0AzcyMPwAUrgdAAQAAj8J1PQEEAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOF61D8AMzMzPwAAAAA/ASUAAACAP8P1KEAAAIA/AACAPxQAHgAZABkAEwAfhes/JQAAAIA/w/XoPwAAgD8AAIA/EQACAAAArkcBQBAACtdjQA0AAwAAAAAAAEAHAAApXA8/ANejcD8AzczMPQDNzIw/ABSuB0ABAACPwnU9AQQAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABDQAEAAAAAAAAQAYAAAAAAD8AAAAAAAAAAAAAAArXIz0AAAAAAAAAAAAAAM3MzD0AexQuPwDNzEw/ALgehT4=
-  frequencyMultiplier: 0.6
-  yOffset: 0
+  terrainTypeName: Cavern
+  noiseNodeTree: GQAfABAA9ih8QBkAGQAdAAQAAAAAAFK4nr8AAAAAAAAAAAAAAADNzEw+AAAAAAAAAAAAAAAAAAEdAAQAAAAAAAAA8EAAAAAAAAAAAAAAAACF61E/4XoUv5qZmb4AAAAAAAEhABMASOH6PyUAAACAPwrXoz4AAIA/AACAPw0ABAAAAKRwPUAHAABSuB4/ABSuhz8AAAAAgD8AzczMPQCPwnU9ASUAAACAP83MrEAAAIA/AACAPx0AGwATAJqZmT4aAAERAAIAAAAK17NAEAA9CjdAHwAWAAEAAAALAAMAAAACAAAAAwAAAAQAAAAAAAAAPwEUAP//DQAAAAAAPwAAAAA/AAAAAD8AAAAAPwEXAAAAgL8AAIA/PQoXQFK4HkATAAAAoEAGAACuR2E9AJqZmT4AAAAAAADhehQ/AAAAgL8ACtejPADNzMw9AR4ABAAAAAAAAADwQQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  frequencyMultiplier: 0.4
+  yOffset: -106
   densityCurve:
     serializedVersion: 2
     m_Curve:
@@ -29,17 +29,8 @@ MonoBehaviour:
       inWeight: 0
       outWeight: 0
     - serializedVersion: 3
-      time: 0.24147266
-      value: 0.010917361
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0.33333334
-      outWeight: 0.33333334
-    - serializedVersion: 3
-      time: 0.40938997
-      value: 5.043821
+      time: 1
+      value: 0
       inSlope: 0
       outSlope: 0
       tangentMode: 0
@@ -51,5 +42,5 @@ MonoBehaviour:
     m_RotationOrder: 4
   curveResolution: 64
   rarityWeight: 1
-  allowedBiomes: 0103
+  allowedBiomes: 04
   terrainID: 1

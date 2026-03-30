@@ -10,28 +10,19 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: ffb976060e97e294396dcbe054503ff5, type: 3}
-  m_Name: PineForest
+  m_Name: RedGrass
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDefinitionSO
-  biomeType: 0
+  biomeType: 5
   rarityWeight: 1
   humidityRange: {x: 0, y: 1}
   temperatureRange: {x: 0, y: 1}
-  surfaceBlock: 14
-  subsurfaceBlock: 7
-  deepBlock: 1
+  surfaceBlock: 13
+  subsurfaceBlock: 2
+  deepBlock: 4
   sedimentBlock: 9
-  gradientThreshold1: 0.009
-  gradientThreshold2: 0.007
-  trees:
-  - treeType: 0
-    spawnChance: 16
-    spawnOnBlocks: 0e07
-  - treeType: 1
-    spawnChance: 6
-    spawnOnBlocks: 0e
-  - treeType: 2
-    spawnChance: 1
-    spawnOnBlocks: 0e
+  gradientThreshold1: 0.012
+  gradientThreshold2: 0.003
+  trees: []
   vegetation: []
   rocks: []
   aliens: []

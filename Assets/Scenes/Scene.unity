@@ -992,12 +992,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 1125552
+  seed: 6633332
   frequency: 1.2
   chunkSize: 64
-  viewDistance: 3
+  viewDistance: 6
   unloadPastViewDistance: 1
-  minMoveBeforeUpdate: 8
+  minMoveBeforeUpdate: 9
   renderShape: 1
   unloadAtMaxChunks: 0
   maxChunks: 4400
@@ -1033,7 +1033,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 695623961}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 3cb5cabf08028ca4dbb2743304f1e209, type: 3}
   m_Name: 
@@ -1053,7 +1053,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 695623961}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: edc89bafeb2d56a46a1706794e2b5353, type: 3}
   m_Name: 
@@ -1977,12 +1977,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDataManager
   terrainTypes:
-  - {fileID: 11400000, guid: ac30749d934c76b488557c1d909942de, type: 2}
+  - {fileID: 11400000, guid: a024df3b0c9f85f4692a81593ec923a2, type: 2}
   biomes:
-  - {fileID: 11400000, guid: bdf93638ce508f24c946a8bbd360e96e, type: 2}
+  - {fileID: 11400000, guid: 21d159ebe445c6940b03b5bbce4f6e65, type: 2}
   - {fileID: 11400000, guid: a8d26d0dab5f8a3438cfd5279cd4138b, type: 2}
+  - {fileID: 11400000, guid: bdf93638ce508f24c946a8bbd360e96e, type: 2}
   - {fileID: 11400000, guid: 552e3d9646cb9f94f8ad27960569127c, type: 2}
   - {fileID: 11400000, guid: 68efab62a3085fb49b7eb2c1eceb8ebe, type: 2}
+  - {fileID: 11400000, guid: 7e272d8e0a5387941b093644c8adec45, type: 2}
   climateGrid: {fileID: 11400000, guid: 615cdc73382d8644e9981737a89b5125, type: 2}
   waterLevel: -63
 --- !u!114 &1148720672
@@ -2000,9 +2002,9 @@ MonoBehaviour:
   biomeDataManager: {fileID: 1148720671}
   biomeResolution: 64
   baseFrequency: 0.001
-  terrainFrequencyMultiplier: 0.3
-  climateFrequencyMultiplier: 0.5
-  terrainBlendWidth: 0.186
+  terrainFrequencyMultiplier: 0.4
+  climateFrequencyMultiplier: 0.3
+  terrainBlendWidth: 0.223
   biomeBlendWidth: 2
 --- !u!4 &1148720673
 Transform:
@@ -2034,8 +2036,12 @@ MonoBehaviour:
   entries:
   - category: 1
     vegetationType: 0
-    mesh: {fileID: -5668833170292645477, guid: 56fbff01c669df74ebfa9a56980546e9, type: 3}
-    material: {fileID: 2100000, guid: 113d666b2ad339344b1274d599706c13, type: 2}
+    mesh: {fileID: -2035342429536354893, guid: b544710e857873045a114a94041ecf3f, type: 3}
+    material: {fileID: 2100000, guid: 784520196f431a243a8650be654487c6, type: 2}
+  - category: 1
+    vegetationType: 2
+    mesh: {fileID: -2035342429536354893, guid: b544710e857873045a114a94041ecf3f, type: 3}
+    material: {fileID: 2100000, guid: 784520196f431a243a8650be654487c6, type: 2}
 --- !u!1 &1201536337
 GameObject:
   m_ObjectHideFlags: 0
@@ -2209,9 +2215,9 @@ MonoBehaviour:
   maxSunIntensity: 1
   minSunIntensity: 0
   controlAmbientLight: 1
-  dayAmbientIntensity: 1
+  dayAmbientIntensity: 0.85
   nightAmbientIntensity: -0.3
-  dayAmbientColor: {r: 0.5, g: 0.6, b: 0.7, a: 1}
+  dayAmbientColor: {r: 0.42866677, g: 0.49609125, b: 0.5377358, a: 1}
   nightAmbientColor: {r: 0.124288015, g: 0.124288015, b: 0.1792453, a: 1}
   controlFogPresets: 1
   fogPresetManager: {fileID: 1746699436}
@@ -2492,7 +2498,7 @@ MonoBehaviour:
   fogController: {fileID: 0}
   presets:
   - presetName: Clear Day
-    fogStartDistance: 100
+    fogStartDistance: 25
     fogEndDistance: 750
     maxFogDensity: 0.9
     enableHeightFog: 0
@@ -2502,9 +2508,9 @@ MonoBehaviour:
     enableRayleighScattering: 0
     rayleighIntensity: 1.5
     scatteringCoefficients: {x: 5.8, y: 13.5, z: 33.1}
-    fogColor: {r: 0.24007656, g: 0.51154774, b: 0.7830189, a: 1}
+    fogColor: {r: 0.5647059, g: 0.61960787, b: 0.627451, a: 1}
     skyColor: {r: 0.13968495, g: 0.41261348, b: 0.6886792, a: 1}
-    sunColor: {r: 1, g: 0.95, b: 0.85, a: 1}
+    sunColor: {r: 1, g: 0.85624623, b: 0.3820755, a: 1}
   - presetName: Foggy Morning
     fogStartDistance: 0
     fogEndDistance: 500
@@ -2573,8 +2579,8 @@ MonoBehaviour:
   rayleighIntensity: 1
   scatteringCoefficients: {x: 5.8, y: 13.5, z: 33.1}
   fogColor: {r: 0.6, g: 0.7, b: 0.8, a: 1}
-  skyColor: {r: 0.4, g: 0.6, b: 0.9, a: 1}
-  sunColor: {r: 1, g: 0.95, b: 0.8, a: 1}
+  skyColor: {r: 0.38412246, g: 0.74492085, b: 0.9811321, a: 1}
+  sunColor: {r: 1, g: 0.9490197, b: 0.85098046, a: 1}
   horizonHeight: 0
   sunLight: {fileID: 410087040}
   useSunLightColor: 1
@@ -2821,7 +2827,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 1049967513549347672, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: m_Antialiasing
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 1049967513549347672, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: m_RequiresDepthTextureOption
@@ -2902,6 +2908,10 @@ PrefabInstance:
     - target: {fileID: 5385816110663636234, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: walkSpeed
       value: 5
+      objectReference: {fileID: 0}
+    - target: {fileID: 5385816110663636234, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: sprintSpeed
+      value: 30
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

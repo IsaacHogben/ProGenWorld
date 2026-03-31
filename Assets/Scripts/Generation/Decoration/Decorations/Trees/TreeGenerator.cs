@@ -28,21 +28,11 @@ public static class TreeGenerator
                 PineGenerator.Generate(treeType, x, y, z, ref rng, ref writer);
                 break;
 
-            case DecorationType.Tree.Oak:
-                // MakeOak(x, y, z, ref rng, applyBlock);
+            case DecorationType.Tree.RedFancy:
+                LSystemTreeGenerator.Generate(treeType, x, y, z, ref rng, ref writer);
                 break;
 
-            case DecorationType.Tree.Birch:
-                // MakeBirch(x, y, z, ref rng, applyBlock);
-                break;
 
-            case DecorationType.Tree.DeadTree:
-                // MakeDeadTree(x, y, z, ref rng, applyBlock);
-                break;
-
-            case DecorationType.Tree.AlienSpire:
-                // MakeAlienSpire(x, y, z, ref rng, applyBlock);
-                break;
         }
     }
 }

@@ -11,7 +11,8 @@ public enum BiomeType : byte
     YellowDesrt,
     Plains,
     Cavern,
-    RedGrass
+    RedGrass,
+    Fungus
 }
 
 // ============================================================================
@@ -131,10 +132,7 @@ public static class DecorationType
         SmallPine,
         MediumPine,
         LargePine,
-        Oak,
-        Birch,
-        DeadTree,
-        AlienSpire
+        RedFancy
     }
 
     public enum Vegetation : byte

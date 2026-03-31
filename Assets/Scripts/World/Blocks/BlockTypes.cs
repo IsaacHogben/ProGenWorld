@@ -25,7 +25,12 @@ public enum BlockType : byte
     Sand,
     PearlSand,
 
-    Water
+    Fungus_cap,
+    Fungus_stem,
+    Fungus_mycelium,
+
+    Water,
+
 }
 
 public enum BlockVisibility

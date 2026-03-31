@@ -22,7 +22,10 @@ MonoBehaviour:
   sedimentBlock: 9
   gradientThreshold1: 0.012
   gradientThreshold2: 0.003
-  trees: []
+  trees:
+  - treeType: 3
+    spawnChance: 3
+    spawnOnBlocks: 02
   vegetation: []
   rocks: []
   aliens: []

@@ -10,22 +10,19 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: ffb976060e97e294396dcbe054503ff5, type: 3}
-  m_Name: Plains
+  m_Name: Fungus
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDefinitionSO
-  biomeType: 3
+  biomeType: 6
   rarityWeight: 1
   humidityRange: {x: 0, y: 1}
   temperatureRange: {x: 0, y: 1}
-  surfaceBlock: 11
-  subsurfaceBlock: 5
-  deepBlock: 1
+  surfaceBlock: 19
+  subsurfaceBlock: 21
+  deepBlock: 20
   sedimentBlock: 9
-  gradientThreshold1: 0.005
-  gradientThreshold2: 0.002
-  trees:
-  - treeType: 0
-    spawnChance: 8
-    spawnOnBlocks: 05
+  gradientThreshold1: 0.0182
+  gradientThreshold2: 0.0025
+  trees: []
   vegetation: []
   rocks: []
   aliens: []

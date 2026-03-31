@@ -992,10 +992,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 6633332
+  seed: 34773
   frequency: 1.2
   chunkSize: 64
-  viewDistance: 6
+  viewDistance: 14
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 9
   renderShape: 1
@@ -1985,6 +1985,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 552e3d9646cb9f94f8ad27960569127c, type: 2}
   - {fileID: 11400000, guid: 68efab62a3085fb49b7eb2c1eceb8ebe, type: 2}
   - {fileID: 11400000, guid: 7e272d8e0a5387941b093644c8adec45, type: 2}
+  - {fileID: 11400000, guid: 37bddd8f829825245a135b97a00b23f1, type: 2}
   climateGrid: {fileID: 11400000, guid: 615cdc73382d8644e9981737a89b5125, type: 2}
   waterLevel: -63
 --- !u!114 &1148720672

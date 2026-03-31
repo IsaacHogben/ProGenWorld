@@ -111,7 +111,7 @@ MonoBehaviour:
     visibility: 0
   - type: 16
     name: PearlSand
-    texture: {fileID: 2800000, guid: b5a2e4b0f1d2e6341bd51faa444c6106, type: 3}
+    texture: {fileID: 2800000, guid: 43562a14eb45d3d4f835961ebb659f81, type: 3}
     isSolid: 1
     hasCollision: 1
     visibility: 3
@@ -128,6 +128,24 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
   - type: 19
+    name: Water
+    texture: {fileID: 2800000, guid: a29d0c1859bd07e4993d1189929af243, type: 3}
+    isSolid: 1
+    hasCollision: 1
+    visibility: 0
+  - type: 20
+    name: Fungus_stem
+    texture: {fileID: 2800000, guid: 0f1c13b68beb44a478a26006e046d595, type: 3}
+    isSolid: 1
+    hasCollision: 1
+    visibility: 0
+  - type: 21
+    name: Fungus_mycelium
+    texture: {fileID: 2800000, guid: 603a7b5aa046ade479d8d3b4c3dc522b, type: 3}
+    isSolid: 1
+    hasCollision: 1
+    visibility: 0
+  - type: 22
     name: Water
     texture: {fileID: 2800000, guid: 69ff345f0f7dc544db353278f8310763, type: 3}
     isSolid: 1

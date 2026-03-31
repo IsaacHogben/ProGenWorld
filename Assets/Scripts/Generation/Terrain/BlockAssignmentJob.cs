@@ -26,7 +26,7 @@ public struct BlockAssignmentJob : IJobParallelFor
     {
         float blockDensity = density[i];
         int3 index = IndexToXYZ(i);
-        float aboveBlockDensity = GetAboveDensity(index);
+        float aboveBlockDensity = TryGetIndex(index.x, index.y + 1, index.z, out int r) ? density[r] : blockDensity;
 
         // Gradient: positive = terrain getting less dense upward (approaching surface)
         float verticalGradient = aboveBlockDensity - blockDensity;
@@ -125,14 +125,6 @@ public struct BlockAssignmentJob : IJobParallelFor
     int GetWorldYValue(int3 index)
     {
         return index.y + chunkCoord.y * chunkSize;
-    }
-
-    float GetAboveDensity(int3 v)
-    {
-        int r;
-        if (TryGetIndex(v.x, v.y + 1, v.z, out r))
-            return density[r];
-        return 1f; // Assume air above if out of bounds
     }
 
     int3 IndexToXYZ(int i)

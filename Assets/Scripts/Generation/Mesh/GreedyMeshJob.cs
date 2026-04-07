@@ -373,7 +373,7 @@ public struct GreedyMeshJob : IJob
     private void CreateDoubleSidedQuad(MeshData meshData, ref int vertexCount, FMask mask, int3 axisMask,
         int width, int height, int3 v1, int3 v2, int3 v3, int3 v4)
     {
-        float4 color = new float4(mask.Block, 0, 0, 1);
+        float4 color = new float4(mask.Block, blockDb[mask.Block].alphaMaskIndex, 0, 1);
         float3 s = new float3(blockSize);
 
         // FRONT FACE
@@ -459,7 +459,7 @@ public struct GreedyMeshJob : IJob
         int width, int height, int3 v1, int3 v2, int3 v3, int3 v4)
     {
         int3 normal = axisMask * mask.Normal;
-        float4 color = new float4(mask.Block, 0, 0, 1);
+        float4 color = new float4(mask.Block, blockDb[mask.Block].alphaMaskIndex, 0, 1);
         float3 s = new float3(blockSize);
 
         meshData.vertices.Add(v1 * s);

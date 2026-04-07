@@ -20,7 +20,7 @@ public enum BlockType : byte
     Grass_low,
 
     Log,
-    Leaves,
+    PineLeaves,
 
     Sand,
     PearlSand,
@@ -30,6 +30,11 @@ public enum BlockType : byte
     Fungus_mycelium,
 
     Water,
+    RedSandStone,
+    SandStone,
+
+    RedLeaves,
+    WillowLeaves
 
 }
 

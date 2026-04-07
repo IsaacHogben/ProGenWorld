@@ -16,6 +16,7 @@ public class BlockDatabase : ScriptableObject
         public bool isSolid;
         public bool hasCollision;
         public BlockVisibility visibility;
+        public byte alphaMaskIndex;
 
         // Default constructor for new entries
         public BlockEntry(BlockType t)
@@ -26,6 +27,7 @@ public class BlockDatabase : ScriptableObject
             isSolid = true;
             hasCollision = true;
             visibility = BlockVisibility.Opaque;
+            alphaMaskIndex = 0;
         }
     }
     public struct BlockInfoUnmanaged
@@ -34,6 +36,7 @@ public class BlockDatabase : ScriptableObject
         public bool isSolid;
         public bool hasCollision;
         public BlockVisibility visibility;
+        public byte alphaMaskIndex;
     }
 
     [Header("All Block Types")]
@@ -62,7 +65,8 @@ public class BlockDatabase : ScriptableObject
                 id = (byte)i,
                 isSolid = blocks[i].isSolid,
                 hasCollision = blocks[i].hasCollision,
-                visibility = blocks[i].visibility
+                visibility = blocks[i].visibility,
+                alphaMaskIndex = blocks[i].alphaMaskIndex
             };
         }
         return arr;

@@ -22,9 +22,9 @@ public struct BiomeJob : IJobParallelFor
     public int temperatureDivisions;
     public byte defaultBiome;
     [ReadOnly] public NativeArray<ClimateGridCell> climateGrid;
-    [ReadOnly] public NativeArray<byte> climateCellBiomes; // All biomes from all cells, flattened
-    [ReadOnly] public NativeArray<float> biomeRarityWeights; // Indexed by BiomeType
-    [ReadOnly] public NativeArray<int> biomePriority; // Indexed by BiomeType, value = array position (lower = higher priority)
+    [ReadOnly] public NativeArray<byte> climateCellBiomes;
+    [ReadOnly] public NativeArray<float> biomeRarityWeights;
+    [ReadOnly] public NativeArray<int> biomePriority;
 
     // Pre-computed noise grids (using FastNoise)
     [ReadOnly] public NativeArray<float> terrainNoiseGrid;
@@ -39,12 +39,10 @@ public struct BiomeJob : IJobParallelFor
 
     public void Execute(int index)
     {
-        // Read pre-computed noise values
         float noiseValue = terrainNoiseGrid[index];
         float humidity = humidityNoiseGrid[index];
         float temperature = temperatureNoiseGrid[index];
 
-        // Select terrain types based on noise only (no climate)
         byte primaryTerrain = 0;
         byte secondaryTerrain = 0;
         byte terrainBlend = 0;
@@ -59,7 +57,6 @@ public struct BiomeJob : IJobParallelFor
             );
         }
 
-        // Select biomes using climate grid + terrain allowed list
         byte primaryBiome = 0;
         byte secondaryBiome = 0;
         byte biomeBlend = 0;
@@ -68,6 +65,8 @@ public struct BiomeJob : IJobParallelFor
         {
             SelectBiomesFromClimateGrid(
                 primaryTerrain,
+                secondaryTerrain,
+                terrainBlend,
                 humidity,
                 temperature,
                 index,
@@ -89,7 +88,7 @@ public struct BiomeJob : IJobParallelFor
     }
 
     // ========================================================================
-    // TERRAIN TYPE SELECTION - Original working version with even distribution
+    // TERRAIN TYPE SELECTION
     // ========================================================================
 
     void SelectTerrainTypes(
@@ -114,14 +113,10 @@ public struct BiomeJob : IJobParallelFor
             return;
         }
 
-        // Calculate total weight
         float totalWeight = 0f;
         for (int i = 0; i < terrainTypes.Length; i++)
-        {
             totalWeight += math.max(0.1f, terrainTypes[i].rarityWeight);
-        }
 
-        // Build weighted ranges and find closest + second closest
         float closestDist = 999f;
         float secondClosestDist = 999f;
         int closestIndex = 0;
@@ -135,12 +130,10 @@ public struct BiomeJob : IJobParallelFor
             float weight = math.max(0.1f, terrain.rarityWeight);
             float normalizedWeight = weight / totalWeight;
 
-            // This terrain's center point in [0,1] space
             float terrainCenter = cumulative + (normalizedWeight * 0.5f);
 
-            // Distance from noise to this terrain's center (with wrapping)
             float dist = math.abs(noiseValue - terrainCenter);
-            dist = math.min(dist, 1.0f - dist); // Wrap around
+            dist = math.min(dist, 1.0f - dist);
 
             if (dist < closestDist)
             {
@@ -161,7 +154,6 @@ public struct BiomeJob : IJobParallelFor
         primary = (byte)closestIndex;
         secondary = (byte)secondClosestIndex;
 
-        // Calculate blend
         float totalDist = closestDist + secondClosestDist;
         if (totalDist < 0.001f)
         {
@@ -178,11 +170,13 @@ public struct BiomeJob : IJobParallelFor
     }
 
     // ========================================================================
-    // BIOME SELECTION - Climate Grid + Terrain Filtering + Weighted Random
+    // BIOME SELECTION
     // ========================================================================
 
     void SelectBiomesFromClimateGrid(
-        byte terrainTypeID,
+        byte primaryTerrainID,
+        byte secondaryTerrainID,
+        byte terrainBlend,
         float humidity,
         float temperature,
         int randomIndex,
@@ -190,59 +184,120 @@ public struct BiomeJob : IJobParallelFor
         out byte secondary,
         out byte blend)
     {
-        // Get climate cell
         int humIndex = (int)(humidity * humidityDivisions);
         int tempIndex = (int)(temperature * temperatureDivisions);
         humIndex = math.clamp(humIndex, 0, humidityDivisions - 1);
         tempIndex = math.clamp(tempIndex, 0, temperatureDivisions - 1);
 
-        // Try current cell first
-        if (TrySelectFromCell(terrainTypeID, humIndex, tempIndex, randomIndex, out primary, out secondary, out blend))
+        // Convert local index to world-space coordinates for stable hashing
+        int localX = randomIndex % resolution;
+        int localZ = randomIndex / resolution;
+        int worldX = chunkCoord.x * chunkSize + localX;
+        int worldZ = chunkCoord.z * chunkSize + localZ;
+
+        // Look up biome for primary terrain type
+        byte primaryTerrainBiome = defaultBiome;
+        GetBiomeForTerrain(primaryTerrainID, humIndex, tempIndex, randomIndex, humidity, temperature, worldX, worldZ, out primaryTerrainBiome);
+
+        // Look up biome for secondary terrain type
+        byte secondaryTerrainBiome = defaultBiome;
+        if (secondaryTerrainID != primaryTerrainID && secondaryTerrainID < terrainTypes.Length)
+        {
+            GetBiomeForTerrain(secondaryTerrainID, humIndex, tempIndex, randomIndex, humidity, temperature, worldX, worldZ, out secondaryTerrainBiome);
+        }
+        else
+        {
+            secondaryTerrainBiome = primaryTerrainBiome;
+        }
+
+        // If both terrain types resolve to the same biome, no dithering needed
+        if (primaryTerrainBiome == secondaryTerrainBiome)
+        {
+            primary = primaryTerrainBiome;
+            secondary = secondaryTerrainBiome;
+            blend = 0;
+            return;
+        }
+
+        // Dither between the two biomes using terrainBlend as the chance
+        // terrainBlend is 0 = fully primary terrain, 255 = fully secondary terrain
+        // Remap blend into a sharper transition using biomeBlendWidth
+        // biomeBlendWidth < 1.0 = narrower dither zone, 1.0 = same as terrain blend
+        float rawBlend = terrainBlend / 255f;
+        float blendChance = math.saturate((rawBlend - (1f - biomeBlendWidth)) / biomeBlendWidth);
+
+        uint ditherHash = (uint)(worldX * 2747636419u ^ worldZ * 374761393u) + randomSeed ^ 0xDEADBEEF;
+        ditherHash ^= ditherHash >> 16;
+        ditherHash *= 0x45d9f3b;
+        ditherHash ^= ditherHash >> 15;
+        float ditherRoll = (ditherHash & 0x00FFFFFF) * (1f / 16777216f);
+
+        if (blendChance > ditherRoll)
+        {
+            // This point dithers to secondary terrain's biome
+            primary = secondaryTerrainBiome;
+            secondary = primaryTerrainBiome;
+        }
+        else
+        {
+            primary = primaryTerrainBiome;
+            secondary = secondaryTerrainBiome;
+        }
+
+        blend = 0;
+    }
+
+    void GetBiomeForTerrain(
+        byte terrainTypeID,
+        int humIndex,
+        int tempIndex,
+        int randomIndex,
+        float humidity,
+        float temperature,
+        int worldX,
+        int worldZ,
+        out byte biome)
+    {
+        byte secondary;
+        byte blend;
+
+        if (TrySelectFromCell(terrainTypeID, humIndex, tempIndex, randomIndex, worldX, worldZ, out biome, out secondary, out blend))
             return;
 
-        // No valid biomes in current cell - search neighbors in spiral pattern
         int maxSearchRadius = math.max(humidityDivisions, temperatureDivisions);
 
         for (int radius = 1; radius <= maxSearchRadius; radius++)
         {
-            // Check cells at this radius
             for (int dx = -radius; dx <= radius; dx++)
             {
                 for (int dy = -radius; dy <= radius; dy++)
                 {
-                    // Skip if not on the edge of this radius
                     if (math.abs(dx) != radius && math.abs(dy) != radius)
                         continue;
 
                     int checkHumIndex = humIndex + dx;
                     int checkTempIndex = tempIndex + dy;
 
-                    // Skip out of bounds
                     if (checkHumIndex < 0 || checkHumIndex >= humidityDivisions ||
                         checkTempIndex < 0 || checkTempIndex >= temperatureDivisions)
                         continue;
 
-                    if (TrySelectFromCell(terrainTypeID, checkHumIndex, checkTempIndex, randomIndex, out primary, out secondary, out blend))
+                    if (TrySelectFromCell(terrainTypeID, checkHumIndex, checkTempIndex, randomIndex, worldX, worldZ, out biome, out secondary, out blend))
                         return;
                 }
             }
         }
 
-        // Fallback: try to find ANY allowed biome from terrain (ignore climate)
+        // Fallback: use first allowed biome for terrain, ignoring climate
         TerrainTypeData terrain = terrainTypes[terrainTypeID];
         if (terrain.allowedBiomesCount > 0)
         {
-            // Just pick the first allowed biome
-            primary = terrainAllowedBiomes[terrain.allowedBiomesStartIndex];
-            secondary = primary;
-            blend = 0;
+            biome = terrainAllowedBiomes[terrain.allowedBiomesStartIndex];
             return;
         }
 
         // Ultimate fallback
-        primary = defaultBiome;
-        secondary = defaultBiome;
-        blend = 0;
+        biome = defaultBiome;
     }
 
     bool TrySelectFromCell(
@@ -250,6 +305,8 @@ public struct BiomeJob : IJobParallelFor
         int humIndex,
         int tempIndex,
         int randomIndex,
+        int worldX,
+        int worldZ,
         out byte primary,
         out byte secondary,
         out byte blend)
@@ -261,35 +318,28 @@ public struct BiomeJob : IJobParallelFor
         int cellIndex = tempIndex * humidityDivisions + humIndex;
         ClimateGridCell cell = climateGrid[cellIndex];
 
-        // Get terrain's allowed biomes
         TerrainTypeData terrain = terrainTypes[terrainTypeID];
 
-        // No biomes in this cell
         if (cell.biomeCount == 0)
             return false;
 
-        // Build list of valid biomes (in cell AND allowed by terrain)
+        // Build valid biome list (intersection of cell biomes and terrain allowed biomes)
         const int maxValid = 32;
         NativeArray<byte> validBiomes = new NativeArray<byte>(maxValid, Allocator.Temp);
         NativeArray<float> validWeights = new NativeArray<float>(maxValid, Allocator.Temp);
         int validCount = 0;
 
-        // First, gather terrain's allowed biomes into a temp array for faster lookup
         const int maxAllowed = 32;
         NativeArray<byte> terrainAllowed = new NativeArray<byte>(maxAllowed, Allocator.Temp);
         int terrainAllowedCount = math.min(terrain.allowedBiomesCount, maxAllowed);
 
         for (int i = 0; i < terrainAllowedCount; i++)
-        {
             terrainAllowed[i] = terrainAllowedBiomes[terrain.allowedBiomesStartIndex + i];
-        }
 
-        // Now check each biome in the climate cell
         for (int i = 0; i < cell.biomeCount && validCount < maxValid; i++)
         {
             byte biomeID = climateCellBiomes[cell.biomeStartIndex + i];
 
-            // Check if terrain allows this biome
             bool allowed = false;
             for (int j = 0; j < terrainAllowedCount; j++)
             {
@@ -303,22 +353,15 @@ public struct BiomeJob : IJobParallelFor
             if (allowed)
             {
                 validBiomes[validCount] = biomeID;
-                // Make sure biomeID is within bounds of rarityWeights array
-                if (biomeID < biomeRarityWeights.Length)
-                {
-                    validWeights[validCount] = biomeRarityWeights[biomeID];
-                }
-                else
-                {
-                    validWeights[validCount] = 1.0f; // Default weight
-                }
+                validWeights[validCount] = biomeID < biomeRarityWeights.Length
+                    ? biomeRarityWeights[biomeID]
+                    : 1.0f;
                 validCount++;
             }
         }
 
         terrainAllowed.Dispose();
 
-        // No valid biomes after filtering
         if (validCount == 0)
         {
             validBiomes.Dispose();
@@ -326,7 +369,6 @@ public struct BiomeJob : IJobParallelFor
             return false;
         }
 
-        // Only one valid biome
         if (validCount == 1)
         {
             primary = validBiomes[0];
@@ -337,19 +379,18 @@ public struct BiomeJob : IJobParallelFor
             return true;
         }
 
+        // World-stable hash for biome selection
+        uint selectionHash = (uint)(worldX * 1836311903u ^ worldZ * 2971215073u) + randomSeed;
+        selectionHash ^= selectionHash >> 16;
+        selectionHash *= 0x7feb352d;
+        selectionHash ^= selectionHash >> 15;
+        float random = (selectionHash & 0x00FFFFFF) * (1f / 16777216f);
+
         // Weighted random selection for primary
         float totalWeight = 0f;
         for (int i = 0; i < validCount; i++)
             totalWeight += validWeights[i];
 
-        // Generate pseudo-random value [0,1]
-        uint hash = (uint)randomIndex * 374761393u + randomSeed;
-        hash ^= hash >> 16;
-        hash *= 0x7feb352d;
-        hash ^= hash >> 15;
-        float random = (hash & 0x00FFFFFF) * (1f / 16777216f);
-
-        // Select primary biome
         float roll = random * totalWeight;
         float cumulative = 0f;
         int primaryIndex = 0;
@@ -366,16 +407,17 @@ public struct BiomeJob : IJobParallelFor
 
         primary = validBiomes[primaryIndex];
 
-        // Select secondary - use the biome with lowest priority value (earliest in BiomeDataManager array)
+        // Select secondary by lowest priority value (excluding primary)
         int lowestPriority = int.MaxValue;
         int secondaryIndex = primaryIndex;
 
         for (int i = 0; i < validCount; i++)
         {
+            if (i == primaryIndex) continue;
             byte biomeID = validBiomes[i];
             int priority = biomeID < biomePriority.Length ? biomePriority[biomeID] : int.MaxValue;
 
-            if (i != primaryIndex && priority < lowestPriority)
+            if (priority < lowestPriority)
             {
                 lowestPriority = priority;
                 secondaryIndex = i;
@@ -383,8 +425,6 @@ public struct BiomeJob : IJobParallelFor
         }
 
         secondary = validBiomes[secondaryIndex];
-
-        // No real blending - just use primary (blend = 0)
         blend = 0;
 
         validBiomes.Dispose();

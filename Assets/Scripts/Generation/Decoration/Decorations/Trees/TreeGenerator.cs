@@ -29,9 +29,12 @@ public static class TreeGenerator
                 break;
 
             case DecorationType.Tree.RedFancy:
+            case DecorationType.Tree.Willow:
+            case DecorationType.Tree.Tallow:
+            case DecorationType.Tree.Palm:
+            case DecorationType.Tree.SmallPalm:
                 LSystemTreeGenerator.Generate(treeType, x, y, z, ref rng, ref writer);
                 break;
-
 
         }
     }

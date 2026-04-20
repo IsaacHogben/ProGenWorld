@@ -6,13 +6,15 @@ using UnityEngine;
 // ============================================================================
 public enum BiomeType : byte
 {
+    Backrooms,
     PineForest,
-    stone,
-    YellowDesrt,
+    Badlands,
     Plains,
     Cavern,
     RedGrass,
-    Fungus
+    YellowArid,
+    Fungus,
+    City
 }
 
 // ============================================================================
@@ -132,7 +134,11 @@ public static class DecorationType
         SmallPine,
         MediumPine,
         LargePine,
-        RedFancy
+        RedFancy,
+        Willow,
+        Tallow,
+        Palm,
+        SmallPalm
     }
 
     public enum Vegetation : byte

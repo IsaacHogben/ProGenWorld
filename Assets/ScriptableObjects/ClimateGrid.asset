@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ClimateGridSO
   humidityDivisions: 3
   temperatureDivisions: 3
-  defaultBiome: 0
+  defaultBiome: 3
   cells:
   - biomes: 01
   - biomes: 01

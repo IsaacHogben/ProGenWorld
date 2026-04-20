@@ -16,7 +16,7 @@ MonoBehaviour:
   rarityWeight: 1
   humidityRange: {x: 0, y: 1}
   temperatureRange: {x: 0, y: 1}
-  surfaceBlock: 7
+  surfaceBlock: 2
   subsurfaceBlock: 1
   deepBlock: 2
   sedimentBlock: 2

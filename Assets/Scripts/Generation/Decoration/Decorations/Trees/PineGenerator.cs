@@ -51,14 +51,14 @@ public static class PineGenerator
 
         // Simple tip cluster
         int tipY = y + trunkHeight;
-        applyBlock(x + 1, tipY - 1, z, BlockType.Leaves);
-        applyBlock(x - 1, tipY - 1, z, BlockType.Leaves);
-        applyBlock(x, tipY - 1, z + 1, BlockType.Leaves);
-        applyBlock(x, tipY - 1, z - 1, BlockType.Leaves);
+        applyBlock(x + 1, tipY - 1, z, BlockType.PineLeaves);
+        applyBlock(x - 1, tipY - 1, z, BlockType.PineLeaves);
+        applyBlock(x, tipY - 1, z + 1, BlockType.PineLeaves);
+        applyBlock(x, tipY - 1, z - 1, BlockType.PineLeaves);
 
-        applyBlock(x, tipY, z, BlockType.Leaves);
-        applyBlock(x, tipY + 1, z, BlockType.Leaves);
-        applyBlock(x, tipY + 2, z, BlockType.Leaves);
+        applyBlock(x, tipY, z, BlockType.PineLeaves);
+        applyBlock(x, tipY + 1, z, BlockType.PineLeaves);
+        applyBlock(x, tipY + 2, z, BlockType.PineLeaves);
 
         // Simple branch layers - just 4 cardinal directions
         int numWhorls = trunkHeight / 2;
@@ -73,7 +73,7 @@ public static class PineGenerator
             int branchLength = 2 - whorl / 2;
             if (branchLength < 1) branchLength = 1;
 
-            // Place simple branches in cardinal directions with connected leaves
+            // Place simple branches in cardinal directions with connected PineLeaves
             for (int i = 1; i <= branchLength; i++)
             {
                 PlaceSimpleBranch(x + i, whorlY, z, applyBlock);
@@ -89,7 +89,7 @@ public static class PineGenerator
         ApplyBlockDelegate applyBlock)
     {
         // Place leaf at the end
-        applyBlock(bx, by, bz, BlockType.Leaves);
+        applyBlock(bx, by, bz, BlockType.PineLeaves);
     }
 
     // ========================================================================
@@ -113,7 +113,7 @@ public static class PineGenerator
             applyBlock(x + 1, y + i, z + 1, BlockType.Log);
         }
 
-        // Improved tip cluster - layer of leaves around trunk before the spire
+        // Improved tip cluster - layer of PineLeaves around trunk before the spire
         int tipY = y + trunkHeight;
         for (int dx = -1; dx <= 2; dx++)
         {
@@ -123,7 +123,7 @@ public static class PineGenerator
                     continue; // Skip corners
                 if (dx >= 0 && dx <= 1 && dz >= 0 && dz <= 1)
                     continue; // Skip trunk area
-                applyBlock(x + dx, tipY - 1, z + dz, BlockType.Leaves);
+                applyBlock(x + dx, tipY - 1, z + dz, BlockType.PineLeaves);
             }
         }
 
@@ -132,12 +132,12 @@ public static class PineGenerator
         {
             for (int tz = 0; tz < 2; tz++)
             {
-                applyBlock(x + tx, tipY, z + tz, BlockType.Leaves);
-                applyBlock(x + tx, tipY + 1, z + tz, BlockType.Leaves);
+                applyBlock(x + tx, tipY, z + tz, BlockType.PineLeaves);
+                applyBlock(x + tx, tipY + 1, z + tz, BlockType.PineLeaves);
             }
         }
-        applyBlock(x, tipY + 2, z, BlockType.Leaves);
-        applyBlock(x, tipY + 3, z, BlockType.Leaves);
+        applyBlock(x, tipY + 2, z, BlockType.PineLeaves);
+        applyBlock(x, tipY + 3, z, BlockType.PineLeaves);
 
         // Create branch whorls with spiral rotation
         int numWhorls = (int)(trunkHeight / 3);
@@ -217,15 +217,15 @@ public static class PineGenerator
 
             applyBlock(bx, by, bz, BlockType.Log);
 
-            // Leaves on the sides of branch (perpendicular to branch direction)
+            // PineLeaves on the sides of branch (perpendicular to branch direction)
             if (i >= steps - 2 || (i > 2 && rng.NextFloat() > 0.5f))
             {
                 // Calculate perpendicular directions
                 int perpDx = targetDz != 0 ? 1 : 0;
                 int perpDz = targetDx != 0 ? 1 : 0;
 
-                applyBlock(bx + perpDx, by, bz + perpDz, BlockType.Leaves);
-                applyBlock(bx - perpDx, by, bz - perpDz, BlockType.Leaves);
+                applyBlock(bx + perpDx, by, bz + perpDz, BlockType.PineLeaves);
+                applyBlock(bx - perpDx, by, bz - perpDz, BlockType.PineLeaves);
 
                 if (i == steps)
                 {
@@ -235,7 +235,7 @@ public static class PineGenerator
                         for (int dz = -1; dz <= 1; dz++)
                         {
                             if (dx == 0 && dz == 0) continue;
-                            applyBlock(bx + dx, by, bz + dz, BlockType.Leaves);
+                            applyBlock(bx + dx, by, bz + dz, BlockType.PineLeaves);
                         }
                     }
                 }
@@ -268,7 +268,7 @@ public static class PineGenerator
             }
         }
 
-        // Improved tip cluster - layer of leaves around trunk before the spire
+        // Improved tip cluster - layer of PineLeaves around trunk before the spire
         int tipY = y + trunkHeight;
         for (int dx = -1; dx <= 3; dx++)
         {
@@ -278,7 +278,7 @@ public static class PineGenerator
                     continue; // Skip corners
                 if (dx >= 0 && dx <= 2 && dz >= 0 && dz <= 2)
                     continue; // Skip trunk area
-                applyBlock(x + dx, tipY - 1, z + dz, BlockType.Leaves);
+                applyBlock(x + dx, tipY - 1, z + dz, BlockType.PineLeaves);
             }
         }
 
@@ -287,13 +287,13 @@ public static class PineGenerator
         {
             for (int tz = 0; tz < 3; tz++)
             {
-                applyBlock(x + tx, tipY, z + tz, BlockType.Leaves);
-                applyBlock(x + tx, tipY + 1, z + tz, BlockType.Leaves);
+                applyBlock(x + tx, tipY, z + tz, BlockType.PineLeaves);
+                applyBlock(x + tx, tipY + 1, z + tz, BlockType.PineLeaves);
             }
         }
-        applyBlock(x + 1, tipY + 2, z + 1, BlockType.Leaves);
-        applyBlock(x + 1, tipY + 3, z + 1, BlockType.Leaves);
-        applyBlock(x + 1, tipY + 4, z + 1, BlockType.Leaves);
+        applyBlock(x + 1, tipY + 2, z + 1, BlockType.PineLeaves);
+        applyBlock(x + 1, tipY + 3, z + 1, BlockType.PineLeaves);
+        applyBlock(x + 1, tipY + 4, z + 1, BlockType.PineLeaves);
 
         // Create branch whorls with spiral rotation
         int numWhorls = (int)(trunkHeight / 4);
@@ -374,15 +374,15 @@ public static class PineGenerator
                 applyBlock(bx, by + 1, bz, BlockType.Log);
             }
 
-            // Leaves on the SIDES of branch (perpendicular to branch direction)
+            // PineLeaves on the SIDES of branch (perpendicular to branch direction)
             if (i >= steps - 3 || (i > 3 && rng.NextFloat() > 0.4f))
             {
                 // Calculate perpendicular directions
                 int perpDx = targetDz != 0 ? 1 : 0;
                 int perpDz = targetDx != 0 ? 1 : 0;
 
-                applyBlock(bx + perpDx, by, bz + perpDz, BlockType.Leaves);
-                applyBlock(bx - perpDx, by, bz - perpDz, BlockType.Leaves);
+                applyBlock(bx + perpDx, by, bz + perpDz, BlockType.PineLeaves);
+                applyBlock(bx - perpDx, by, bz - perpDz, BlockType.PineLeaves);
 
                 if (i == steps)
                 {
@@ -391,10 +391,10 @@ public static class PineGenerator
                     {
                         for (int dz = -1; dz <= 1; dz++)
                         {
-                            applyBlock(bx + dx, by, bz + dz, BlockType.Leaves);
+                            applyBlock(bx + dx, by, bz + dz, BlockType.PineLeaves);
                             if (math.abs(dx) + math.abs(dz) <= 1)
                             {
-                                applyBlock(bx + dx, by + 1, bz + dz, BlockType.Leaves);
+                                applyBlock(bx + dx, by + 1, bz + dz, BlockType.PineLeaves);
                             }
                         }
                     }

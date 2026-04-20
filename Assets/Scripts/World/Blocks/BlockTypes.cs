@@ -34,7 +34,14 @@ public enum BlockType : byte
     SandStone,
 
     RedLeaves,
-    WillowLeaves
+    WillowLeaves,
+
+    City_Surface,
+    City_Structure,
+    City_Overgrowth,
+
+    Wallpaper,
+    Carpet
 
 }
 

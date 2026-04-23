@@ -27,10 +27,10 @@ MonoBehaviour:
     spawnChance: 16
     spawnOnBlocks: 0e07
   - treeType: 1
-    spawnChance: 6
+    spawnChance: 8
     spawnOnBlocks: 0e
   - treeType: 2
-    spawnChance: 1
+    spawnChance: 4
     spawnOnBlocks: 0e
   vegetation: []
   rocks: []

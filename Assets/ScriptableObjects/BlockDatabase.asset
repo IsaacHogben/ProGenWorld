@@ -92,7 +92,7 @@ MonoBehaviour:
     alphaMaskIndex: 0
   - type: 11
     name: PearlSand
-    texture: {fileID: 2800000, guid: a203c87306e8cfb49a5c13673f84a202, type: 3}
+    texture: {fileID: 2800000, guid: fbe598f58a881f9439a967518374038e, type: 3}
     isSolid: 1
     hasCollision: 1
     visibility: 0

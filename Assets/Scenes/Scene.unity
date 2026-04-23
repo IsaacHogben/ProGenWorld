@@ -992,10 +992,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 8565
+  seed: 3415222
   frequency: 1.2
   chunkSize: 64
-  viewDistance: 8
+  viewDistance: 11
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 9
   renderShape: 1
@@ -1977,13 +1977,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDataManager
   terrainTypes:
-  - {fileID: 11400000, guid: 9cca3e295a3ca7947ab73f5970013756, type: 2}
-  - {fileID: 11400000, guid: 3a26e87ca6b010043805eb5ae8f82244, type: 2}
-  - {fileID: 11400000, guid: 6559977a4d76d6e408e2c65eafa940a1, type: 2}
-  - {fileID: 11400000, guid: 237a808d19049e345bf546015817433f, type: 2}
+  - {fileID: 11400000, guid: ac30749d934c76b488557c1d909942de, type: 2}
   - {fileID: 11400000, guid: ef68c6e2c0b149a4ca19b6a9a8f24575, type: 2}
-  - {fileID: 11400000, guid: a024df3b0c9f85f4692a81593ec923a2, type: 2}
-  - {fileID: 11400000, guid: 11f75994683330e43a5048c9b809631b, type: 2}
   biomes:
   - {fileID: 11400000, guid: 865be94ec7d7e6443bd01c8b0f8ae986, type: 2}
   - {fileID: 11400000, guid: a8d26d0dab5f8a3438cfd5279cd4138b, type: 2}
@@ -2222,7 +2217,7 @@ MonoBehaviour:
   maxSunIntensity: 1
   minSunIntensity: 0
   controlAmbientLight: 1
-  dayAmbientIntensity: 0.85
+  dayAmbientIntensity: 0.7
   nightAmbientIntensity: -0.3
   dayAmbientColor: {r: 0.42866677, g: 0.49609125, b: 0.5377358, a: 1}
   nightAmbientColor: {r: 0.124288015, g: 0.124288015, b: 0.1792453, a: 1}

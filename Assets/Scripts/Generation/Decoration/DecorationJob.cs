@@ -24,6 +24,7 @@ public struct DecorationJob : IJob
     [ReadOnly] public int biomeResolution;
     [ReadOnly] public NativeArray<BiomeDefinition> biomes;
     [ReadOnly] public NativeArray<DecorationData> decorations;
+    [ReadOnly] public NativeArray<LSystemTreeData> lsystemTrees;
     [ReadOnly] public NativeArray<byte> spawnBlocks;
 
     public void Execute()
@@ -132,7 +133,32 @@ public struct DecorationJob : IJob
             case DecorationCategory.Alien:
                 PlaceAlien((DecorationType.Alien)decoration.typeID, x, y, z);
                 break;
+
+            case DecorationCategory.LSystemTree:
+                PlaceLSystemTree(decoration.typeID, x, y, z);
+                break;
         }
+    }
+
+    // ========================================================================
+    // LSYSTEM PLACEMENT
+    // ========================================================================
+    private void PlaceLSystemTree(byte treeIndex, int x, int y, int z)
+    {
+        if (treeIndex >= lsystemTrees.Length)
+            return;
+
+        var writer = new BlockWriter
+        {
+            chunkCoord = chunkCoord,
+            chunkSize = chunkSize,
+            indexSize = indexSize,
+            blockIds = blockIds,
+            pendingWrites = pendingWrites
+        };
+
+        LSystemTreeData tree = lsystemTrees[treeIndex];
+        LSystemInterpreter.Interpret(in tree, x, y, z, ref rng, writer.ApplyBlock);
     }
 
     // ========================================================================

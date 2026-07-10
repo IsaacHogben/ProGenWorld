@@ -17,11 +17,11 @@ MonoBehaviour:
   defaultBiome: 3
   cells:
   - biomes: 01
-  - biomes: 01
+  - biomes: 07
   - biomes: 01
   - biomes: 03
-  - biomes: 00
+  - biomes: 04
   - biomes: 00
   - biomes: 02
-  - biomes: 01
-  - biomes: 03
+  - biomes: 05
+  - biomes: 06

@@ -10,19 +10,22 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: ffb976060e97e294396dcbe054503ff5, type: 3}
-  m_Name: Cavern
+  m_Name: Nightland
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDefinitionSO
   biomeType: 4
   rarityWeight: 1
   humidityRange: {x: 0, y: 1}
   temperatureRange: {x: 0, y: 1}
   surfaceBlock: 2
-  subsurfaceBlock: 1
-  deepBlock: 2
+  subsurfaceBlock: 19
+  deepBlock: 19
   sedimentBlock: 2
   gradientThreshold1: 0.005
   gradientThreshold2: 0.002
-  trees: []
+  trees:
+  - treeType: 8
+    spawnChance: 0.4
+    spawnOnBlocks: 02
   vegetation: []
   rocks: []
   aliens: []

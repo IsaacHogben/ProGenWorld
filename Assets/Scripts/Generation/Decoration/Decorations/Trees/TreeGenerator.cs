@@ -33,6 +33,7 @@ public static class TreeGenerator
             case DecorationType.Tree.Tallow:
             case DecorationType.Tree.Palm:
             case DecorationType.Tree.SmallPalm:
+            case DecorationType.Tree.NightBlossom:
                 LSystemTreeGenerator.Generate(treeType, x, y, z, ref rng, ref writer);
                 break;
 

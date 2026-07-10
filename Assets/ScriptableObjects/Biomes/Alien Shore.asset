@@ -22,6 +22,7 @@ MonoBehaviour:
   sedimentBlock: 9
   gradientThreshold1: 0.005
   gradientThreshold2: 0.002
+  LSystemDecorations: []
   trees: []
   vegetation: []
   rocks: []

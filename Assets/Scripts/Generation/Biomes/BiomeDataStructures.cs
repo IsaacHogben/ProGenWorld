@@ -10,7 +10,7 @@ public enum BiomeType : byte
     PineForest,
     Badlands,
     Plains,
-    Cavern,
+    Nightland,
     RedGrass,
     YellowArid,
     Fungus,
@@ -111,7 +111,8 @@ public enum DecorationCategory : byte
     Tree = 0,
     Vegetation = 1,
     Rock = 2,
-    Alien = 3
+    Alien = 3,
+    LSystemTree = 4
 }
 
 public struct DecorationData
@@ -138,7 +139,8 @@ public static class DecorationType
         Willow,
         Tallow,
         Palm,
-        SmallPalm
+        SmallPalm,
+        NightBlossom
     }
 
     public enum Vegetation : byte
@@ -190,6 +192,18 @@ public struct BiomeHint
 // SCRIPTABLE OBJECT HELPER CLASSES
 // ============================================================================
 
+[System.Serializable]
+public class LSystemDecoration
+{
+    public LSystemScriptableObject LSystemData;
+
+    [Tooltip("Spawn chance per ten thousand blocks (4.5 = 0.45%)")]
+    [Range(0f, 10000f)]
+    public float spawnChance = 5f;
+
+    [Tooltip("Blocks this tree can spawn on")]
+    public BlockType[] spawnOnBlocks = new BlockType[] { BlockType.Grass, BlockType.Dirt };
+}
 [System.Serializable]
 public class TreeDecoration
 {

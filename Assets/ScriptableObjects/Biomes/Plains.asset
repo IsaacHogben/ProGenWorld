@@ -22,10 +22,11 @@ MonoBehaviour:
   sedimentBlock: 9
   gradientThreshold1: 0.005
   gradientThreshold2: 0.002
-  trees:
-  - treeType: 0
-    spawnChance: 8
-    spawnOnBlocks: 05
+  LSystemDecorations:
+  - LSystemData: {fileID: 11400000, guid: 949de836d8f88fe4783401321066e1c6, type: 2}
+    spawnChance: 1
+    spawnOnBlocks: 0b
+  trees: []
   vegetation: []
   rocks: []
   aliens: []

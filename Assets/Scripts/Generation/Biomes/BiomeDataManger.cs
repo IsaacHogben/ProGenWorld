@@ -33,6 +33,7 @@ public class BiomeDataManager : MonoBehaviour
     private NativeArray<BiomeData> biomeData;
     private NativeArray<int> biomePriority;
     private NativeArray<DecorationData> decorationData;
+    private NativeArray<LSystemTreeData> lsystemTreeData;
     private NativeArray<byte> decorationSpawnBlocks;
     private NativeArray<byte> terrainAllowedBiomes;
 
@@ -70,7 +71,11 @@ public class BiomeDataManager : MonoBehaviour
         ValidateBiomeReferences();
 
         ConvertTerrainTypes();
-        ConvertBiomes();
+
+        var indexLookup = new Dictionary<LSystemScriptableObject, int>();
+        BakeLSystemTrees(out indexLookup);
+
+        ConvertBiomes(indexLookup);
         ConvertClimateGrid();
         isInitialized = true;
         Debug.Log($"<color=green>BiomeDataManager initialized!</color> {terrainTypes.Length} terrain types, {biomes.Length} biomes");
@@ -165,7 +170,7 @@ public class BiomeDataManager : MonoBehaviour
         }
     }
 
-    private void ConvertBiomes()
+    private void ConvertBiomes(Dictionary<LSystemScriptableObject, int> indexLookup)
     {
         // Find max biome enum value to size arrays correctly
         int maxBiomeID = 0;
@@ -184,6 +189,7 @@ public class BiomeDataManager : MonoBehaviour
             totalDecorations += biome.vegetation.Length;
             totalDecorations += biome.rocks.Length;
             totalDecorations += biome.aliens.Length;
+            totalDecorations += biome.LSystemDecorations.Length;
 
             foreach (var tree in biome.trees)
                 totalSpawnBlocks += tree.spawnOnBlocks.Length;
@@ -193,6 +199,8 @@ public class BiomeDataManager : MonoBehaviour
                 totalSpawnBlocks += rock.spawnOnBlocks.Length;
             foreach (var alien in biome.aliens)
                 totalSpawnBlocks += alien.spawnOnBlocks.Length;
+            foreach (var lSystem in biome.LSystemDecorations)
+                totalSpawnBlocks += lSystem.spawnOnBlocks.Length;
         }
 
         // Allocate arrays sized by max enum value (not biomes.Length!)
@@ -319,6 +327,26 @@ public class BiomeDataManager : MonoBehaviour
                     spawnChance = alien.spawnChance / 10000f,
                     spawnBlockStartIndex = spawnBlockStart,
                     spawnBlockCount = alien.spawnOnBlocks.Length
+                };
+            }
+
+            foreach (var lsysDeco in biome.LSystemDecorations)
+            {
+                int spawnBlockStart = spawnBlockIndex;
+                foreach (var block in lsysDeco.spawnOnBlocks)
+                    decorationSpawnBlocks[spawnBlockIndex++] = (byte)block;
+
+                int treeIndex = lsysDeco.LSystemData != null && indexLookup.TryGetValue(lsysDeco.LSystemData, out var idx)
+                    ? idx
+                    : 0; // fallback — consider logging a warning here if LSystemData is unassigned
+
+                decorationData[decorationIndex++] = new DecorationData
+                {
+                    category = (byte)DecorationCategory.LSystemTree,
+                    typeID = (byte)treeIndex,
+                    spawnChance = lsysDeco.spawnChance / 10000f,
+                    spawnBlockStartIndex = spawnBlockStart,
+                    spawnBlockCount = lsysDeco.spawnOnBlocks.Length
                 };
             }
 
@@ -467,6 +495,25 @@ public class BiomeDataManager : MonoBehaviour
             }
         }
     }
+    private void BakeLSystemTrees(out Dictionary<LSystemScriptableObject, int> indexLookup)
+    {
+        indexLookup = new Dictionary<LSystemScriptableObject, int>();
+
+        foreach (var biome in biomes)
+        {
+            if (biome?.LSystemDecorations == null) continue;
+            foreach (var deco in biome.LSystemDecorations)
+            {
+                if (deco.LSystemData != null && !indexLookup.ContainsKey(deco.LSystemData))
+                    indexLookup[deco.LSystemData] = indexLookup.Count;
+            }
+        }
+
+        lsystemTreeData = new NativeArray<LSystemTreeData>(indexLookup.Count, Allocator.Persistent);
+        foreach (var kv in indexLookup)
+            lsystemTreeData[kv.Value] = kv.Key.ToTreeData();
+    }
+
     public bool IsInitialized => isInitialized;
     public NativeArray<TerrainTypeData> GetTerrainTypeData() => terrainTypeData;
     public NativeArray<byte> GetTerrainAllowedBiomes() => terrainAllowedBiomes;
@@ -475,6 +522,7 @@ public class BiomeDataManager : MonoBehaviour
     public NativeArray<BiomeDefinition> GetBiomeDefinitions() => biomeDefinitions;
     public NativeArray<DecorationData> GetDecorationData() => decorationData;
     public NativeArray<byte> GetDecorationSpawnBlocks() => decorationSpawnBlocks;
+    public NativeArray<LSystemTreeData> GetLSystemTreeData() => lsystemTreeData;
     public int GetWaterLevel() => waterLevel;
     public NativeArray<ClimateGridCell> GetClimateGridCells() => climateGridCells;
     public NativeArray<byte> GetClimateCellBiomes() => climateCellBiomes;
@@ -558,6 +606,7 @@ public class BiomeDataManager : MonoBehaviour
             if (climateCellBiomes.IsCreated) climateCellBiomes.Dispose();
             if (biomeRarityWeights.IsCreated) biomeRarityWeights.Dispose();
             if (biomePriority.IsCreated) biomePriority.Dispose();
+            if (lsystemTreeData.IsCreated) lsystemTreeData.Dispose();
         }
     }
 }

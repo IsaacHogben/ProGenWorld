@@ -26,6 +26,7 @@ using UnityEngine;
 //   !   multiply current step length by StepLengthScalar
 //   T   place foliage at current position (explicit)
 //   ~   apply a small pitch (CurvatureAngle) each step — use repeated in rules to curve branches
+//   !   manually apply branch depth step
 //
 // WORKFLOW
 // --------
@@ -64,6 +65,7 @@ public struct TurtleState
     public quaternion Rotation;
     public float StepLength;
     public int BranchDepth;
+    public float ManualDepth; // accumulated by !, used to manually increase Branch depth
 }
 
 // ----------------------------------------------------------------------------
@@ -274,6 +276,7 @@ public static class TreeRulesets
             case DecorationType.Tree.Tallow: return Tallow();
             case DecorationType.Tree.Palm: return Palm();
             case DecorationType.Tree.SmallPalm: return SmallPalm();
+            case DecorationType.Tree.NightBlossom: return NightBlossom();
 
             default:
                 Debug.LogWarning($"[LSystemTreeGenerator] No ruleset for {treeType}.");
@@ -442,6 +445,29 @@ public static class TreeRulesets
         FoliageBlock = BlockType.PineLeaves,
         FoliageSize = 2
     };
+    private static LSystemTreeData NightBlossom() => new LSystemTreeData
+    {
+        Axiom = new FixedString64Bytes("FA"),
+        Rule0 = new LSystemRule { Symbol = (byte)'A', Replacement = new FixedString64Bytes("+[&FA]F+[&FA]+[&FA]!FA") },
+        //Rule1 = new LSystemRule { Symbol = (byte)'B', Replacement = new FixedString64Bytes("~F[+&~F][-&~F]") },
+        RuleCount = 1,
+        Iterations = 4,
+
+        StepLength = 10f,
+        PitchAngle = 45f,   // outward pitch on bough split
+        YawAngle = 120f,  // 3-fold symmetry
+        RollAngle = -35f,
+        StepLengthScalar = .91f,
+        GravityFactor = 0f, // stronger droop so boughs arc downward at tips
+        AngleVariance = 10f,   // high — irregular twisted character
+        CurvatureAngle = 5f,   // per-~ bend; accumulates across iterations for arc
+        StepLengthVariance = 0f,
+        TrunkWidthAtBase = 7,
+        Foliage = FoliageStyle.PalmCrown,
+        BodyBlock = BlockType.Log,
+        FoliageBlock = BlockType.PineLeaves,
+        FoliageSize = 4
+    };
 }
 
 // ----------------------------------------------------------------------------
@@ -451,7 +477,6 @@ public static class TreeRulesets
 public static class LSystemInterpreter
 {
     private const int MaxStackDepth = 128;
-    private const int MaxStringBytes = 509;  // FixedString512Bytes actual capacity (UTF8 header uses 3 bytes)
 
     [BurstCompile]
     public static void Interpret(
@@ -460,11 +485,11 @@ public static class LSystemInterpreter
         ref Unity.Mathematics.Random rng,
         ApplyBlockDelegate applyBlock)
     {
-        // Expand axiom ? final L-string
-        FixedString512Bytes lString = default;
-        Expand(in tree, ref lString);
+        // Dry-run pass: find max [ ] nesting depth for width/foliage tapering,
+        // without drawing anything or building any string.
+        int curDepth = 0, maxDepth = 0;
+        CountDepth(in tree, tree.Axiom, 0, ref curDepth, ref maxDepth);
 
-        // Turtle stack
         var stack = new NativeArray<TurtleState>(MaxStackDepth, Allocator.Temp,
                            NativeArrayOptions.UninitializedMemory);
         int stackTop = -1;
@@ -475,125 +500,168 @@ public static class LSystemInterpreter
             Rotation = quaternion.RotateY(rng.NextFloat() * math.PI * 2f),
             StepLength = tree.StepLength + rng.NextFloat() * tree.StepLengthVariance,
             BranchDepth = 0,
+            ManualDepth = 0f,
         };
 
-        float pitchRad = math.radians(tree.PitchAngle);
-        float yawRad = math.radians(tree.YawAngle);
-        float rollRad = math.radians(tree.RollAngle);
-        float varRad = math.radians(tree.AngleVariance);
-        float curveRad = math.radians(tree.CurvatureAngle);
-        int maxDepth = CountMaxDepth(in lString);
-
-        for (int i = 0; i < lString.Length; i++)
+        var ctx = new WalkContext
         {
-            char sym = (char)lString[i];
-            switch (sym)
-            {
-                case 'F':
-                    {
-                        float3 dir = math.mul(state.Rotation, new float3(0f, 1f, 0f));
-                        if (tree.GravityFactor > 0f)
-                            dir = math.normalize(dir - new float3(0f, tree.GravityFactor, 0f));
-                        float3 end = state.Position + dir * state.StepLength;
-                        DrawLogSegment(state.Position, end,
-                            tree.TrunkWidthAtBase, state.BranchDepth, maxDepth,
-                            tree.BodyBlock, applyBlock);
-                        state.Position = end;
-                        break;
-                    }
+            PitchRad = math.radians(tree.PitchAngle),
+            YawRad = math.radians(tree.YawAngle),
+            RollRad = math.radians(tree.RollAngle),
+            VarRad = math.radians(tree.AngleVariance),
+            CurveRad = math.radians(tree.CurvatureAngle),
+            MaxDepth = maxDepth,
+        };
 
-                case 'f':
-                    {
-                        float3 dir = math.mul(state.Rotation, new float3(0f, 1f, 0f));
-                        state.Position += dir * state.StepLength;
-                        break;
-                    }
-
-                case '+': state.Rotation = math.mul(state.Rotation, quaternion.RotateY(yawRad + Variance(ref rng, varRad))); break;
-                case '-': state.Rotation = math.mul(state.Rotation, quaternion.RotateY(-yawRad + Variance(ref rng, varRad))); break;
-                // Unity Y-up: pitch tilts the branch into XZ (horizontal spread) ? RotateZ
-                case '&': state.Rotation = math.mul(state.Rotation, quaternion.RotateZ(pitchRad + Variance(ref rng, varRad))); break;
-                case '^': state.Rotation = math.mul(state.Rotation, quaternion.RotateZ(-pitchRad + Variance(ref rng, varRad))); break;
-                // Roll twists around the branch's own axis ? RotateX
-                case '\\': state.Rotation = math.mul(state.Rotation, quaternion.RotateX(rollRad + Variance(ref rng, varRad))); break;
-                case '/': state.Rotation = math.mul(state.Rotation, quaternion.RotateX(-rollRad + Variance(ref rng, varRad))); break;
-                case '|': state.Rotation = math.mul(state.Rotation, quaternion.RotateY(math.PI)); break;
-                // Gentle incremental bend — repeat in rules to curve a branch over multiple steps
-                case '~': state.Rotation = math.mul(state.Rotation, quaternion.RotateZ(curveRad + Variance(ref rng, varRad * 0.5f))); break;
-
-                case '[':
-                    if (stackTop < MaxStackDepth - 1)
-                    {
-                        stack[++stackTop] = state;
-                        state.BranchDepth++;
-                    }
-                    break;
-
-                case ']':
-                    PlaceFoliageAt(tree.Foliage, tree.FoliageBlock, tree.FoliageSize, state.Position, state.BranchDepth, maxDepth, ref rng, applyBlock);
-                    if (stackTop >= 0)
-                        state = stack[stackTop--];
-                    break;
-
-                case '!':
-                    state.StepLength *= tree.StepLengthScalar;
-                    break;
-
-                case 'T':
-                    PlaceFoliageAt(tree.Foliage, tree.FoliageBlock, tree.FoliageSize, state.Position, state.BranchDepth, maxDepth, ref rng, applyBlock);
-                    break;
-            }
-        }
+        WalkString(in tree, tree.Axiom, 0, ref state, ref stack, ref stackTop, in ctx, ref rng, applyBlock);
 
         stack.Dispose();
     }
 
-    // Expands tree.Axiom according to tree.Rule0..N for tree.Iterations passes.
-    private static void Expand(in LSystemTreeData tree, ref FixedString512Bytes result)
+    private struct WalkContext
     {
-        result = new FixedString512Bytes();
-        result.Append(tree.Axiom);
+        public float PitchRad, YawRad, RollRad, VarRad, CurveRad;
+        public int MaxDepth;
+    }
 
-        var buffer = new FixedString512Bytes();
-
-        for (int iter = 0; iter < tree.Iterations; iter++)
+    // Returns true (and the replacement) if `sym` has a matching rule AND we're
+    // still within the iteration budget at this recursion depth. False means
+    // treat `sym` as terminal — execute it directly rather than expanding it.
+    private static bool ExpandSymbol(in LSystemTreeData tree, byte sym, int iterDepth, out FixedString64Bytes replacement)
+    {
+        if (iterDepth < tree.Iterations)
         {
-            buffer = new FixedString512Bytes();
+            if (tree.RuleCount > 0 && tree.Rule0.Symbol == sym) { replacement = tree.Rule0.Replacement; return true; }
+            if (tree.RuleCount > 1 && tree.Rule1.Symbol == sym) { replacement = tree.Rule1.Replacement; return true; }
+        }
+        replacement = default;
+        return false;
+    }
 
-            for (int i = 0; i < result.Length; i++)
+    // Dry-run: recurses through the grammar exactly like WalkString does,
+    // but only tracks [ / ] nesting depth — no turtle or block placement.
+    private static void CountDepth<T>(in LSystemTreeData tree, in T symbols, int iterDepth, ref int curDepth, ref int maxDepth)
+        where T : struct, INativeList<byte>, IUTF8Bytes
+    {
+        for (int i = 0; i < symbols.Length; i++)
+        {
+            byte sym = symbols[i];
+            if (ExpandSymbol(in tree, sym, iterDepth, out var replacement))
             {
-                byte sym = result[i];
-                bool matched = false;
-
-                // Check each active rule — guard capacity BEFORE appending
-                if (tree.RuleCount > 0 && tree.Rule0.Symbol == sym)
-                {
-                    if (buffer.Length + tree.Rule0.Replacement.Length > MaxStringBytes) break;
-                    buffer.Append(tree.Rule0.Replacement);
-                    matched = true;
-                }
-                // Add more rules here as needed:
-                else if (tree.RuleCount > 1 && tree.Rule1.Symbol == sym)
-                {
-                    if (buffer.Length + tree.Rule1.Replacement.Length > MaxStringBytes) break;
-                    buffer.Append(tree.Rule1.Replacement);
-                    matched = true;
-                }
-
-                if (!matched)
-                {
-                    if (buffer.Length >= MaxStringBytes) break;
-                    buffer.Add(sym);
-                }
+                CountDepth(in tree, replacement, iterDepth + 1, ref curDepth, ref maxDepth);
             }
-
-            result = buffer;
+            else if (sym == (byte)'[')
+            {
+                curDepth++;
+                if (curDepth > maxDepth) maxDepth = curDepth;
+            }
+            else if (sym == (byte)']')
+            {
+                curDepth--;
+            }
         }
     }
 
-    // Helpers
+    // Walks the grammar recursively, substituting rule symbols with their
+    // replacements up to tree.Iterations deep, and executing terminal symbols
+    // as turtle commands — functionally identical to expanding the full string
+    // first, but with recursion depth bounded by Iterations instead of an
+    // exponentially-growing buffer.
+    private static void WalkString<T>(
+        in LSystemTreeData tree, in T symbols, int iterDepth,
+        ref TurtleState state, ref NativeArray<TurtleState> stack, ref int stackTop,
+        in WalkContext ctx, ref Unity.Mathematics.Random rng, ApplyBlockDelegate applyBlock)
+        where T : struct, INativeList<byte>, IUTF8Bytes
+    {
+        for (int i = 0; i < symbols.Length; i++)
+        {
+            byte sym = symbols[i];
+            if (ExpandSymbol(in tree, sym, iterDepth, out var replacement))
+            {
+                WalkString(in tree, replacement, iterDepth + 1, ref state, ref stack, ref stackTop, in ctx, ref rng, applyBlock);
+            }
+            else
+            {
+                ExecuteSymbol(in tree, (char)sym, ref state, ref stack, ref stackTop, in ctx, ref rng, applyBlock);
+            }
+        }
+    }
 
-    private static void PlaceFoliageAt(
+    private static void ExecuteSymbol(
+        in LSystemTreeData tree, char sym,
+        ref TurtleState state, ref NativeArray<TurtleState> stack, ref int stackTop,
+        in WalkContext ctx, ref Unity.Mathematics.Random rng, ApplyBlockDelegate applyBlock)
+    {
+        switch (sym)
+        {
+            case 'F':
+                {
+                    int effectiveDepth = state.BranchDepth + (int)state.ManualDepth;
+
+                    // Length: compounds by StepLengthScalar per depth unit.
+                    float lengthFactor = math.pow(tree.StepLengthScalar, effectiveDepth);
+
+                    // Width: linear taper from TrunkWidthAtBase down to 1 across [0, maxDepth],
+                    // independent of StepLengthScalar.
+                    float widthRatio = ctx.MaxDepth > 0 ? math.saturate((float)effectiveDepth / ctx.MaxDepth) : 0f;
+
+                    float3 dir = math.mul(state.Rotation, new float3(0f, 1f, 0f));
+                    if (tree.GravityFactor > 0f)
+                        dir = math.normalize(dir - new float3(0f, tree.GravityFactor, 0f));
+
+                    float taperedLength = state.StepLength * lengthFactor;
+                    float3 end = state.Position + dir * taperedLength;
+
+                    DrawLogSegment(state.Position, end, tree.TrunkWidthAtBase, widthRatio, tree.BodyBlock, applyBlock);
+                    state.Position = end;
+                    break;
+                }
+
+            case 'f':
+                {
+                    float3 dir = math.mul(state.Rotation, new float3(0f, 1f, 0f));
+                    state.Position += dir * state.StepLength;
+                    break;
+                }
+
+            case '+': state.Rotation = math.mul(state.Rotation, quaternion.RotateY(ctx.YawRad + Variance(ref rng, ctx.VarRad))); break;
+            case '-': state.Rotation = math.mul(state.Rotation, quaternion.RotateY(-ctx.YawRad + Variance(ref rng, ctx.VarRad))); break;
+            case '&': state.Rotation = math.mul(state.Rotation, quaternion.RotateZ(ctx.PitchRad + Variance(ref rng, ctx.VarRad))); break;
+            case '^': state.Rotation = math.mul(state.Rotation, quaternion.RotateZ(-ctx.PitchRad + Variance(ref rng, ctx.VarRad))); break;
+            case '\\': state.Rotation = math.mul(state.Rotation, quaternion.RotateX(ctx.RollRad + Variance(ref rng, ctx.VarRad))); break;
+            case '/': state.Rotation = math.mul(state.Rotation, quaternion.RotateX(-ctx.RollRad + Variance(ref rng, ctx.VarRad))); break;
+            case '|': state.Rotation = math.mul(state.Rotation, quaternion.RotateY(math.PI)); break;
+            case '~': state.Rotation = math.mul(state.Rotation, quaternion.RotateZ(ctx.CurveRad + Variance(ref rng, ctx.VarRad * 0.5f))); break;
+
+            case '[':
+                if (stackTop < MaxStackDepth - 1)
+                {
+                    stack[++stackTop] = state;
+                    state.BranchDepth++;
+                }
+                break;
+
+            case ']':
+                PlaceFoliageAt(tree.Foliage, tree.FoliageBlock, tree.FoliageSize, state.Position, state.BranchDepth, ctx.MaxDepth, ref rng, applyBlock);
+                if (stackTop >= 0)
+                    state = stack[stackTop--];
+                break;
+
+            case '!':
+                state.ManualDepth += 1;
+                break;
+
+            case 'T':
+                PlaceFoliageAt(tree.Foliage, tree.FoliageBlock, tree.FoliageSize, state.Position, state.BranchDepth, ctx.MaxDepth, ref rng, applyBlock);
+                break;
+        }
+    }
+
+    private static float Variance(ref Unity.Mathematics.Random rng, float maxRad)
+        => maxRad <= 0f ? 0f : (rng.NextFloat() * 2f - 1f) * maxRad;
+
+// Helpers
+private static void PlaceFoliageAt(
         FoliageStyle style, BlockType foliageBlock, int size, float3 pos, int branchDepth, int maxDepth,
         ref Unity.Mathematics.Random rng, ApplyBlockDelegate applyBlock)
     {
@@ -601,38 +669,42 @@ public static class LSystemInterpreter
         FoliagePlacer.Place(style, foliageBlock, size, ip, branchDepth, maxDepth, ref rng, applyBlock);
     }
 
-    private static float Variance(ref Unity.Mathematics.Random rng, float maxRad)
-        => maxRad <= 0f ? 0f : (rng.NextFloat() * 2f - 1f) * maxRad;
-
-    private static int CountMaxDepth(in FixedString512Bytes s)
+    private static void CountDepth<T>(in LSystemTreeData tree, in T symbols, int iterDepth, ref float curDepth, ref float maxDepth)
+    where T : struct, INativeList<byte>, IUTF8Bytes
     {
-        int depth = 0, max = 0;
-        for (int i = 0; i < s.Length; i++)
+        for (int i = 0; i < symbols.Length; i++)
         {
-            char c = (char)s[i];
-            if (c == '[') { if (++depth > max) max = depth; }
-            else if (c == ']') depth--;
+            byte sym = symbols[i];
+            if (ExpandSymbol(in tree, sym, iterDepth, out var replacement))
+            {
+                CountDepth(in tree, replacement, iterDepth + 1, ref curDepth, ref maxDepth);
+            }
+            else if (sym == (byte)'[')
+            {
+                curDepth++;
+                if (curDepth > maxDepth) maxDepth = curDepth;
+            }
+            else if (sym == (byte)']')
+            {
+                curDepth--;
+            }
+            else if (sym == (byte)'!')
+            {
+                curDepth++;
+                if (curDepth > maxDepth) maxDepth = curDepth;
+            }
         }
-        return max;
     }
 
-    private static void DrawLogSegment(
-       float3 start, float3 end,
-       int baseTrunkWidth, int branchDepth, int maxDepth,
-       BlockType bodyBlock,
-       ApplyBlockDelegate applyBlock)
+    private static void DrawLogSegment(float3 start, float3 end, int baseTrunkWidth, float widthRatio, BlockType bodyBlock, ApplyBlockDelegate applyBlock)
     {
-        // For deeper trees, width reduces toward tips but never below 1.
-        float depthRatio = maxDepth > 0 ? (float)branchDepth / maxDepth : 0f;
-        int width = math.max(1, baseTrunkWidth - (int)math.round(depthRatio * (baseTrunkWidth - 1)));
+        int width = math.max(1, baseTrunkWidth - (int)math.round(widthRatio * (baseTrunkWidth - 1)));
 
         float3 dir = end - start;
         float len = math.length(dir);
         if (len < 0.001f) return;
-        float3 axis = dir / len;  // normalised branch direction
+            float3 axis = dir / len;
 
-        // Build two axes perpendicular to the branch direction.
-        // We pick an arbitrary up vector and cross to get the disc plane.
         float3 worldUp = math.abs(axis.y) < 0.99f ? new float3(0f, 1f, 0f) : new float3(1f, 0f, 0f);
         float3 right = math.normalize(math.cross(worldUp, axis));
         float3 up = math.cross(axis, right);

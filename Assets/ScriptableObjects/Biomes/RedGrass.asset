@@ -22,6 +22,10 @@ MonoBehaviour:
   sedimentBlock: 9
   gradientThreshold1: 0.012
   gradientThreshold2: 0.003
+  LSystemDecorations:
+  - LSystemData: {fileID: 11400000, guid: 949de836d8f88fe4783401321066e1c6, type: 2}
+    spawnChance: 0.77
+    spawnOnBlocks: 0d
   trees:
   - treeType: 3
     spawnChance: 3

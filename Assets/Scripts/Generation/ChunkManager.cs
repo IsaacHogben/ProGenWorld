@@ -1128,7 +1128,7 @@ public class ChunkManager : MonoBehaviour
 
         if (!fullResBlocksByChunk.TryGetValue(coord, out var blockIds) || !blockIds.IsCreated)
         {
-            Debug.LogError($"[Decoration] Completed for {coord} but no fullResBlocksByChunk exists.");
+            Debug.LogError($"[Decoration] Completed for {coord} but no fullResBlocksByChunk exists."); // This error never occurs
 
             for (int i = 0; i < writes.Length; i++)
                 writeSystem.EnqueueWrite(writes[i]);
@@ -1246,6 +1246,9 @@ public class ChunkManager : MonoBehaviour
 
     // temp buffer – allocated once at class scope
     private static readonly List<int3> tmpWriteCoords = new List<int3>(256);
+
+    // Process block writes from the write system
+    // This is where extant decoration changes get updated into their respective chunks
     void FlushAllPendingWrites()
     {
         // Early-out: nothing queued

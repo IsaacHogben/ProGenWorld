@@ -485,10 +485,13 @@ public static class LSystemInterpreter
         ref Unity.Mathematics.Random rng,
         ApplyBlockDelegate applyBlock)
     {
-        // Dry-run pass: find max [ ] nesting depth for width/foliage tapering,
+        // Dry-run pass: find max [ ] and ! nesting depth for width/foliage tapering,
         // without drawing anything or building any string.
-        int curDepth = 0, maxDepth = 0;
-        CountDepth(in tree, tree.Axiom, 0, ref curDepth, ref maxDepth);
+        float curDepth = 0f, maxDepth = 0f;
+        var depthStack = new NativeArray<float>(MaxStackDepth, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+        int depthStackTop = -1;
+        CountDepth(in tree, tree.Axiom, 0, ref curDepth, ref maxDepth, ref depthStack, ref depthStackTop);
+        depthStack.Dispose();
 
         var stack = new NativeArray<TurtleState>(MaxStackDepth, Allocator.Temp,
                            NativeArrayOptions.UninitializedMemory);
@@ -510,7 +513,7 @@ public static class LSystemInterpreter
             RollRad = math.radians(tree.RollAngle),
             VarRad = math.radians(tree.AngleVariance),
             CurveRad = math.radians(tree.CurvatureAngle),
-            MaxDepth = maxDepth,
+            MaxDepth = (int)maxDepth,
         };
 
         WalkString(in tree, tree.Axiom, 0, ref state, ref stack, ref stackTop, in ctx, ref rng, applyBlock);
@@ -536,30 +539,6 @@ public static class LSystemInterpreter
         }
         replacement = default;
         return false;
-    }
-
-    // Dry-run: recurses through the grammar exactly like WalkString does,
-    // but only tracks [ / ] nesting depth — no turtle or block placement.
-    private static void CountDepth<T>(in LSystemTreeData tree, in T symbols, int iterDepth, ref int curDepth, ref int maxDepth)
-        where T : struct, INativeList<byte>, IUTF8Bytes
-    {
-        for (int i = 0; i < symbols.Length; i++)
-        {
-            byte sym = symbols[i];
-            if (ExpandSymbol(in tree, sym, iterDepth, out var replacement))
-            {
-                CountDepth(in tree, replacement, iterDepth + 1, ref curDepth, ref maxDepth);
-            }
-            else if (sym == (byte)'[')
-            {
-                curDepth++;
-                if (curDepth > maxDepth) maxDepth = curDepth;
-            }
-            else if (sym == (byte)']')
-            {
-                curDepth--;
-            }
-        }
     }
 
     // Walks the grammar recursively, substituting rule symbols with their
@@ -669,7 +648,10 @@ private static void PlaceFoliageAt(
         FoliagePlacer.Place(style, foliageBlock, size, ip, branchDepth, maxDepth, ref rng, applyBlock);
     }
 
-    private static void CountDepth<T>(in LSystemTreeData tree, in T symbols, int iterDepth, ref float curDepth, ref float maxDepth)
+    private static void CountDepth<T>(
+    in LSystemTreeData tree, in T symbols, int iterDepth,
+    ref float curDepth, ref float maxDepth,
+    ref NativeArray<float> depthStack, ref int depthStackTop)
     where T : struct, INativeList<byte>, IUTF8Bytes
     {
         for (int i = 0; i < symbols.Length; i++)
@@ -677,20 +659,23 @@ private static void PlaceFoliageAt(
             byte sym = symbols[i];
             if (ExpandSymbol(in tree, sym, iterDepth, out var replacement))
             {
-                CountDepth(in tree, replacement, iterDepth + 1, ref curDepth, ref maxDepth);
+                CountDepth(in tree, replacement, iterDepth + 1, ref curDepth, ref maxDepth, ref depthStack, ref depthStackTop);
             }
             else if (sym == (byte)'[')
             {
-                curDepth++;
+                if (depthStackTop < depthStack.Length - 1)
+                    depthStack[++depthStackTop] = curDepth;   // snapshot — mirrors real state push
+                curDepth += 1f;
                 if (curDepth > maxDepth) maxDepth = curDepth;
             }
             else if (sym == (byte)']')
             {
-                curDepth--;
+                if (depthStackTop >= 0)
+                    curDepth = depthStack[depthStackTop--];    // full restore — mirrors real state pop
             }
             else if (sym == (byte)'!')
             {
-                curDepth++;
+                curDepth += 1f;
                 if (curDepth > maxDepth) maxDepth = curDepth;
             }
         }

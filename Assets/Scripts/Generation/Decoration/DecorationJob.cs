@@ -39,7 +39,7 @@ public struct DecorationJob : IJob
                     byte aboveBlock = blockIds[GetIndex(z, y + 1, x)];
 
                     bool surfaceLayer = aboveBlock == (byte)BlockType.Air;
-                    bool isAboveWaterLevel = GetWorldYValue(y) > waterLevel;
+                    bool isAboveWaterLevel = GetWorldYValue(y) >= waterLevel;
 
                     if (!surfaceLayer || !isAboveWaterLevel)
                         continue;

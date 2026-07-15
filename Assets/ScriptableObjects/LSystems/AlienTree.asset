@@ -10,28 +10,29 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: e352e1c65329ce548b2d68a9aab0651d, type: 3}
-  m_Name: Double Helix Palm
+  m_Name: AlienTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
-  Axiom: F[&!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA]!F[++++++&!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA]!!F!!F!!F!!F!!F!!F!!F!!F!!F!!FT
+  Axiom: F!!!A
   Rule0:
     Symbol: 65
-    Replacement: '[!!!!!//F!!!//F]'
+    Replacement: '[^F&BFA]+[!^F&BFA]+[!!^F&BFA]'
   Rule1:
-    Symbol: 0
-    Replacement: 
-  RuleCount: 1
-  Iterations: 1
-  StepLength: 12
+    Symbol: 66
+    Replacement: '[!!^F&FA]'
+  RuleCount: 2
+  Iterations: 2
+  StepLength: 7
+  MinStepLength: 4
   StepLengthVariance: 0
-  PitchAngle: 30
-  YawAngle: 30
-  RollAngle: 30
-  CurvatureAngle: 0
-  AngleVariance: 1
-  StepLengthScalar: 0.99
+  PitchAngle: 90
+  YawAngle: 120
+  RollAngle: 0
   GravityFactor: 0
-  TrunkWidthAtBase: 7
-  Foliage: 3
+  AngleVariance: 15
+  TaperCurve: 3
+  TrunkWidthAtBase: 5
+  MinWidth: 0
+  Foliage: 4
   BodyBlock: 15
-  FoliageBlock: 16
-  FoliageSize: 9
+  FoliageBlock: 19
+  FoliageSize: 7

@@ -35,18 +35,6 @@ using UnityEngine;
 //   Once happy with a tree, freeze Iterations at its final value.
 // ============================================================================
 
-
-// ----------------------------------------------------------------------------
-// Foliage style enum
-// ----------------------------------------------------------------------------
-public enum FoliageStyle : byte
-{
-    None = 0,
-    HangingHemisphere = 1,
-    Cluster = 2,
-    PalmCrown = 3
-}
-
 // ----------------------------------------------------------------------------
 // A single production rule
 // ----------------------------------------------------------------------------
@@ -82,185 +70,31 @@ public struct LSystemTreeData
 
     // Turtle parameters
     public float StepLength;
+    public float MinStepLength;
     public float StepLengthVariance; // max random addition to StepLength per spawn
     public float PitchAngle;
     public float YawAngle;
     public float RollAngle;
-    public float StepLengthScalar;
+    public TaperCurveType TaperCurve;
     public float GravityFactor;
     public float AngleVariance;
-    public float CurvatureAngle;    // degrees applied by ~ (gentle per-step bend)
 
     // Visual
     public int TrunkWidthAtBase;
-    public FoliageStyle Foliage;
-    public BlockType BodyBlock;    // block used for trunk and branches
-    public BlockType FoliageBlock; // block used for all leaf placements
-    public int FoliageSize;        // used to set foliage size of some tree types 
+    public int MinWidth;
+    public ShapeStyle Foliage;
+    public BlockType BodyBlock;
+    public BlockType FoliageBlock;
+    public int FoliageSize;
 }
-
-// ----------------------------------------------------------------------------
-// Foliage placer  — Burst-safe)
-// ----------------------------------------------------------------------------
-[BurstCompile]
-public static class FoliagePlacer
+public enum TaperCurveType : byte
 {
-    [BurstCompile]
-    public static void Place(
-        FoliageStyle style,
-        BlockType foliageBlock,
-        int size,
-        int3 pos,
-        int branchDepth,
-        int maxDepth,
-        ref Unity.Mathematics.Random rng,
-        ApplyBlockDelegate applyBlock)
-    {
-        switch (style)
-        {
-            case FoliageStyle.HangingHemisphere: PlaceHangingHemisphere(pos, foliageBlock, ref rng, applyBlock); break;
-            case FoliageStyle.Cluster: PlaceCluster(pos, foliageBlock, ref rng, applyBlock); break;
-            case FoliageStyle.PalmCrown: PlacePalmCrown(size, pos, foliageBlock, ref rng, applyBlock); break;
-        }
-    }
-
-    // Hemisphere of leaves above the tip, with randomised downward-hanging strands.
-    private static void PlaceHangingHemisphere(int3 p, BlockType foliageBlock, ref Unity.Mathematics.Random rng, ApplyBlockDelegate ab)
-    {
-        int x = p.x, y = p.y, z = p.z;
-        const int R = 3;
-
-        // Upper hemisphere (dy >= 0)
-        for (int dx = -R; dx <= R; dx++)
-            for (int dy = 0; dy <= R; dy++)
-                for (int dz = -R; dz <= R; dz++)
-                {
-                    float dist = math.sqrt(dx * dx + dy * dy + dz * dz);
-                    if (dist <= R + 0.5f && rng.NextFloat() > 0.15f)
-                        ab(x + dx, y + dy, z + dz, foliageBlock);
-                }
-
-        // Hanging strands — random lengths dropping below the tip
-        for (int dx = -R; dx <= R; dx++)
-            for (int dz = -R; dz <= R; dz++)
-            {
-                // Only hang from the outer edge of the hemisphere base
-                float edgeDist = math.sqrt(dx * dx + dz * dz);
-                if (edgeDist > R - 0.5f && edgeDist <= R + 0.5f && rng.NextFloat() > 0.4f)
-                {
-                    int hangLen = rng.NextInt(1, 5);
-                    for (int dy = -1; dy >= -hangLen; dy--)
-                        ab(x + dx, y + dy, z + dz, foliageBlock);
-                }
-            }
-    }
-
-    // Sparse wispy cluster for Japanese maple tips — a few leaves spread wide and thin.
-    // Radius is small so many clusters together build the canopy rather than one big blob.
-    private static void PlaceCluster(int3 p, BlockType foliageBlock, ref Unity.Mathematics.Random rng, ApplyBlockDelegate ab)
-    {
-        int x = p.x, y = p.y, z = p.z;
-
-        // Core — small filled ball radius 2 at the tip
-        for (int dx = -2; dx <= 2; dx++)
-            for (int dy = -1; dy <= 2; dy++)
-                for (int dz = -2; dz <= 2; dz++)
-                    if (dx * dx + dy * dy + dz * dz <= 5 && rng.NextFloat() > 0.2f)
-                        ab(x + dx, y + dy, z + dz, foliageBlock);
-
-        // Sparse radiating fingers — 5-8 directions, each 2-6 blocks long
-        int arms = rng.NextInt(5, 9);
-        for (int a = 0; a < arms; a++)
-        {
-            float angle = (a / (float)arms) * math.PI * 2f + rng.NextFloat() * 0.7f;
-            int len = rng.NextInt(2, 7);
-            int armDx = (int)math.round(math.cos(angle) * len);
-            int armDz = (int)math.round(math.sin(angle) * len);
-            int armDy = rng.NextInt(-1, 3); // slight vertical scatter
-
-            // Fill every block along the arm — no gaps so no floating leaves
-            for (int i = 1; i <= len; i++)
-            {
-                float t = i / (float)len;
-                int bx = x + (int)math.round(armDx * t);
-                int bz = z + (int)math.round(armDz * t);
-                int by = y + armDy;
-                ab(bx, by, bz, foliageBlock);
-                // Optional second layer on the lower half of each arm for volume
-                if (t < 0.5f && rng.NextFloat() > 0.4f)
-                    ab(bx, by + 1, bz, foliageBlock);
-            }
-        }
-    }
-
-    private static void PlacePalmCrown(int size, int3 p, BlockType foliageBlock,
-    ref Unity.Mathematics.Random rng, ApplyBlockDelegate ab)
-    {
-        int x = p.x, y = p.y, z = p.z;
-
-        // Tight central tuft
-        for (int dx = -1; dx <= 1; dx++)
-            for (int dy = 0; dy <= 4; dy++)
-                for (int dz = -1; dz <= 1; dz++)
-                    if (rng.NextFloat() > 0.1f)
-                        ab(x + dx, y + dy, z + dz, foliageBlock);
-
-        int numFronds = rng.NextInt(size + 3, size + 10);
-        for (int f = 0; f < numFronds; f++)
-        {
-            float angle = (f / (float)numFronds) * math.PI * 2f + rng.NextFloat() * 0.3f;
-            float cosA = math.cos(angle);
-            float sinA = math.sin(angle);
-            int frondLen = rng.NextInt(size, size + 5);
-
-            // Starting direction from pitch angle
-            float frondPitch = rng.NextFloat() * math.PI * 0.5f + math.PI * 0.25f;
-
-            // Initial step direction vector
-            float3 dir = new float3(cosA * math.sin(frondPitch),
-                                    -math.cos(frondPitch),
-                                    sinA * math.sin(frondPitch));
-
-            float perpCos = math.cos(angle + math.PI * 0.5f);
-            float perpSin = math.sin(angle + math.PI * 0.5f);
-
-            float3 pos = new float3(x, y + 1, z);
-
-            for (int i = 1; i <= frondLen; i++)
-            {
-                float t = i / (float)frondLen;
-
-                // Bend direction downward each step — same curve regardless of starting angle
-                dir.y -= 0.18f;
-                dir = math.normalize(dir);
-
-                pos += dir;
-
-                int fx = (int)math.round(pos.x);
-                int fy = (int)math.round(pos.y);
-                int fz = (int)math.round(pos.z);
-
-                ab(fx, fy, fz, foliageBlock);
-                ab(fx, fy + 1, fz, foliageBlock);
-
-                float leafWidth = 1.5f * math.sin(t * math.PI);
-                int leafExt = (int)math.round(leafWidth);
-                for (int l = -leafExt; l <= leafExt; l++)
-                {
-                    int lx = fx + (int)math.round(perpCos * l);
-                    int lz = fz + (int)math.round(perpSin * l);
-                    ab(lx, fy, lz, foliageBlock);
-                    if (t < 0.7f && rng.NextFloat() > 0.2f)
-                        ab(lx, fy + 1, lz, foliageBlock);
-                }
-
-                if (t > 0.5f && rng.NextFloat() > 0.5f)
-                    ab(fx, fy - 1, fz, foliageBlock);
-            }
-        }
-    }
+    Linear = 0,        // straight interpolation
+    Square = 1,         // t² — slow start, fast finish (stays full longer, tapers hard near the tip)
+    SquareRoot = 2,      // sqrt(t) — fast start, slow finish (tapers early, lingers thin for a while)
+    Logarithmic = 3,     // log-shaped — very fast initial taper, flattens out early and stays close to min
+    None = 4
 }
-
 // ----------------------------------------------------------------------------
 // Ruleset factory
 // ----------------------------------------------------------------------------
@@ -297,12 +131,10 @@ public static class TreeRulesets
         PitchAngle = 30f,   // tilt off vertical
         YawAngle = 90f,   // 4-fold spread: 0, 90, -90, 180
         RollAngle = 0f,
-        StepLengthScalar = 0.65f,
         GravityFactor = 0f,
         AngleVariance = 8f,
-        CurvatureAngle = 0f,
         TrunkWidthAtBase = 1,
-        Foliage = FoliageStyle.None,
+        Foliage = ShapeStyle.None,
         BodyBlock = BlockType.Log,
         FoliageBlock = BlockType.PineLeaves,
     };
@@ -345,12 +177,10 @@ public static class TreeRulesets
         PitchAngle = 38f,   // outward pitch on bough split
         YawAngle = 120f,  // 3-fold symmetry
         RollAngle = 0f,
-        StepLengthScalar = 0.58f,
         GravityFactor = 0.12f, // stronger droop so boughs arc downward at tips
         AngleVariance = 20f,   // high — irregular twisted character
-        CurvatureAngle = 10f,   // per-~ bend; accumulates across iterations for arc
         TrunkWidthAtBase = 4,
-        Foliage = FoliageStyle.Cluster,
+        Foliage = ShapeStyle.Cluster,
         BodyBlock = BlockType.Log,
         FoliageBlock = BlockType.RedLeaves,
     };
@@ -367,12 +197,10 @@ public static class TreeRulesets
         PitchAngle = 38f,   // outward pitch on bough split
         YawAngle = 90f,  // 4-fold symmetry
         RollAngle = -35f,
-        StepLengthScalar = 0.8333333f,
         GravityFactor = 0.333f, // stronger droop so boughs arc downward at tips
         AngleVariance = 25f,   // high — irregular twisted character
-        CurvatureAngle = 10f,   // per-~ bend; accumulates across iterations for arc
         TrunkWidthAtBase = 4,
-        Foliage = FoliageStyle.HangingHemisphere,
+        Foliage = ShapeStyle.HangingHemisphere,
         BodyBlock = BlockType.Log,
         FoliageBlock = BlockType.WillowLeaves,
     }; 
@@ -388,12 +216,10 @@ public static class TreeRulesets
         PitchAngle = 38f,   // outward pitch on bough split
         YawAngle = 90f,  // 4-fold symmetry
         RollAngle = -35f,
-        StepLengthScalar = 1f,
         GravityFactor = 0.333f, // stronger droop so boughs arc downward at tips
         AngleVariance = 15f,   // high — irregular twisted character
-        CurvatureAngle = 10f,   // per-~ bend; accumulates across iterations for arc
         TrunkWidthAtBase = 2,
-        Foliage = FoliageStyle.HangingHemisphere,
+        Foliage = ShapeStyle.HangingHemisphere,
         BodyBlock = BlockType.Log,
         FoliageBlock = BlockType.WillowLeaves,
     };
@@ -412,13 +238,11 @@ public static class TreeRulesets
         PitchAngle = 0f,
         YawAngle = 0f,
         RollAngle = 0f,
-        StepLengthScalar = 1f,
         GravityFactor = 0f,
         AngleVariance = 3f,   // slight trunk lean
-        CurvatureAngle = 2f,   // very gentle curve so trunk isn't perfectly straight
         StepLengthVariance = 3f,
         TrunkWidthAtBase = 1,
-        Foliage = FoliageStyle.PalmCrown,
+        Foliage = ShapeStyle.PalmCrown,
         BodyBlock = BlockType.Log,
         FoliageBlock = BlockType.PineLeaves,
         FoliageSize = 6
@@ -434,13 +258,11 @@ public static class TreeRulesets
         PitchAngle = 0f,
         YawAngle = 0f,
         RollAngle = 0f,
-        StepLengthScalar = 1f,
         GravityFactor = 0f,
         AngleVariance = 3f,   // slight trunk lean
-        CurvatureAngle = 2f,   // very gentle curve so trunk isn't perfectly straight
         StepLengthVariance = 0f,
         TrunkWidthAtBase = 2,
-        Foliage = FoliageStyle.PalmCrown,
+        Foliage = ShapeStyle.PalmCrown,
         BodyBlock = BlockType.Log,
         FoliageBlock = BlockType.PineLeaves,
         FoliageSize = 2
@@ -457,13 +279,11 @@ public static class TreeRulesets
         PitchAngle = 45f,   // outward pitch on bough split
         YawAngle = 120f,  // 3-fold symmetry
         RollAngle = -35f,
-        StepLengthScalar = .91f,
         GravityFactor = 0f, // stronger droop so boughs arc downward at tips
         AngleVariance = 10f,   // high — irregular twisted character
-        CurvatureAngle = 5f,   // per-~ bend; accumulates across iterations for arc
         StepLengthVariance = 0f,
         TrunkWidthAtBase = 7,
-        Foliage = FoliageStyle.PalmCrown,
+        Foliage = ShapeStyle.PalmCrown,
         BodyBlock = BlockType.Log,
         FoliageBlock = BlockType.PineLeaves,
         FoliageSize = 4
@@ -512,7 +332,6 @@ public static class LSystemInterpreter
             YawRad = math.radians(tree.YawAngle),
             RollRad = math.radians(tree.RollAngle),
             VarRad = math.radians(tree.AngleVariance),
-            CurveRad = math.radians(tree.CurvatureAngle),
             MaxDepth = (int)maxDepth,
         };
 
@@ -575,23 +394,30 @@ public static class LSystemInterpreter
         {
             case 'F':
                 {
-                    int effectiveDepth = state.BranchDepth + (int)state.ManualDepth;
-
-                    // Length: compounds by StepLengthScalar per depth unit.
-                    float lengthFactor = math.pow(tree.StepLengthScalar, effectiveDepth);
-
-                    // Width: linear taper from TrunkWidthAtBase down to 1 across [0, maxDepth],
-                    // independent of StepLengthScalar.
-                    float widthRatio = ctx.MaxDepth > 0 ? math.saturate((float)effectiveDepth / ctx.MaxDepth) : 0f;
-
                     float3 dir = math.mul(state.Rotation, new float3(0f, 1f, 0f));
                     if (tree.GravityFactor > 0f)
                         dir = math.normalize(dir - new float3(0f, tree.GravityFactor, 0f));
 
-                    float taperedLength = state.StepLength * lengthFactor;
-                    float3 end = state.Position + dir * taperedLength;
+                    float taperedLength;
+                    int width;
 
-                    DrawLogSegment(state.Position, end, tree.TrunkWidthAtBase, widthRatio, tree.BodyBlock, applyBlock);
+                    if (tree.TaperCurve == TaperCurveType.None)
+                    {
+                        taperedLength = state.StepLength;
+                        width = tree.TrunkWidthAtBase;
+                    }
+                    else
+                    {
+                        int effectiveDepth = state.BranchDepth + (int)state.ManualDepth;
+                        float rawT = ctx.MaxDepth > 0 ? math.saturate((float)effectiveDepth / ctx.MaxDepth) : 0f;
+                        float curvedT = ApplyCurve(rawT, tree.TaperCurve);
+
+                        taperedLength = math.lerp(state.StepLength, tree.MinStepLength, curvedT);
+                        width = math.max(1, (int)math.round(math.lerp(tree.TrunkWidthAtBase, tree.MinWidth, curvedT)));
+                    }
+
+                    float3 end = state.Position + dir * taperedLength;
+                    DrawLogSegment(state.Position, end, width, tree.BodyBlock, applyBlock);
                     state.Position = end;
                     break;
                 }
@@ -635,17 +461,27 @@ public static class LSystemInterpreter
                 break;
         }
     }
-
+    private static float ApplyCurve(float t, TaperCurveType curve)
+    {
+        switch (curve)
+        {
+            case TaperCurveType.Square: return t * t;
+            case TaperCurveType.SquareRoot: return math.sqrt(t);
+            case TaperCurveType.Logarithmic: return math.log10(1f + 9f * t); // 0?0, 1?1
+            case TaperCurveType.Linear:
+            default: return t;
+        }
+    }
     private static float Variance(ref Unity.Mathematics.Random rng, float maxRad)
         => maxRad <= 0f ? 0f : (rng.NextFloat() * 2f - 1f) * maxRad;
 
 // Helpers
 private static void PlaceFoliageAt(
-        FoliageStyle style, BlockType foliageBlock, int size, float3 pos, int branchDepth, int maxDepth,
+        ShapeStyle style, BlockType foliageBlock, int size, float3 pos, int branchDepth, int maxDepth,
         ref Unity.Mathematics.Random rng, ApplyBlockDelegate applyBlock)
     {
         var ip = new int3((int)math.round(pos.x), (int)math.round(pos.y), (int)math.round(pos.z));
-        FoliagePlacer.Place(style, foliageBlock, size, ip, branchDepth, maxDepth, ref rng, applyBlock);
+        ShapePlacer.Place(style, foliageBlock, size, ip, branchDepth, maxDepth, ref rng, applyBlock);
     }
 
     private static void CountDepth<T>(
@@ -681,15 +517,13 @@ private static void PlaceFoliageAt(
         }
     }
 
-    private static void DrawLogSegment(float3 start, float3 end, int baseTrunkWidth, float widthRatio, BlockType bodyBlock, ApplyBlockDelegate applyBlock)
+    private static void DrawLogSegment(float3 start, float3 end, int width, BlockType bodyBlock, ApplyBlockDelegate applyBlock)
     {
-        int width = math.max(1, baseTrunkWidth - (int)math.round(widthRatio * (baseTrunkWidth - 1)));
-
         float3 dir = end - start;
         float len = math.length(dir);
         if (len < 0.001f) return;
-            float3 axis = dir / len;
 
+        float3 axis = dir / len;
         float3 worldUp = math.abs(axis.y) < 0.99f ? new float3(0f, 1f, 0f) : new float3(1f, 0f, 0f);
         float3 right = math.normalize(math.cross(worldUp, axis));
         float3 up = math.cross(axis, right);

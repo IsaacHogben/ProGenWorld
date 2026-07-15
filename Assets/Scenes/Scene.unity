@@ -995,7 +995,7 @@ MonoBehaviour:
   seed: 153342534
   frequency: 1.2
   chunkSize: 64
-  viewDistance: 11
+  viewDistance: 5
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 9
   renderShape: 1
@@ -1866,7 +1866,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDataManager
   terrainTypes:
-  - {fileID: 11400000, guid: 632becd1e2360234891b98199dd2e6eb, type: 2}
+  - {fileID: 11400000, guid: 2c5a77699c169574c825ad1b57c2dd69, type: 2}
   biomes:
   - {fileID: 11400000, guid: 865be94ec7d7e6443bd01c8b0f8ae986, type: 2}
   - {fileID: 11400000, guid: a8d26d0dab5f8a3438cfd5279cd4138b, type: 2}

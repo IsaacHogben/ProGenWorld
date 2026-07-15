@@ -40,36 +40,38 @@ public class LSystemScriptableObject : ScriptableObject
 
     [Tooltip("Expansion depth. 0 means the Axiom is used as-is (e.g. a pre-baked string).")]
     [Min(0)]
-    public int Iterations = 3;
+    public int Iterations = 1;
 
-    [Header("Turtle — Movement")]
-    public float StepLength = 3f;
+    [Header("Movement")]
+    [Min(1)] public float StepLength = 5f;
+    [Min(1)] public float MinStepLength = 1f;
     [Tooltip("Max random addition to StepLength per tree spawn.")]
     public float StepLengthVariance = 0f;
 
-    [Header("Turtle — Rotation")]
+    [Header("Rotation")]
+    [Tooltip("^ &")]
     public float PitchAngle = 30f;
+    [Tooltip("+ -")]
     public float YawAngle = 90f;
+    [Tooltip("\\ /")]
     public float RollAngle = 0f;
-    [Tooltip("Degrees applied by ~ each step — accumulates to curve a branch.")]
-    public float CurvatureAngle = 0f;
-    [Tooltip("Random +/- jitter applied to every rotation command.")]
-    public float AngleVariance = 8f;
-
-    [Header("Turtle — Taper")]
-    [Tooltip("Per-depth-unit length multiplier. Depth = BranchDepth ([ ]) + ManualDepth (!).")]
-    public float StepLengthScalar = 0.65f;
-    [Tooltip("Downward pull applied to F's direction vector before moving, if > 0.")]
+    [Tooltip("Degrees applied by each step, in a downwards direction, to simulate gravity.")]
     public float GravityFactor = 0f;
+    [Tooltip("Random +/- jitter applied to every rotation command.")]
+    public float AngleVariance = 0f;
+
+    [Header("Taper")]
+    [Tooltip("Linear = straight interpolation\nSquare = t² — slow start, fast finish (stays full longer, tapers hard near the tip)\nSquareRoot = sqrt(t) — fast start, slow finish (tapers early, lingers thin for a while)\nLogarithmic = log-shaped — very fast initial taper, flattens out early and stays close to min")]
+    public TaperCurveType TaperCurve = TaperCurveType.Linear;
 
     [Header("Visual")]
-    [Min(1)]
-    public int TrunkWidthAtBase = 1;
-    public FoliageStyle Foliage = FoliageStyle.None;
+    [Min(1)] public int TrunkWidthAtBase = 1;
+    [Min(0)] public int MinWidth = 1;
+    public ShapeStyle Foliage = ShapeStyle.None;
     public BlockType BodyBlock = BlockType.Log;
     public BlockType FoliageBlock = BlockType.PineLeaves;
     [Tooltip("Used to set foliage size for some tree types (e.g. Palm frond count/length).")]
-    public int FoliageSize = 0;
+    public int FoliageSize = 5;
 
     // ------------------------------------------------------------------
     // Converts the authored asset into the Burst-safe runtime struct.
@@ -93,16 +95,17 @@ public class LSystemScriptableObject : ScriptableObject
             Iterations = Iterations,
 
             StepLength = StepLength,
+            MinStepLength = MinStepLength,
             StepLengthVariance = StepLengthVariance,
             PitchAngle = PitchAngle,
             YawAngle = YawAngle,
             RollAngle = RollAngle,
-            StepLengthScalar = StepLengthScalar,
+            TaperCurve = TaperCurve,
             GravityFactor = GravityFactor,
             AngleVariance = AngleVariance,
-            CurvatureAngle = CurvatureAngle,
 
             TrunkWidthAtBase = TrunkWidthAtBase,
+            MinWidth = MinWidth,
             Foliage = Foliage,
             BodyBlock = BodyBlock,
             FoliageBlock = FoliageBlock,

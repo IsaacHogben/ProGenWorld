@@ -10,28 +10,29 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: e352e1c65329ce548b2d68a9aab0651d, type: 3}
-  m_Name: Big Oak
+  m_Name: RandomTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
-  Axiom: '&&&F^F^F^F^F^F^F^F^F^F^F^F^F^F^F^F^F^F^F'
+  Axiom: FA
   Rule0:
     Symbol: 65
-    Replacement: '!&FF^^F^^FA'
+    Replacement: '\+^[FA]\+^[FA]\+^[FA]'
   Rule1:
     Symbol: 0
     Replacement: 
-  RuleCount: 0
-  Iterations: 0
-  StepLength: 14
+  RuleCount: 1
+  Iterations: 4
+  StepLength: 9
+  MinStepLength: 5
   StepLengthVariance: 0
-  PitchAngle: 20
-  YawAngle: 120
+  PitchAngle: 0
+  YawAngle: 0
   RollAngle: 0
-  CurvatureAngle: 0
-  AngleVariance: 0
-  StepLengthScalar: 0.7
   GravityFactor: 0
-  TrunkWidthAtBase: 13
-  Foliage: 1
-  BodyBlock: 2
+  AngleVariance: 30
+  TaperCurve: 0
+  TrunkWidthAtBase: 5
+  MinWidth: 0
+  Foliage: 5
+  BodyBlock: 15
   FoliageBlock: 16
-  FoliageSize: 4
+  FoliageSize: 7

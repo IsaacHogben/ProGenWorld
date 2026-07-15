@@ -23,7 +23,22 @@ MonoBehaviour:
   gradientThreshold1: 0.005
   gradientThreshold2: 0.002
   LSystemDecorations:
-  - LSystemData: {fileID: 11400000, guid: 064dbb6361676c3488d45832a0c7179a, type: 2}
+  - LSystemData: {fileID: 11400000, guid: 29776cdafaf447a46a7be1c4cffb5cdf, type: 2}
+    spawnChance: 1
+    spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: a37d2606aacdba545a3bfc218ce8ea8d, type: 2}
+    spawnChance: 1
+    spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: b7248b7f737359d44b0b8a8a073265aa, type: 2}
+    spawnChance: 1
+    spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: 6c253e6f82a899f4c8b2b5d37a0614ab, type: 2}
+    spawnChance: 1
+    spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: a1e471e8e7f0df546874eb32c91ef8d0, type: 2}
+    spawnChance: 0.3
+    spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: 3bd7d2760724d61449ca960db61e91d0, type: 2}
     spawnChance: 0.3
     spawnOnBlocks: 0b
   trees: []

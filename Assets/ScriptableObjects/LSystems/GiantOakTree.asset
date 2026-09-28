@@ -1,0 +1,38 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e352e1c65329ce548b2d68a9aab0651d, type: 3}
+  m_Name: GiantOakTree
+  m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
+  Axiom: F!F![Q!!//a++++a++++a]F!F!a+++++++aF!b++++a++++a
+  Rule0:
+    Symbol: 97
+    Replacement: '[^F+++b]'
+  Rule1:
+    Symbol: 98
+    Replacement: '[^Fa][&Fa]'
+  RuleCount: 2
+  Iterations: 12
+  StepLength: 11
+  MinStepLength: 8
+  StepLengthVariance: 3
+  PitchAngle: 35
+  YawAngle: 30
+  RollAngle: 90
+  GravityFactor: 0.333
+  AngleVariance: 15
+  TaperCurve: 0
+  TrunkWidthAtBase: 24
+  MinWidth: 0
+  Foliage: 5
+  BodyBlock: 15
+  FoliageBlock: 26
+  FoliageSize: 14

@@ -14,7 +14,9 @@ public enum BiomeType : byte
     RedGrass,
     YellowArid,
     Fungus,
-    City
+    City,
+    DarkForest,
+    Blight
 }
 
 // ============================================================================

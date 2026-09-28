@@ -18,10 +18,10 @@ MonoBehaviour:
   cells:
   - biomes: 01
   - biomes: 07
-  - biomes: 01
+  - biomes: 09
   - biomes: 03
   - biomes: 04
-  - biomes: 00
+  - biomes: 0a
   - biomes: 02
   - biomes: 05
   - biomes: 06

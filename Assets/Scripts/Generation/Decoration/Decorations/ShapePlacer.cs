@@ -15,6 +15,7 @@ public enum ShapeStyle : byte
     HangingHemisphere = 5,
     Cluster = 6,
     PalmCrown = 7,
+    LineDown = 8,
 }
 
 // ----------------------------------------------------------------------------
@@ -46,6 +47,7 @@ public static class ShapePlacer
             case ShapeStyle.Cube: PlaceCube(pos, size, block, applyBlock); break;
             case ShapeStyle.SquareFlat: PlaceSquareFlat(pos, size, block, applyBlock); break;
             case ShapeStyle.CircleFlat: PlaceCircleFlat(pos, size, block, applyBlock); break;
+            case ShapeStyle.LineDown: PlaceLineDown(pos, size, block, applyBlock); break;
         }
     }
 
@@ -235,7 +237,7 @@ public static class ShapePlacer
     // size = side length, centered on p.
     private static void PlaceSquareFlat(int3 p, int size, BlockType block, ApplyBlockDelegate ab)
     {
-        int x = p.x, y = p.y, z = p.z;
+        int x = p.x, y = p.y + 1, z = p.z;  // Ensure shape appears above branch with a +1 on y
         int half = math.max(1, size) / 2;
         int lo = -half;
         int hi = size - 1 + lo;
@@ -249,7 +251,7 @@ public static class ShapePlacer
     // size = diameter, centered on p.
     private static void PlaceCircleFlat(int3 p, int size, BlockType block, ApplyBlockDelegate ab)
     {
-        int x = p.x, y = p.y, z = p.z;
+        int x = p.x, y = p.y + 1, z = p.z;  // Ensure shape appears above branch with a +1 on y
         float r = size * 0.5f;
         float rSq = r * r;
         int ext = (int)math.ceil(r);
@@ -258,5 +260,14 @@ public static class ShapePlacer
             for (int dz = -ext; dz <= ext; dz++)
                 if (dx * dx + dz * dz <= rSq + 0.25f)
                     ab(x + dx, y, z + dz, block);
+    }
+
+    // Straight line of blocks descending from p. size = number of blocks placed,
+    // starting at p itself and going downward (size = 1 places just p).
+    private static void PlaceLineDown(int3 p, int size, BlockType block, ApplyBlockDelegate ab)
+    {
+        int count = math.max(1, size);
+        for (int i = 0; i < count; i++)
+            ab(p.x, p.y - i, p.z, block);
     }
 }

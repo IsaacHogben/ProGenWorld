@@ -54,6 +54,7 @@ public struct TurtleState
     public float StepLength;
     public int BranchDepth;
     public float ManualDepth; // accumulated by !, used to manually increase Branch depth
+    public bool SuppressFoliage;
 }
 
 // ----------------------------------------------------------------------------
@@ -140,27 +141,6 @@ public static class TreeRulesets
     };
 
 
-    // Axiom encodes the trunk split manually so the two main boughs diverge strongly.
-    // Rule A: main bough segments — subdivide and spread horizontally.
-    // Rule B: secondary branches — shorter, more upward, terminate quickly.
-    //
-    //   Trunk rises 2 steps then immediately splits into two boughs via [ ] brackets.
-    //   Each bough pitches outward (&) then yaws for asymmetry (+/-).
-    //   B branches off A for the finer canopy layer.
-    //
-    // Trunk rises (FF) then splits into 3 major boughs. Each bough is pre-yawed to a
-    // compass direction (+, -, ++) THEN pitched strongly outward (&) so it actually
-    // travels away from the trunk. Sub-branches (B) yaw to a side then pitch up (^)
-    // for the upward-curving tip silhouette visible in the reference.
-    // 
-    // Curvature comes from ~ applied per step: each generation the branch accumulates
-    // a small additional bend, giving the arc visible in the reference image.
-    //
-    // Trunk: F~F~F — three steps with a bend between each, so it leans slightly.
-    // Split into 3 boughs (0°, 120°, 240° yaw) each pitched strongly outward.
-    // A: main bough — two curved steps, then sprout sub-branches, recurse with ~
-    //    so each iteration adds more arc to the bough.
-    // B: tip — short curved arm terminating in foliage.
     private static LSystemTreeData RedFancy() => new LSystemTreeData
     {
         // This design is solved so we use the final string as the initial axiom without iteration to reduce runtime
@@ -324,6 +304,7 @@ public static class LSystemInterpreter
             StepLength = tree.StepLength + rng.NextFloat() * tree.StepLengthVariance,
             BranchDepth = 0,
             ManualDepth = 0f,
+            SuppressFoliage = false,
         };
 
         var ctx = new WalkContext
@@ -335,9 +316,11 @@ public static class LSystemInterpreter
             MaxDepth = (int)maxDepth,
         };
 
-        WalkString(in tree, tree.Axiom, 0, ref state, ref stack, ref stackTop, in ctx, ref rng, applyBlock);
+        var branchHasChild = new NativeArray<bool>(MaxStackDepth, Allocator.Temp, NativeArrayOptions.ClearMemory);
 
+        WalkString(in tree, tree.Axiom, 0, ref state, ref stack, ref branchHasChild, ref stackTop, in ctx, ref rng, applyBlock);
         stack.Dispose();
+        branchHasChild.Dispose();
     }
 
     private struct WalkContext
@@ -366,21 +349,26 @@ public static class LSystemInterpreter
     // first, but with recursion depth bounded by Iterations instead of an
     // exponentially-growing buffer.
     private static void WalkString<T>(
-        in LSystemTreeData tree, in T symbols, int iterDepth,
-        ref TurtleState state, ref NativeArray<TurtleState> stack, ref int stackTop,
-        in WalkContext ctx, ref Unity.Mathematics.Random rng, ApplyBlockDelegate applyBlock)
-        where T : struct, INativeList<byte>, IUTF8Bytes
+    in LSystemTreeData tree, in T symbols, int iterDepth,
+    ref TurtleState state, ref NativeArray<TurtleState> stack, ref NativeArray<bool> branchHasChild, ref int stackTop,
+    in WalkContext ctx, ref Unity.Mathematics.Random rng, ApplyBlockDelegate applyBlock)
+    where T : struct, INativeList<byte>, IUTF8Bytes
     {
         for (int i = 0; i < symbols.Length; i++)
         {
             byte sym = symbols[i];
             if (ExpandSymbol(in tree, sym, iterDepth, out var replacement))
             {
-                WalkString(in tree, replacement, iterDepth + 1, ref state, ref stack, ref stackTop, in ctx, ref rng, applyBlock);
+                // Every bracket currently open contains this expansion transitively —
+                // none of them are genuine leaf tips anymore.
+                for (int lvl = 0; lvl <= stackTop; lvl++)
+                    branchHasChild[lvl] = true;
+
+                WalkString(in tree, replacement, iterDepth + 1, ref state, ref stack, ref branchHasChild, ref stackTop, in ctx, ref rng, applyBlock);
             }
             else
             {
-                ExecuteSymbol(in tree, (char)sym, ref state, ref stack, ref stackTop, in ctx, ref rng, applyBlock);
+                ExecuteSymbol(in tree, (char)sym, ref state, ref stack,ref stackTop, in ctx, ref rng, ref branchHasChild, applyBlock);
             }
         }
     }
@@ -388,7 +376,7 @@ public static class LSystemInterpreter
     private static void ExecuteSymbol(
         in LSystemTreeData tree, char sym,
         ref TurtleState state, ref NativeArray<TurtleState> stack, ref int stackTop,
-        in WalkContext ctx, ref Unity.Mathematics.Random rng, ApplyBlockDelegate applyBlock)
+        in WalkContext ctx, ref Unity.Mathematics.Random rng, ref NativeArray<bool> branchHasChild, ApplyBlockDelegate applyBlock)
     {
         switch (sym)
         {
@@ -442,12 +430,16 @@ public static class LSystemInterpreter
                 if (stackTop < MaxStackDepth - 1)
                 {
                     stack[++stackTop] = state;
+                    branchHasChild[stackTop] = false; // assume leaf until proven otherwise
                     state.BranchDepth++;
                 }
                 break;
 
             case ']':
-                PlaceFoliageAt(tree.Foliage, tree.FoliageBlock, tree.FoliageSize, state.Position, state.BranchDepth, ctx.MaxDepth, ref rng, applyBlock);
+                if ((stackTop < 0 || !branchHasChild[stackTop]) && !state.SuppressFoliage)
+                {
+                    PlaceFoliageAt(tree.Foliage, tree.FoliageBlock, tree.FoliageSize, state.Position, state.BranchDepth, ctx.MaxDepth, ref rng, applyBlock);
+                }
                 if (stackTop >= 0)
                     state = stack[stackTop--];
                 break;
@@ -458,6 +450,10 @@ public static class LSystemInterpreter
 
             case 'T':
                 PlaceFoliageAt(tree.Foliage, tree.FoliageBlock, tree.FoliageSize, state.Position, state.BranchDepth, ctx.MaxDepth, ref rng, applyBlock);
+                break;
+
+            case 'Q':
+                state.SuppressFoliage = true;
                 break;
         }
     }

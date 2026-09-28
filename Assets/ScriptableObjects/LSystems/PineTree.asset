@@ -32,7 +32,7 @@ MonoBehaviour:
   TaperCurve: 0
   TrunkWidthAtBase: 2
   MinWidth: 1
-  Foliage: 2
+  Foliage: 5
   BodyBlock: 15
   FoliageBlock: 16
   FoliageSize: 5

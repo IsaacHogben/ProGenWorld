@@ -1,0 +1,38 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e352e1c65329ce548b2d68a9aab0651d, type: 3}
+  m_Name: CurlyTree
+  m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
+  Axiom: ^F!!/F!\-F\F\-F\F\F\-F\F!F\F/-&A
+  Rule0:
+    Symbol: 65
+    Replacement: '![\FFFA]F[\FA][/FA]!F+++A'
+  Rule1:
+    Symbol: 0
+    Replacement: 
+  RuleCount: 1
+  Iterations: 3
+  StepLength: 6
+  MinStepLength: 3
+  StepLengthVariance: 0
+  PitchAngle: 22
+  YawAngle: 35
+  RollAngle: 60
+  GravityFactor: 0
+  AngleVariance: 5
+  TaperCurve: 3
+  TrunkWidthAtBase: 6
+  MinWidth: 0
+  Foliage: 6
+  BodyBlock: 4
+  FoliageBlock: 25
+  FoliageSize: 3

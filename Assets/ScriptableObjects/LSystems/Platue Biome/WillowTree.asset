@@ -1,0 +1,38 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e352e1c65329ce548b2d68a9aab0651d, type: 3}
+  m_Name: WillowTree
+  m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
+  Axiom: '~F~|F[&A][+&A][++&A][-\\^A]'
+  Rule0:
+    Symbol: 65
+    Replacement: ~F[&B][+&B][-&B]A
+  Rule1:
+    Symbol: 66
+    Replacement: '~F[+&~F][-&~F]'
+  RuleCount: 2
+  Iterations: 3
+  StepLength: 7
+  MinStepLength: 4
+  StepLengthVariance: 0
+  PitchAngle: 38
+  YawAngle: 90
+  RollAngle: -35
+  GravityFactor: 0.333
+  AngleVariance: 25
+  TaperCurve: 3
+  TrunkWidthAtBase: 4
+  MinWidth: 1
+  Foliage: 5
+  BodyBlock: 15
+  FoliageBlock: 26
+  FoliageSize: 6

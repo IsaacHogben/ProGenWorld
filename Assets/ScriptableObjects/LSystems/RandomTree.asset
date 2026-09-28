@@ -12,27 +12,27 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e352e1c65329ce548b2d68a9aab0651d, type: 3}
   m_Name: RandomTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
-  Axiom: FA
+  Axiom: \FA
   Rule0:
     Symbol: 65
-    Replacement: '\+^[FA]\+^[FA]\+^[FA]'
+    Replacement: BBB
   Rule1:
-    Symbol: 0
-    Replacement: 
-  RuleCount: 1
-  Iterations: 4
-  StepLength: 9
+    Symbol: 66
+    Replacement: '\+^[FA]'
+  RuleCount: 2
+  Iterations: 6
+  StepLength: 6
   MinStepLength: 5
   StepLengthVariance: 0
   PitchAngle: 0
   YawAngle: 0
   RollAngle: 0
   GravityFactor: 0
-  AngleVariance: 30
+  AngleVariance: 33
   TaperCurve: 0
-  TrunkWidthAtBase: 5
+  TrunkWidthAtBase: 3
   MinWidth: 0
-  Foliage: 5
+  Foliage: 6
   BodyBlock: 15
-  FoliageBlock: 16
-  FoliageSize: 7
+  FoliageBlock: 25
+  FoliageSize: 8

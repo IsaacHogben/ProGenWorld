@@ -1,0 +1,38 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e352e1c65329ce548b2d68a9aab0651d, type: 3}
+  m_Name: GumTree
+  m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
+  Axiom: BFFA
+  Rule0:
+    Symbol: 65
+    Replacement: '!--F[\FA][/FA]'
+  Rule1:
+    Symbol: 66
+    Replacement: '[!!^&-F-BFFA]'
+  RuleCount: 2
+  Iterations: 6
+  StepLength: 6
+  MinStepLength: 2
+  StepLengthVariance: 3
+  PitchAngle: 0
+  YawAngle: 45
+  RollAngle: 15
+  GravityFactor: -0.1
+  AngleVariance: 20
+  TaperCurve: 2
+  TrunkWidthAtBase: 3
+  MinWidth: 0
+  Foliage: 6
+  BodyBlock: 4
+  FoliageBlock: 26
+  FoliageSize: 8

@@ -23,16 +23,16 @@ MonoBehaviour:
   gradientThreshold1: 0.012
   gradientThreshold2: 0.003
   LSystemDecorations:
-  - LSystemData: {fileID: 11400000, guid: 064dbb6361676c3488d45832a0c7179a, type: 2}
+  - LSystemData: {fileID: 11400000, guid: 3e76ee4c990272d449c1c6e0219cf594, type: 2}
     spawnChance: 1
-    spawnOnBlocks: 09
+    spawnOnBlocks: 0d
   - LSystemData: {fileID: 11400000, guid: 949de836d8f88fe4783401321066e1c6, type: 2}
-    spawnChance: 0.77
+    spawnChance: 0.1
     spawnOnBlocks: 0d
   trees:
   - treeType: 3
-    spawnChance: 3
-    spawnOnBlocks: 0d
+    spawnChance: 1
+    spawnOnBlocks: 02
   vegetation: []
   rocks: []
   aliens: []

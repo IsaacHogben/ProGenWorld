@@ -15,7 +15,7 @@ MonoBehaviour:
   Axiom: FA
   Rule0:
     Symbol: 65
-    Replacement: '\+^[FA]\+^[FA]'
+    Replacement: '\+^[FTA]\+^[FTA]'
   Rule1:
     Symbol: 0
     Replacement: 
@@ -32,7 +32,7 @@ MonoBehaviour:
   TaperCurve: 0
   TrunkWidthAtBase: 6
   MinWidth: 1
-  Foliage: 7
-  BodyBlock: 6
-  FoliageBlock: 13
-  FoliageSize: 5
+  Foliage: 4
+  BodyBlock: 28
+  FoliageBlock: 31
+  FoliageSize: 7

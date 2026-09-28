@@ -23,25 +23,46 @@ MonoBehaviour:
   gradientThreshold1: 0.005
   gradientThreshold2: 0.002
   LSystemDecorations:
-  - LSystemData: {fileID: 11400000, guid: 29776cdafaf447a46a7be1c4cffb5cdf, type: 2}
-    spawnChance: 1
-    spawnOnBlocks: 0b
-  - LSystemData: {fileID: 11400000, guid: a37d2606aacdba545a3bfc218ce8ea8d, type: 2}
+  - LSystemData: {fileID: 11400000, guid: 70fdf1acaf42bd44bb347f34a6495245, type: 2}
     spawnChance: 1
     spawnOnBlocks: 0b
   - LSystemData: {fileID: 11400000, guid: b7248b7f737359d44b0b8a8a073265aa, type: 2}
-    spawnChance: 1
+    spawnChance: 0.5
     spawnOnBlocks: 0b
   - LSystemData: {fileID: 11400000, guid: 6c253e6f82a899f4c8b2b5d37a0614ab, type: 2}
-    spawnChance: 1
+    spawnChance: 0.5
+    spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: 3e76ee4c990272d449c1c6e0219cf594, type: 2}
+    spawnChance: 0.5
+    spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: 949de836d8f88fe4783401321066e1c6, type: 2}
+    spawnChance: 0.2
+    spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: 29776cdafaf447a46a7be1c4cffb5cdf, type: 2}
+    spawnChance: 0.5
     spawnOnBlocks: 0b
   - LSystemData: {fileID: 11400000, guid: a1e471e8e7f0df546874eb32c91ef8d0, type: 2}
-    spawnChance: 0.3
+    spawnChance: 0.2
     spawnOnBlocks: 0b
-  - LSystemData: {fileID: 11400000, guid: 3bd7d2760724d61449ca960db61e91d0, type: 2}
-    spawnChance: 0.3
+  - LSystemData: {fileID: 11400000, guid: 05acfa27ba2f476439e118bd698f4320, type: 2}
+    spawnChance: 0.5
     spawnOnBlocks: 0b
-  trees: []
+  - LSystemData: {fileID: 11400000, guid: a37d2606aacdba545a3bfc218ce8ea8d, type: 2}
+    spawnChance: 0.5
+    spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: 05acfa27ba2f476439e118bd698f4320, type: 2}
+    spawnChance: 0.5
+    spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: 404db571545bc5b4aa958ebff006a7eb, type: 2}
+    spawnChance: 0.5
+    spawnOnBlocks: 0b
+  trees:
+  - treeType: 6
+    spawnChance: 0.5
+    spawnOnBlocks: 0b
+  - treeType: 7
+    spawnChance: 0.5
+    spawnOnBlocks: 0b
   vegetation: []
   rocks: []
   aliens: []

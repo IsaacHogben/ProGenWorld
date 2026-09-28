@@ -1,0 +1,38 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e352e1c65329ce548b2d68a9aab0651d, type: 3}
+  m_Name: OsifiedTree
+  m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
+  Axiom: 'F!F![^FA]+[^FA]+[^FA]'
+  Rule0:
+    Symbol: 65
+    Replacement: '^[\\F/A][//F\A]'
+  Rule1:
+    Symbol: 84
+    Replacement: 
+  RuleCount: 1
+  Iterations: 5
+  StepLength: 8
+  MinStepLength: 8
+  StepLengthVariance: 6
+  PitchAngle: 35
+  YawAngle: 120
+  RollAngle: 18
+  GravityFactor: 0.2
+  AngleVariance: 9
+  TaperCurve: 2
+  TrunkWidthAtBase: 5
+  MinWidth: 1
+  Foliage: 8
+  BodyBlock: 13
+  FoliageBlock: 6
+  FoliageSize: 12

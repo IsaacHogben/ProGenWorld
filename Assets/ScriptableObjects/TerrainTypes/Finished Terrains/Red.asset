@@ -43,4 +43,4 @@ MonoBehaviour:
   curveResolution: 64
   rarityWeight: 1
   allowedBiomes: 05
-  terrainID: 1
+  terrainID: 0

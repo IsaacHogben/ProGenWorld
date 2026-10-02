@@ -4,6 +4,8 @@ A high-performance, infinite procedurally generated voxel world system for Unity
 
 <img width="6102" height="1145" alt="Disks-Transparent" src="https://github.com/user-attachments/assets/c494b9a3-5c95-4eae-9d78-4ec5f016182b" />
 
+[Additional Screenshots](#additional-screenshots)
+
 ### Core Systems
 
 - **Infinite Procedural Generation** - Seamlessly expanding voxel world generated on-the-fly
@@ -18,7 +20,7 @@ A high-performance, infinite procedurally generated voxel world system for Unity
 - **Advanced Memory Management** - Object pooling for chunks, meshes, and native arrays
 - **Cross-Chunk Decoration** - Trees and structures can span multiple chunks seamlessly
 - **Async Pipeline Architecture** - Non-blocking generation pipeline with multiple processing stages
-- **Smart Chunk Unloading** - Distance-based and memory-based chunk cleanup
+- **Procedural Voxel Trees** - Create trees and other structures procedurally using L-Systems
 
 
 <img width="3016" height="1189" alt="Red Landscape" src="https://github.com/user-attachments/assets/48bb2c95-6229-4d43-b5e7-994c6d5668c6" />
@@ -52,7 +54,7 @@ Chunk Rendering
 ### System Breakdown
 
 **NoiseSystem**
-- Generates 3D density fields for terrain using [FastNoise2](https://github.com/Auburn/FastNoise2)
+- Generates 3D density fields for terrain
 - Async task-based processing
 - Configurable noise parameters per biome
 
@@ -82,13 +84,27 @@ Chunk Rendering
 - Per-biome terrain parameters including encoded node tree input from [FastNoise2](https://github.com/Auburn/FastNoise2)
 
 ## Features
+
+<img width="3221" height="1176" alt="Screenshot 2026-07-22 161025" src="https://github.com/user-attachments/assets/a02249c8-a7ec-424f-a166-c929914b4549" />
+
 ### Flood-Fill Frontier Expansion
 By checking the faces of our generated chunks we can determine which of its neighbours need to be generated. Only when a chunk face contains both a terrain block and an air block will the flood fill continue to generate chunks in that direction. This method prevents any unnecessary generation of chunks that will be comnpletely covered by other chunks or entirely made up of air.
 
-### Two-layer block textures
+### Two-layer Block Textures
 Blocks have a 32 x 32 texture applied over 2 x 2 blocks using tri-planer mapping. A second texure is applied at a 1 pixel per block ratio. The final material is a blend of the two and creates satisfying variation across blocks of a single type.
 
+### L-System Procedural Tree Generator
+Burst-compiled, allocation-free tree generation using recursive grammar expansion. Branching, taper (length/width, with selectable curve shapes), and foliage are fully data-driven, authorable as LSystemScriptableObject assets. Extends standard turtle-graphics symbols with custom controls for branch taper depth/length and foliage placement. Includes a reusable ShapePlacer module for primitive and organic shapes (spheres, clusters, hanging foliage, palm crowns).
+
 ## Screenshots
+
+### Create Procedural Trees with High-Level Control
+<img width="951" height="922" alt="Screenshot 2026-07-22 162410" src="https://github.com/user-attachments/assets/864a8b0e-c370-4d71-8923-bc2d8f858e7c" />
+
+
+*L-System generator makes it easy to create endless variaties of tree/structures*
+
+---
 
 ### Biome Blending and Atmospheric Effects
 <img width="940" alt="Biome system blends between 3 different terrain types with early morning fog" src="https://github.com/user-attachments/assets/193e899e-b3c3-4b3c-915a-15fddc54c0be" />
@@ -140,6 +156,9 @@ Blocks have a 32 x 32 texture applied over 2 x 2 blocks using tri-planer mapping
 *On-screen debugger for adaptive performance control system*
 
 ## Additional Screenshots
+
+<img width="2726" height="1162" alt="Screenshot 2026-07-13 165936" src="https://github.com/user-attachments/assets/d910da18-706f-46ac-9c90-68301e207546" />
+<img width="2228" height="901" alt="Screenshot 2026-07-22 154822" src="https://github.com/user-attachments/assets/13b230e4-7ab7-48a9-b05c-3c237c5c8bf0" />
 <img width="1208" height="650" alt="1" src="https://github.com/user-attachments/assets/7cb5fab8-5556-41b1-bd56-ae99e56c6d60" />
 <img width="2151" height="1054" alt="2" src="https://github.com/user-attachments/assets/db4c5d18-adbb-4ad6-b589-37361bd08390" />
 <img width="1651" height="898" alt="3" src="https://github.com/user-attachments/assets/eb6d363d-1f36-4207-9c63-da96017d8efb" />

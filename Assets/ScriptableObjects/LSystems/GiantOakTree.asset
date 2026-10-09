@@ -20,19 +20,19 @@ MonoBehaviour:
     Symbol: 98
     Replacement: '[^Fa][&Fa]'
   RuleCount: 2
-  Iterations: 12
+  Iterations: 11
   StepLength: 11
-  MinStepLength: 8
+  MinStepLength: 7
   StepLengthVariance: 3
   PitchAngle: 35
   YawAngle: 30
   RollAngle: 90
-  GravityFactor: 0.333
-  AngleVariance: 15
+  GravityFactor: 0.1
+  AngleVariance: 9
   TaperCurve: 0
-  TrunkWidthAtBase: 24
+  TrunkWidthAtBase: 23
   MinWidth: 0
-  Foliage: 5
+  Foliage: 7
   BodyBlock: 15
-  FoliageBlock: 26
-  FoliageSize: 14
+  FoliageBlock: 16
+  FoliageSize: 24

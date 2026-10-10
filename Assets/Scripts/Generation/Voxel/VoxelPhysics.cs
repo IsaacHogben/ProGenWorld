@@ -91,6 +91,38 @@ public static class VoxelPhysics
         return false;
     }
 
+    /// <summary>
+    /// Finds the standing surface in one block column: the top of the first solid voxel at or
+    /// below <paramref name="fromY"/>, no lower than <paramref name="minY"/>. Returns false when
+    /// the voxel containing fromY is itself solid (the column is a wall at that height) or when no
+    /// surface is found.
+    /// </summary>
+    public static bool TryGetColumnSurface(int x, int z, float fromY, float minY, out float surfaceY, bool unloadedIsSolid = false)
+    {
+        surfaceY = float.NegativeInfinity;
+        int top = (int)math.floor(fromY);
+        int bottom = (int)math.floor(minY);
+
+        if (IsSolid(new int3(x, top, z), unloadedIsSolid))
+            return false;
+
+        for (int y = top - 1; y >= bottom; y--)
+        {
+            if (IsSolid(new int3(x, y, z), unloadedIsSolid))
+            {
+                surfaceY = y + 1;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Surface height under a world point, searching from <paramref name="up"/> above it to <paramref name="down"/> below.</summary>
+    public static bool TryGetGroundHeight(Vector3 point, float up, float down, out float groundY)
+    {
+        return TryGetColumnSurface((int)math.floor(point.x), (int)math.floor(point.z), point.y + up, point.y - down, out groundY);
+    }
+
     // ----------------------------------------------------------------------------------
     // Raycasts (voxel DDA)
     // ----------------------------------------------------------------------------------

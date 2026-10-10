@@ -1,7 +1,11 @@
+using Unity.Mathematics;
 using UnityEngine;
 
 /// <summary>
-/// Procedural leg IK for voxel character - works with SimpleVoxelController
+/// Procedural walk for the voxel character. Feet stay planted in the world and step to targets
+/// predicted from the body's actual velocity; step arcs clear ledges when stepping up, the
+/// pelvis drops when a foot is on lower ground, and the arms swing in time with the steps.
+/// Ground is read from the voxel data (VoxelPhysics). Works with SimpleVoxelController.
 /// </summary>
 public class ProceduralLegIK : MonoBehaviour
 {
@@ -30,22 +34,22 @@ public class ProceduralLegIK : MonoBehaviour
     [Header("General Settings")]
     [Tooltip("How far to the sides feet are placed (stance width)")]
     [SerializeField] private float footOffsetSide = 0.3f;
-    [Tooltip("Height offset to raise foot above ground (adjust if feet sink into terrain)")]
+    [Tooltip("Height of the foot bone above the ground it stands on")]
     [SerializeField] private float footHeightOffset = 0.1f;
 
     [Header("Walking Settings")]
-    [Tooltip("Distance foot must be from target before triggering a step")]
+    [Tooltip("Distance foot must be from its target before triggering a step")]
     [SerializeField] private float walkStepDistance = 0.5f;
     [Tooltip("How high the foot lifts during a step")]
     [SerializeField] private float walkStepHeight = 0.3f;
     [Tooltip("Time in seconds to complete one step")]
     [SerializeField] private float walkStepDuration = 0.3f;
-    [Tooltip("How far ahead to place feet when walking")]
+    [Tooltip("Furthest ahead of the hip a foot is placed when walking")]
     [SerializeField] private float walkFootOffset = 0.5f;
     [Tooltip("Maximum angle to tilt foot forward during step (in degrees)")]
     [SerializeField] private float walkFootAngle = 25f;
 
-    [Header("Turning Settings")]
+    [Header("Turning / Settling Settings")]
     [Tooltip("Distance foot must be from target before triggering a step")]
     [SerializeField] private float turnStepDistance = 0.2f;
     [Tooltip("How high the foot lifts during a step")]
@@ -62,7 +66,7 @@ public class ProceduralLegIK : MonoBehaviour
     [SerializeField] private float sprintStepHeight = 0.4f;
     [Tooltip("Time in seconds to complete one step")]
     [SerializeField] private float sprintStepDuration = 0.2f;
-    [Tooltip("How far ahead to place feet when sprinting")]
+    [Tooltip("Furthest ahead of the hip a foot is placed when sprinting")]
     [SerializeField] private float sprintFootOffset = 0.8f;
     [Tooltip("Maximum angle to tilt foot forward during step (in degrees)")]
     [SerializeField] private float sprintFootAngle = 30f;
@@ -78,562 +82,531 @@ public class ProceduralLegIK : MonoBehaviour
     [SerializeField] private Vector3 defaultFootOffset = new Vector3(0.3f, -0.5f, 0.2f);
     [Tooltip("Speed to lerp feet to default position when airborne")]
     [SerializeField] private float airborneTransitionSpeed = 10f;
-    [Tooltip("Speed to lerp feet to ground when landing")]
+    [Tooltip("How fast feet reach the ground when landing (higher = quicker)")]
     [SerializeField] private float landingTransitionSpeed = 15f;
     [Tooltip("Velocity threshold for full airborne pose (positive = going up)")]
     [SerializeField] private float maxUpwardVelocity = 5f;
     [Tooltip("Velocity threshold for captured pose (negative = falling)")]
     [SerializeField] private float maxDownwardVelocity = -5f;
+    [Tooltip("Body dip on landing per m/s of impact speed")]
+    [SerializeField] private float landingDipPerSpeed = 0.03f;
+    [Tooltip("Largest landing dip")]
+    [SerializeField] private float maxLandingDip = 0.4f;
 
-    [Header("Sprint Tilt")]
-    [Tooltip("How much to tilt body forward when sprinting (in degrees)")]
+    [Header("Body Lean")]
+    [Tooltip("Body pitch when sprinting forward (in degrees)")]
     [SerializeField] private float sprintTiltAngle = 10f;
-    [Tooltip("How fast body tilts into/out of sprint")]
+    [Tooltip("Body pitch when walking forward (in degrees, same sign as sprint)")]
+    [SerializeField] private float walkTiltAngle = 3f;
+    [Tooltip("How fast body tilts into/out of a lean")]
     [SerializeField] private float sprintTiltSpeed = 5f;
+    [Tooltip("Vertical bob of the body over each step")]
+    [SerializeField] private float walkBobAmount = 0.06f;
 
     [Header("Arm Swing")]
     [Tooltip("Enable arm swing animation")]
     [SerializeField] private bool enableArmSwing = true;
     [Tooltip("Maximum arm swing angle forward/back")]
     [SerializeField] private float armSwingAngle = 30f;
-    [Tooltip("Arm swing speed multiplier")]
-    [SerializeField] private float armSwingSpeed = 2f;
+    [Tooltip("How quickly arms follow the gait")]
+    [SerializeField] private float armSwingSpeed = 10f;
+    [Tooltip("Flip if arms swing with the leg on the same side instead of against it")]
+    [SerializeField] private bool invertArmSwing = false;
 
     [Header("Ground Detection")]
-    [Tooltip("Maximum distance to raycast down when looking for ground")]
-    [SerializeField] private float raycastDistance = 3f;
-    [Tooltip("Height above character to start raycasting from")]
+    [Tooltip("Height above the feet where ground probes start")]
     [SerializeField] private float raycastStartHeight = 2f;
-    [Tooltip("Additional distance to check below for step-down (1 = one block)")]
+    [Tooltip("Highest ledge a foot will be placed on")]
+    [SerializeField] private float maxFootStepUp = 1.25f;
+    [Tooltip("How far below the body feet may reach (and the body may lower) for step-down (1 = one block)")]
     [SerializeField] private float stepDownDistance = 1f;
     [Tooltip("Speed at which body adjusts height")]
     [SerializeField] private float bodyHeightAdjustSpeed = 5f;
 
-    // Target positions for feet (world space)
-    private Vector3 leftFootTarget;
-    private Vector3 rightFootTarget;
+    class Leg
+    {
+        public Transform thigh, shin, foot;
+        public bool isLeft;
+        public float side;          // +1 along the body's right axis (the model's left)
 
-    // Current foot positions (world space, smoothed)
-    private Vector3 leftFootCurrentPos;
-    private Vector3 rightFootCurrentPos;
+        public Vector3 pos;         // animated foot position (world)
+        public Vector3 planted;     // where the foot rests when not stepping
+        public float angle;         // foot pitch
 
-    // Foot rotation tracking
-    private float leftFootAngle = 0f;
-    private float rightFootAngle = 0f;
+        public bool stepping;
+        public Vector3 from, to;
+        public float t, duration, lift, maxAngle;
 
-    // Body height adjustment
-    private float targetBodyHeight = 0f;
-    private float currentBodyHeight = 0f;
-    private float bodyHeightOffset = 0f; // Starting height of body above root
+        public Vector3 airLocal;    // foot position in body space when leaving the ground
 
-    // Body tilt
-    private float currentBodyTilt = 0f;
+        public bool Valid => thigh != null && shin != null && foot != null;
+        public Vector3 Support => stepping ? to : planted;
+    }
 
-    // Arm swing
-    private float armSwingTime = 0f;
+    struct GaitParams
+    {
+        public float stepDistance, stepHeight, duration, footOffset, footAngle;
+    }
 
-    // Airborne tracking
-    private bool wasJumping = false;
-    private Vector3 leftFootJumpPos;
-    private Vector3 rightFootJumpPos;
-    private bool isLanding = false;
-
-    // Stepping state
-    private bool isLeftFootStepping = false;
-    private bool isRightFootStepping = false;
-    private float leftStepProgress = 0f;
-    private float rightStepProgress = 0f;
-    private Vector3 leftFootStartPos;
-    private Vector3 rightFootStartPos;
-
-    // Reference to movement controller
     private SimpleVoxelController controller;
+    private VoxelBody body;
+
+    private Leg left, right;
+
+    private float bodyHeightOffset;   // rest height of the body above the root
+    private float currentBodyHeight;  // step-down lowering
+    private float currentBob;
+    private float landingDip;
+    private float currentBodyTilt;
+    private float currentArmSwing;
+    private float gaitPhase;
+
+    private Vector3 lastRootPos;
+    private Vector3 velocity;         // smoothed horizontal velocity of the rendered body
+    private bool wasAirborne;
+    private float minAirVelocity;
 
     void Start()
     {
         controller = GetComponent<SimpleVoxelController>();
+        body = GetComponent<VoxelBody>();
 
-        // Store the initial body height offset
         if (bodyTransform != null)
-        {
             bodyHeightOffset = bodyTransform.localPosition.y;
+
+        left = new Leg { thigh = leftLeg, shin = leftShin, foot = leftFoot, isLeft = true, side = 1f };
+        right = new Leg { thigh = rightLeg, shin = rightShin, foot = rightFoot, isLeft = false, side = -1f };
+        foreach (var leg in new[] { left, right })
+        {
+            if (leg.foot != null)
+                leg.pos = leg.planted = leg.foot.position;
         }
 
-        // Initialize foot positions
-        if (leftFoot != null)
-        {
-            leftFootCurrentPos = leftFoot.position;
-            leftFootTarget = leftFoot.position;
-        }
-
-        if (rightFoot != null)
-        {
-            rightFootCurrentPos = rightFoot.position;
-            rightFootTarget = rightFoot.position;
-        }
+        lastRootPos = transform.position;
     }
 
     void LateUpdate()
     {
-        // Check if jumping or falling
-        bool isAirborne = controller != null && (controller.IsJumping || controller.State == SimpleVoxelController.MovementState.Falling);
-
-        if (isAirborne)
-        {
-            // First frame of being airborne - capture current foot positions in local space
-            if (!wasJumping)
-            {
-                if (bodyTransform != null)
-                {
-                    leftFootJumpPos = bodyTransform.InverseTransformPoint(leftFootCurrentPos);
-                    rightFootJumpPos = bodyTransform.InverseTransformPoint(rightFootCurrentPos);
-                }
-                wasJumping = true;
-                isLanding = false;
-            }
-
-            // Move feet to airborne positions
-            UpdateAirbornePose();
-            UpdateBodyHeight();
-            UpdateBodyTilt();
-            ApplyIK();
+        if (bodyTransform == null)
             return;
-        }
 
-        // Just landed - transition smoothly to ground
-        if (wasJumping && !isAirborne)
-        {
-            isLanding = true;
-            wasJumping = false;
-        }
-
-        // Handle landing transition
-        if (isLanding)
-        {
-            UpdateFootTargets();
-
-            // Smoothly lerp to ground positions
-            leftFootCurrentPos = Vector3.Lerp(leftFootCurrentPos, leftFootTarget, Time.deltaTime * landingTransitionSpeed);
-            rightFootCurrentPos = Vector3.Lerp(rightFootCurrentPos, rightFootTarget, Time.deltaTime * landingTransitionSpeed);
-
-            // Check if close enough to ground to resume normal stepping
-            float leftDist = Vector3.Distance(leftFootCurrentPos, leftFootTarget);
-            float rightDist = Vector3.Distance(rightFootCurrentPos, rightFootTarget);
-
-            // Exit landing when feet are close OR if moving (to prevent getting stuck)
-            bool isMoving = controller != null && controller.CurrentSpeed > 0.1f;
-            if ((leftDist < 0.1f && rightDist < 0.1f) || isMoving)
-            {
-                isLanding = false;
-                // Snap feet to targets to ensure clean transition
-                leftFootCurrentPos = leftFootTarget;
-                rightFootCurrentPos = rightFootTarget;
-            }
-
-            UpdateBodyHeight();
-            UpdateBodyTilt();
-            ApplyIK();
+        float dt = Time.deltaTime;
+        if (dt <= 0f)
             return;
-        }
 
-        UpdateFootTargets();
-        HandleStepping();
-        UpdateBodyHeight();
-        UpdateBodyTilt();
-        UpdateArmSwing();
-        ApplyIK();
-    }
+        if (UpdateVelocity(dt))
+            ResetFeet();
 
-    void UpdateFootTargets()
-    {
-        // Get movement state and adjust parameters
-        float currentFootOffset = walkFootOffset;
-
-        if (controller != null)
+        bool grounded = controller == null || controller.IsGrounded;
+        if (grounded)
         {
-            switch (controller.State)
-            {
-                case SimpleVoxelController.MovementState.Turning:
-                    currentFootOffset = 0; // No forward offset when turning
-                    break;
-                case SimpleVoxelController.MovementState.Sprinting:
-                    currentFootOffset = sprintFootOffset;
-                    break;
-            }
-        }
-
-        // Get movement direction from body rotation
-        Vector3 rightDir = bodyTransform != null ? bodyTransform.right : transform.right;
-
-        // Calculate where to check for ground
-        Vector3 movementOffset = Vector3.zero;
-        if (controller != null && controller.CurrentSpeed > 0.1f)
-        {
-            movementOffset = controller.MoveDirection * currentFootOffset;
-        }
-
-        // Left and right foot positions
-        Vector3 leftCheckPos = transform.position + rightDir * footOffsetSide + movementOffset;
-        Vector3 rightCheckPos = transform.position - rightDir * footOffsetSide + movementOffset;
-
-        // Find ground at those positions
-        leftFootTarget = GetGroundPosition(leftCheckPos);
-        rightFootTarget = GetGroundPosition(rightCheckPos);
-    }
-
-    Vector3 GetGroundPosition(Vector3 worldPosition)
-    {
-        // Raycast from above to find ground, checking extra distance for step-down
-        Vector3 rayStart = worldPosition + Vector3.up * raycastStartHeight;
-
-        float totalDistance = raycastDistance + stepDownDistance;
-
-        if (VoxelPhysics.Raycast(rayStart, Vector3.down, out VoxelRaycastHit hit, totalDistance))
-        {
-            return hit.point + Vector3.up * footHeightOffset;
-        }
-
-        // No ground found - return default airborne position
-        return GetDefaultFootPosition(worldPosition);
-    }
-
-    Vector3 GetDefaultFootPosition(Vector3 sidePosition)
-    {
-        // Calculate default foot position in world space based on body orientation
-        if (bodyTransform == null) return sidePosition;
-
-        // Determine if this is left or right foot based on position
-        Vector3 rightDir = bodyTransform.right;
-        float side = Vector3.Dot(sidePosition - transform.position, rightDir) > 0 ? 1f : -1f;
-
-        // Create offset with proper side
-        Vector3 offset = new Vector3(defaultFootOffset.x * side, defaultFootOffset.y, defaultFootOffset.z);
-
-        // Transform from body local space to world space using TransformPoint
-        return bodyTransform.TransformPoint(offset);
-    }
-
-    void UpdateAirbornePose()
-    {
-        if (bodyTransform == null || controller == null) return;
-
-        // Get current vertical velocity
-        float verticalVelocity = controller.TryGetComponent(out VoxelBody body) ? body.linearVelocity.y : 0f;
-
-        // Calculate blend factor based on velocity
-        // +maxUpwardVelocity = 1.0 (full airborne pose)
-        // 0 velocity = 0.5 (halfway)
-        // -maxDownwardVelocity = 0.0 (captured pose)
-        float blend = Mathf.InverseLerp(maxDownwardVelocity, maxUpwardVelocity, verticalVelocity);
-
-        // Create airborne pose (full XYZ from defaultFootOffset)
-        Vector3 leftAirbornePose = new Vector3(-defaultFootOffset.x, defaultFootOffset.y, defaultFootOffset.z);
-        Vector3 rightAirbornePose = new Vector3(defaultFootOffset.x, defaultFootOffset.y, defaultFootOffset.z);
-
-        // Blend between captured pose and airborne pose based on velocity
-        Vector3 leftLocalPose = Vector3.Lerp(leftFootJumpPos, leftAirbornePose, blend);
-        Vector3 rightLocalPose = Vector3.Lerp(rightFootJumpPos, rightAirbornePose, blend);
-
-        // Transform to world space
-        Vector3 leftTargetWorld = bodyTransform.TransformPoint(leftLocalPose);
-        Vector3 rightTargetWorld = bodyTransform.TransformPoint(rightLocalPose);
-
-        // Smoothly transition feet to these positions
-        leftFootCurrentPos = Vector3.Lerp(leftFootCurrentPos, leftTargetWorld, Time.deltaTime * airborneTransitionSpeed);
-        rightFootCurrentPos = Vector3.Lerp(rightFootCurrentPos, rightTargetWorld, Time.deltaTime * airborneTransitionSpeed);
-
-        // Reset foot angles to flat
-        leftFootAngle = Mathf.Lerp(leftFootAngle, 0f, Time.deltaTime * airborneTransitionSpeed);
-        rightFootAngle = Mathf.Lerp(rightFootAngle, 0f, Time.deltaTime * airborneTransitionSpeed);
-
-        // Reset stepping state
-        isLeftFootStepping = false;
-        isRightFootStepping = false;
-    }
-
-    void HandleStepping()
-    {
-        // Get current step parameters based on movement state
-        float currentStepDist = walkStepDistance;
-        float currentStepDur = walkStepDuration;
-        float currentStepHeight = walkStepHeight;
-        float currentFootAngle = walkFootAngle;
-
-        if (controller != null)
-        {
-            switch (controller.State)
-            {
-                case SimpleVoxelController.MovementState.Turning:
-                    currentStepDist = turnStepDistance;
-                    currentStepDur = turnStepDuration;
-                    currentStepHeight = turnStepHeight;
-                    currentFootAngle = turnFootAngle;
-                    break;
-                case SimpleVoxelController.MovementState.Sprinting:
-                    currentStepDist = sprintStepDistance;
-                    currentStepDur = sprintStepDuration;
-                    currentStepHeight = sprintStepHeight;
-                    currentFootAngle = sprintFootAngle;
-                    break;
-            }
-        }
-
-        // Only allow one foot to step at a time
-        if (isLeftFootStepping || isRightFootStepping)
-        {
-            // Continue current step
-            if (isLeftFootStepping)
-            {
-                leftStepProgress += Time.deltaTime / currentStepDur;
-
-                if (leftStepProgress >= 1f)
-                {
-                    leftStepProgress = 0f;
-                    isLeftFootStepping = false;
-                    leftFootCurrentPos = leftFootTarget;
-                    leftFootAngle = 0f; // Ensure foot is flat when step ends
-                }
-                else
-                {
-                    leftFootCurrentPos = CalculateStepPosition(leftFootStartPos, leftFootTarget, leftStepProgress, currentStepHeight);
-                    leftFootAngle = CalculateFootAngle(leftStepProgress, currentFootAngle);
-                }
-            }
-
-            if (isRightFootStepping)
-            {
-                rightStepProgress += Time.deltaTime / currentStepDur;
-
-                if (rightStepProgress >= 1f)
-                {
-                    rightStepProgress = 0f;
-                    isRightFootStepping = false;
-                    rightFootCurrentPos = rightFootTarget;
-                    rightFootAngle = 0f; // Ensure foot is flat when step ends
-                }
-                else
-                {
-                    rightFootCurrentPos = CalculateStepPosition(rightFootStartPos, rightFootTarget, rightStepProgress, currentStepHeight);
-                    rightFootAngle = CalculateFootAngle(rightStepProgress, currentFootAngle);
-                }
-            }
+            if (wasAirborne)
+                Land();
+            UpdateGait(dt);
         }
         else
         {
-            // Check if either foot needs to step
-            float leftDistance = Vector3.Distance(leftFootCurrentPos, leftFootTarget);
-            float rightDistance = Vector3.Distance(rightFootCurrentPos, rightFootTarget);
-
-            // Trigger step for the foot that's furthest from its target
-            if (leftDistance > currentStepDist && leftDistance > rightDistance)
-            {
-                isLeftFootStepping = true;
-                leftFootStartPos = leftFootCurrentPos;
-                leftStepProgress = 0f;
-            }
-            else if (rightDistance > currentStepDist)
-            {
-                isRightFootStepping = true;
-                rightFootStartPos = rightFootCurrentPos;
-                rightStepProgress = 0f;
-            }
+            if (!wasAirborne)
+                BeginAirborne();
+            UpdateAirborne(dt);
         }
+        wasAirborne = !grounded;
+
+        UpdateBody(dt, grounded);
+        UpdateArmSwing(dt, grounded);
+        ApplyIK();
+    }
+
+    // ----------------------------------------------------------------------------------
+    // Motion sampling
+    // ----------------------------------------------------------------------------------
+
+    // Returns true when the body teleported.
+    bool UpdateVelocity(float dt)
+    {
+        Vector3 p = transform.position;
+        Vector3 raw = (p - lastRootPos) / dt;
+        lastRootPos = p;
+        raw.y = 0f;
+
+        if (raw.sqrMagnitude > 50f * 50f)
+        {
+            velocity = Vector3.zero;
+            return true;
+        }
+
+        velocity = Vector3.Lerp(velocity, raw, 1f - Mathf.Exp(-12f * dt));
+        return false;
+    }
+
+    // Height of the simulated body (the rendered one eases behind it after a step).
+    float SimRootY => transform.position.y - (body != null ? body.VisualOffset : 0f);
+
+    Vector3 FlatRight
+    {
+        get
+        {
+            Vector3 r = bodyTransform.right;
+            r.y = 0f;
+            return r.sqrMagnitude > 1e-6f ? r.normalized : Vector3.right;
+        }
+    }
+
+    // The model faces away from the body transform's forward axis.
+    Vector3 ModelForward
+    {
+        get
+        {
+            Vector3 f = -bodyTransform.forward;
+            f.y = 0f;
+            return f.sqrMagnitude > 1e-6f ? f.normalized : Vector3.forward;
+        }
+    }
+
+    GaitParams CurrentParams()
+    {
+        var state = controller != null ? controller.State : SimpleVoxelController.MovementState.Walking;
+        switch (state)
+        {
+            case SimpleVoxelController.MovementState.Idle:
+            case SimpleVoxelController.MovementState.Turning:
+                return new GaitParams { stepDistance = turnStepDistance, stepHeight = turnStepHeight, duration = turnStepDuration, footOffset = 0f, footAngle = turnFootAngle };
+            case SimpleVoxelController.MovementState.Sprinting:
+                return new GaitParams { stepDistance = sprintStepDistance, stepHeight = sprintStepHeight, duration = sprintStepDuration, footOffset = sprintFootOffset, footAngle = sprintFootAngle };
+            default:
+                return new GaitParams { stepDistance = walkStepDistance, stepHeight = walkStepHeight, duration = walkStepDuration, footOffset = walkFootOffset, footAngle = walkFootAngle };
+        }
+    }
+
+    // ----------------------------------------------------------------------------------
+    // Ground probing
+    // ----------------------------------------------------------------------------------
+
+    /// <summary>Ground height under a point, or false if it is a wall, a drop, or not loaded.</summary>
+    bool TryGroundAt(Vector3 point, float refY, out float groundY)
+    {
+        groundY = refY;
+        Vector3 start = new Vector3(point.x, refY + raycastStartHeight, point.z);
+
+        // Probe starting inside a block means a wall taller than we can step onto.
+        if (VoxelPhysics.IsSolid((int3)math.floor((float3)start)))
+            return false;
+
+        if (!VoxelPhysics.Raycast(start, Vector3.down, out VoxelRaycastHit hit, raycastStartHeight + stepDownDistance + 0.25f))
+            return false;
+
+        if (hit.point.y - refY > maxFootStepUp)
+            return false;
+
+        groundY = hit.point.y;
+        return true;
+    }
+
+    Vector3 Anchor(Leg leg) => transform.position + FlatRight * (leg.side * footOffsetSide);
+
+    // Where the foot should land: under the hip, led along the velocity by half a step.
+    Vector3 FootTarget(Leg leg, in GaitParams p)
+    {
+        float refY = SimRootY;
+        Vector3 anchor = Anchor(leg);
+        Vector3 lead = Vector3.ClampMagnitude(velocity * (p.duration * 0.5f), p.footOffset);
+
+        if (TryGroundAt(anchor + lead, refY, out float y))
+            return new Vector3(anchor.x + lead.x, y + footHeightOffset, anchor.z + lead.z);
+        if (TryGroundAt(anchor, refY, out y))
+            return new Vector3(anchor.x, y + footHeightOffset, anchor.z);
+        return new Vector3(anchor.x, refY + footHeightOffset, anchor.z);
+    }
+
+    void ResetFeet()
+    {
+        var p = CurrentParams();
+        foreach (var leg in new[] { left, right })
+        {
+            leg.stepping = false;
+            leg.pos = leg.planted = FootTarget(leg, p);
+            leg.angle = 0f;
+        }
+    }
+
+    // ----------------------------------------------------------------------------------
+    // Gait
+    // ----------------------------------------------------------------------------------
+
+    void UpdateGait(float dt)
+    {
+        var p = CurrentParams();
+        Vector3 leftTarget = FootTarget(left, p);
+        Vector3 rightTarget = FootTarget(right, p);
+
+        AdvanceStep(left, leftTarget, dt);
+        AdvanceStep(right, rightTarget, dt);
+
+        // One foot lifts at a time, except a nearly finished step can overlap the next one.
+        bool leftFree = !left.stepping && (!right.stepping || right.t > 0.85f);
+        bool rightFree = !right.stepping && (!left.stepping || left.t > 0.85f);
+
+        float leftError = Vector3.Distance(left.planted, leftTarget);
+        float rightError = Vector3.Distance(right.planted, rightTarget);
+
+        // Too far from the hip to keep standing on: step regardless of the other foot.
+        float maxReach = Mathf.Max(p.stepDistance, walkStepDistance) * 3f;
+        if (!left.stepping && HorizontalDistance(left.planted, Anchor(left)) > maxReach) leftFree = true;
+        if (!right.stepping && HorizontalDistance(right.planted, Anchor(right)) > maxReach) rightFree = true;
+
+        Leg candidate = null;
+        Vector3 candidateTarget = default;
+        if (leftFree && leftError > p.stepDistance && (!rightFree || leftError >= rightError))
+        {
+            candidate = left;
+            candidateTarget = leftTarget;
+        }
+        else if (rightFree && rightError > p.stepDistance)
+        {
+            candidate = right;
+            candidateTarget = rightTarget;
+        }
+
+        if (candidate != null)
+        {
+            float error = candidate == left ? leftError : rightError;
+            float lift = p.stepHeight * Mathf.Clamp(error / Mathf.Max(p.stepDistance * 2f, 0.01f), 0.3f, 1f);
+            StartStep(candidate, candidateTarget, p.duration, lift, p.footAngle);
+        }
+
+        if (!left.stepping) left.pos = left.planted;
+        if (!right.stepping) right.pos = right.planted;
+    }
+
+    void StartStep(Leg leg, Vector3 target, float duration, float lift, float maxAngle)
+    {
+        leg.stepping = true;
+        leg.from = leg.pos;
+        leg.to = target;
+        leg.t = 0f;
+        leg.duration = Mathf.Max(duration, 0.05f);
+        leg.lift = lift;
+        leg.maxAngle = maxAngle;
+    }
+
+    void AdvanceStep(Leg leg, Vector3 latestTarget, float dt)
+    {
+        if (!leg.stepping)
+            return;
+
+        leg.t += dt / leg.duration;
+
+        // Track the moving target during the first part of the swing so speed changes don't overshoot.
+        if (leg.t < 0.6f)
+            leg.to = latestTarget;
+
+        if (leg.t >= 1f)
+        {
+            leg.stepping = false;
+            leg.t = 0f;
+            leg.pos = leg.planted = leg.to;
+            leg.angle = 0f;
+            return;
+        }
+
+        leg.pos = StepCurve(leg.from, leg.to, leg.t, leg.lift);
+        leg.angle = CalculateFootAngle(leg.t, leg.maxAngle);
+    }
+
+    // Ease in/out across, rise early when stepping up and drop late when stepping down, so the
+    // foot clears block edges.
+    static Vector3 StepCurve(Vector3 from, Vector3 to, float t, float lift)
+    {
+        float h = t * t * (3f - 2f * t);
+        Vector3 p = Vector3.Lerp(from, to, h);
+
+        float dy = to.y - from.y;
+        float v = dy > 0f ? 1f - (1f - t) * (1f - t) : t * t;
+        float arc = Mathf.Sin(t * Mathf.PI) * (lift + Mathf.Max(0f, dy) * 0.3f);
+        p.y = from.y + dy * v + arc;
+        return p;
     }
 
     float CalculateFootAngle(float progress, float maxAngle)
     {
-        // Calculate foot tilt based on step progress
         if (progress < tiltPeakProgress)
-        {
-            // Lerp from 0 to max angle (0 to tiltPeakProgress)
-            float t = progress / tiltPeakProgress;
-            return Mathf.Lerp(0f, maxAngle, t);
-        }
-        else if (progress < tiltReturnProgress)
-        {
-            // Hold at max angle (tiltPeakProgress to tiltReturnProgress)
+            return Mathf.Lerp(0f, maxAngle, progress / tiltPeakProgress);
+        if (progress < tiltReturnProgress)
             return maxAngle;
-        }
-        else
+        return Mathf.Lerp(maxAngle, 0f, (progress - tiltReturnProgress) / (1f - tiltReturnProgress));
+    }
+
+    static float HorizontalDistance(Vector3 a, Vector3 b)
+    {
+        a.y = b.y = 0f;
+        return Vector3.Distance(a, b);
+    }
+
+    // ----------------------------------------------------------------------------------
+    // Airborne
+    // ----------------------------------------------------------------------------------
+
+    void BeginAirborne()
+    {
+        foreach (var leg in new[] { left, right })
         {
-            // Lerp from max angle back to 0 (tiltReturnProgress to 1.0)
-            float t = (progress - tiltReturnProgress) / (1f - tiltReturnProgress);
-            return Mathf.Lerp(maxAngle, 0f, t);
+            leg.airLocal = bodyTransform.InverseTransformPoint(leg.pos);
+            leg.stepping = false;
+        }
+        minAirVelocity = 0f;
+    }
+
+    void UpdateAirborne(float dt)
+    {
+        float verticalVelocity = body != null ? body.linearVelocity.y : 0f;
+        minAirVelocity = Mathf.Min(minAirVelocity, verticalVelocity);
+
+        // Going up: tucked pose. Falling fast: back toward the pose held at take-off.
+        float blend = Mathf.InverseLerp(maxDownwardVelocity, maxUpwardVelocity, verticalVelocity);
+        float k = 1f - Mathf.Exp(-airborneTransitionSpeed * dt);
+
+        foreach (var leg in new[] { left, right })
+        {
+            float x = leg.isLeft ? -defaultFootOffset.x : defaultFootOffset.x;
+            Vector3 airPose = new Vector3(x, defaultFootOffset.y, defaultFootOffset.z);
+            Vector3 target = bodyTransform.TransformPoint(Vector3.Lerp(leg.airLocal, airPose, blend));
+
+            leg.pos = Vector3.Lerp(leg.pos, target, k);
+            leg.angle = Mathf.Lerp(leg.angle, 0f, k);
         }
     }
 
-    Vector3 CalculateStepPosition(Vector3 start, Vector3 end, float progress, float height)
+    void Land()
     {
-        // Linear interpolation between start and end
-        Vector3 position = Vector3.Lerp(start, end, progress);
+        landingDip = Mathf.Min(maxLandingDip, landingDipPerSpeed * -minAirVelocity);
 
-        // Add arc (parabola) for natural stepping motion
-        float arc = Mathf.Sin(progress * Mathf.PI) * height;
-        position.y += arc;
-
-        return position;
+        // Both feet reach for the ground together.
+        var p = CurrentParams();
+        float duration = Mathf.Clamp(1.5f / Mathf.Max(landingTransitionSpeed, 0.01f), 0.05f, 0.2f);
+        StartStep(left, FootTarget(left, p), duration, 0f, 0f);
+        StartStep(right, FootTarget(right, p), duration, 0f, 0f);
     }
 
-    void UpdateBodyHeight()
+    // ----------------------------------------------------------------------------------
+    // Body and arms
+    // ----------------------------------------------------------------------------------
+
+    void UpdateBody(float dt, bool grounded)
     {
-        // Don't adjust body height when not grounded (jumping/falling)
-        if (controller != null && !controller.IsGrounded)
+        float speed = velocity.magnitude;
+        float walkSpeed = controller != null ? controller.WalkSpeed : 5f;
+        float speedFactor = Mathf.Clamp01(speed / Mathf.Max(walkSpeed, 0.01f));
+
+        // Lower the body so the lowest foot can still reach its ground (stairs, ledges).
+        float targetHeight = 0f;
+        if (grounded)
         {
-            // Smoothly return to original height
-            currentBodyHeight = Mathf.Lerp(currentBodyHeight, 0f, Time.deltaTime * bodyHeightAdjustSpeed);
-
-            if (bodyTransform != null)
-            {
-                Vector3 bodyPos = bodyTransform.localPosition;
-                // Apply crouch offset from controller
-                float crouchOffset = controller != null ? controller.CrouchOffset : 0f;
-                bodyPos.y = bodyHeightOffset + currentBodyHeight + crouchOffset;
-                bodyTransform.localPosition = bodyPos;
-            }
-            return;
+            float lowest = Mathf.Min(left.Support.y, right.Support.y) - footHeightOffset;
+            targetHeight = Mathf.Clamp(lowest - transform.position.y, -stepDownDistance, 0f);
         }
+        currentBodyHeight = Mathf.Lerp(currentBodyHeight, targetHeight, 1f - Mathf.Exp(-bodyHeightAdjustSpeed * dt));
 
-        // Find the lowest foot target position
-        float lowestFootHeight = Mathf.Min(leftFootTarget.y, rightFootTarget.y);
-
-        // Calculate how much to lower the body
-        // The body should lower so the lowest foot can reach the ground
-        targetBodyHeight = lowestFootHeight - transform.position.y;
-
-        // Clamp the adjustment so we only move down (not up) and max by stepDownDistance
-        targetBodyHeight = Mathf.Clamp(targetBodyHeight, -stepDownDistance, 0f);
-
-        // Smoothly interpolate to target height
-        currentBodyHeight = Mathf.Lerp(currentBodyHeight, targetBodyHeight, Time.deltaTime * bodyHeightAdjustSpeed);
-
-        // Apply the height adjustment to the body transform (adding back the original offset)
-        if (bodyTransform != null)
+        // Lowest at foot contact, highest mid-swing.
+        float targetBob = 0f;
+        if (grounded && speedFactor > 0.01f)
         {
-            Vector3 bodyPos = bodyTransform.localPosition;
-            // Apply both step-down adjustment AND crouch offset from controller
-            float crouchOffset = controller != null ? controller.CrouchOffset : 0f;
-            bodyPos.y = bodyHeightOffset + currentBodyHeight + crouchOffset;
-            bodyTransform.localPosition = bodyPos;
+            Leg active = left.stepping ? left : right.stepping ? right : null;
+            float swing = active != null ? Mathf.Sin(active.t * Mathf.PI) : 0f;
+            targetBob = walkBobAmount * speedFactor * (swing - 1f);
         }
-    }
+        currentBob = Mathf.Lerp(currentBob, targetBob, 1f - Mathf.Exp(-20f * dt));
 
-    void UpdateBodyTilt()
-    {
-        if (bodyTransform == null) return;
+        landingDip = Mathf.Lerp(landingDip, 0f, 1f - Mathf.Exp(-6f * dt));
 
-        // Determine target tilt based on movement state
+        float crouchOffset = controller != null ? controller.CrouchOffset : 0f;
+        Vector3 bodyPos = bodyTransform.localPosition;
+        bodyPos.y = bodyHeightOffset + currentBodyHeight + currentBob - landingDip + crouchOffset;
+        bodyTransform.localPosition = bodyPos;
+
+        // Lean into forward motion; more when sprinting.
         float targetTilt = 0f;
-
-        if (controller != null && controller.State == SimpleVoxelController.MovementState.Sprinting)
+        if (grounded && speed > 0.1f)
         {
-            targetTilt = sprintTiltAngle;
+            bool sprinting = controller != null && controller.State == SimpleVoxelController.MovementState.Sprinting;
+            float forwardFraction = Vector3.Dot(velocity / speed, ModelForward);
+            targetTilt = (sprinting ? sprintTiltAngle : walkTiltAngle) * forwardFraction * speedFactor;
         }
+        currentBodyTilt = Mathf.Lerp(currentBodyTilt, targetTilt, 1f - Mathf.Exp(-sprintTiltSpeed * dt));
 
-        // Smoothly interpolate to target tilt
-        currentBodyTilt = Mathf.Lerp(currentBodyTilt, targetTilt, Time.deltaTime * sprintTiltSpeed);
-
-        // Apply tilt to body rotation (preserve Y rotation)
-        Vector3 currentEuler = bodyTransform.eulerAngles;
-        bodyTransform.rotation = Quaternion.Euler(currentBodyTilt, currentEuler.y, 0);
+        // Yaw is owned by the controller; only add the lean.
+        float yaw = controller != null ? controller.BodyYaw : bodyTransform.eulerAngles.y;
+        bodyTransform.rotation = Quaternion.Euler(currentBodyTilt, yaw, 0f);
     }
 
-    void UpdateArmSwing()
+    void UpdateArmSwing(float dt, bool grounded)
     {
-        if (!enableArmSwing || leftArm == null || rightArm == null || controller == null) return;
-
-        // Only swing arms when moving on ground
-        if (controller.State == SimpleVoxelController.MovementState.Jumping ||
-            controller.State == SimpleVoxelController.MovementState.Falling)
-        {
-            // Reset arms to neutral when airborne
-            leftArm.localRotation = Quaternion.Lerp(leftArm.localRotation, Quaternion.identity, Time.deltaTime * 5f);
-            rightArm.localRotation = Quaternion.Lerp(rightArm.localRotation, Quaternion.identity, Time.deltaTime * 5f);
+        if (!enableArmSwing || leftArm == null || rightArm == null)
             return;
+
+        // Gait phase: left step covers 0..0.5, right step 0.5..1.
+        if (left.stepping) gaitPhase = 0.5f * left.t;
+        else if (right.stepping) gaitPhase = 0.5f + 0.5f * right.t;
+
+        float target = 0f;
+        if (grounded)
+        {
+            float walkSpeed = controller != null ? controller.WalkSpeed : 5f;
+            float speedFactor = Mathf.Clamp01(velocity.magnitude / Mathf.Max(walkSpeed, 0.01f));
+            target = Mathf.Cos(gaitPhase * 2f * Mathf.PI) * armSwingAngle * speedFactor;
+            if (invertArmSwing) target = -target;
         }
+        currentArmSwing = Mathf.Lerp(currentArmSwing, target, 1f - Mathf.Exp(-armSwingSpeed * dt));
 
-        // Increment swing time based on movement speed
-        float speedMultiplier = Mathf.Clamp01(controller.CurrentSpeed / 5f);
-        armSwingTime += Time.deltaTime * armSwingSpeed * speedMultiplier;
-
-        // Calculate swing angles (opposite to legs)
-        float leftSwing = Mathf.Sin(armSwingTime) * armSwingAngle * speedMultiplier;
-        float rightSwing = -leftSwing; // Opposite
-
-        // Apply rotation around X axis (forward/back swing)
-        leftArm.localRotation = Quaternion.Euler(leftSwing, 0, 0);
-        rightArm.localRotation = Quaternion.Euler(rightSwing, 0, 0);
+        leftArm.localRotation = Quaternion.Euler(currentArmSwing, 0, 0);
+        rightArm.localRotation = Quaternion.Euler(-currentArmSwing, 0, 0);
     }
+
+    // ----------------------------------------------------------------------------------
+    // IK
+    // ----------------------------------------------------------------------------------
 
     void ApplyIK()
     {
-        // Apply 2-bone IK to left leg
-        if (leftLeg != null && leftShin != null && leftFoot != null)
-        {
-            SolveLegIK(leftLeg, leftShin, leftFoot, leftFootCurrentPos, leftFootAngle, true);
-        }
-
-        // Apply 2-bone IK to right leg
-        if (rightLeg != null && rightShin != null && rightFoot != null)
-        {
-            SolveLegIK(rightLeg, rightShin, rightFoot, rightFootCurrentPos, rightFootAngle, false);
-        }
+        if (left.Valid) SolveLegIK(left.thigh, left.shin, left.foot, left.pos, left.angle, true);
+        if (right.Valid) SolveLegIK(right.thigh, right.shin, right.foot, right.pos, right.angle, false);
     }
 
     void SolveLegIK(Transform thigh, Transform shin, Transform foot, Vector3 targetPos, float footAngle, bool isLeftLeg)
     {
-        // Get the positions
         Vector3 thighPos = thigh.position;
         Vector3 shinPos = shin.position;
 
-        // Calculate bone lengths
         float thighLength = Vector3.Distance(thighPos, shinPos);
         float shinLength = Vector3.Distance(shinPos, foot.position);
         float totalLength = thighLength + shinLength;
 
-        // Direction from thigh to target
         Vector3 toTarget = targetPos - thighPos;
-        float targetDistance = toTarget.magnitude;
-
-        // Clamp to prevent overextension
-        targetDistance = Mathf.Min(targetDistance, totalLength * 0.99f);
+        float targetDistance = Mathf.Min(toTarget.magnitude, totalLength * 0.99f);
         Vector3 targetDirection = toTarget.normalized;
 
-        // Law of cosines to find angles
+        // Law of cosines
         float thighAngle = Mathf.Acos(Mathf.Clamp(
             (thighLength * thighLength + targetDistance * targetDistance - shinLength * shinLength) /
             (2f * thighLength * targetDistance), -1f, 1f));
 
         // Pole direction (which way the knee points)
         Vector3 poleDirection = bodyTransform.forward;
-
-        // Calculate the axis perpendicular to both target direction and pole
         Vector3 bendAxis = Vector3.Cross(targetDirection, poleDirection).normalized;
-
-        // If cross product is zero, use a default axis
         if (bendAxis.magnitude < 0.01f)
-        {
             bendAxis = bodyTransform.right * (isLeftLeg ? -1 : 1);
-        }
 
-        // Calculate knee position
         Vector3 kneeDirection = Quaternion.AngleAxis(-thighAngle * Mathf.Rad2Deg, bendAxis) * targetDirection;
         Vector3 kneePos = thighPos + kneeDirection * thighLength;
 
-        // Point thigh toward knee
         Vector3 thighDir = (kneePos - thighPos).normalized;
         thigh.rotation = Quaternion.LookRotation(bendAxis, -thighDir) * Quaternion.Euler(0, 90, 0);
 
-        // Point shin toward foot target
         Vector3 shinDir = (targetPos - kneePos).normalized;
         shin.rotation = Quaternion.LookRotation(bendAxis, -shinDir) * Quaternion.Euler(0, 90, 0);
 
-        // Apply foot rotation with tilt
-        // Base rotation keeps foot level with ground facing body direction
+        // Foot level with the ground, facing the body direction, pitched by the step tilt.
         Quaternion baseRotation = Quaternion.Euler(0, bodyTransform.eulerAngles.y, 0);
-
-        // Add the pitch/tilt rotation around the right axis of the body
         Quaternion tiltRotation = Quaternion.AngleAxis(-footAngle, bodyTransform.right);
-
         foot.rotation = tiltRotation * baseRotation;
     }
 }

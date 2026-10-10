@@ -2,7 +2,9 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
-/// Simple voxel character controller with smooth step up/down and sprint
+/// Voxel character controller: camera relative walk/sprint/crouch, jumping with coyote time and
+/// input buffering. Collision, step-up and ground snapping are done by <see cref="VoxelBody"/>;
+/// this script only decides the velocity and which way the body faces.
 /// </summary>
 [RequireComponent(typeof(VoxelBody))]
 public class SimpleVoxelController : MonoBehaviour
@@ -14,7 +16,7 @@ public class SimpleVoxelController : MonoBehaviour
     [SerializeField] private float sprintSpeed = 8f;
     [Tooltip("Crouch speed")]
     [SerializeField] private float crouchSpeed = 2.5f;
-    [Tooltip("How quickly to accelerate/decelerate")]
+    [Tooltip("How quickly to accelerate/decelerate (1/s)")]
     [SerializeField] private float acceleration = 20f;
     [Tooltip("Movement control while airborne (0 = no control, 1 = full control)")]
     [SerializeField] private float airControlMultiplier = 0.3f;
@@ -28,350 +30,205 @@ public class SimpleVoxelController : MonoBehaviour
     [SerializeField] private float crouchTransitionSpeed = 8f;
 
     [Header("Stepping")]
-    [Tooltip("Maximum height character can step up")]
+    [Tooltip("Maximum ledge height climbed automatically (1 = one block)")]
     [SerializeField] private float maxStepHeight = 1f;
-    [Tooltip("How far ahead to check for steps")]
-    [SerializeField] private float stepCheckDistance = 0.5f;
-    [Tooltip("Speed to move up when stepping (walking)")]
-    [SerializeField] private float walkStepUpSpeed = 5f;
-    [Tooltip("Speed to move up when stepping (sprinting)")]
-    [SerializeField] private float sprintStepUpSpeed = 8f;
+    [Tooltip("Walking off a drop up to this high keeps you on the ground instead of falling (0 = off)")]
+    [SerializeField] private float groundSnapDistance = 1f;
 
     [Header("Jump")]
-    [Tooltip("Jump force")]
+    [Tooltip("Upward velocity applied when jumping")]
     [SerializeField] private float jumpForce = 7f;
     [Tooltip("Time after leaving ground where jump is still allowed (coyote time)")]
     [SerializeField] private float coyoteTime = 0.1f;
-
-    [Header("Ground Detection")]
-    [Tooltip("Distance to check for ground below")]
-    [SerializeField] private float groundCheckDistance = 0.2f;
-    [Tooltip("Additional distance to check for ground when jumping/falling (for early landing detection)")]
-    [SerializeField] private float airborneGroundCheckDistance = 1.0f;
+    [Tooltip("A jump pressed this long before landing still happens on landing")]
+    [SerializeField] private float jumpBufferTime = 0.15f;
 
     [Header("References")]
-    [Tooltip("Camera for relative movement (optional)")]
+    [Tooltip("Camera for relative movement (optional, uses MouseLookController when present)")]
     [SerializeField] private Transform cameraTransform;
     [Tooltip("Body transform that rotates to face movement direction")]
     [SerializeField] private Transform bodyTransform;
 
     [Header("Body Rotation")]
-    [Tooltip("Rotate body to face movement direction")]
+    [Tooltip("Rotate the body to face the way it is going")]
     [SerializeField] private bool rotateBodyToMovement = true;
     [Tooltip("Speed of body rotation")]
     [SerializeField] private float bodyRotationSpeed = 10f;
+    [Tooltip("When standing still, the body turns to follow the camera once the look angle passes this")]
+    [SerializeField] private float idleTurnAngle = 65f;
 
     // Movement states for IK
     public enum MovementState { Idle, Turning, Walking, Sprinting, Crouching, Jumping, Falling }
 
+    // The model faces away from the body transform's forward axis.
+    const float ModelYawOffset = 180f;
+
     // Components
-    private VoxelBody rb;
+    private VoxelBody body;
+    private MouseLookController look;
+
+    // Input
+    private Vector2 moveInputRaw;
+    private bool sprintHeld;
+    private bool isCrouching;
+    private float jumpPressedTime = float.NegativeInfinity;
 
     // State
-    private Vector2 moveInputRaw;
     private Vector3 moveInput;
     private Vector3 currentVelocity;
     private bool isGrounded;
-    private float targetHeight;
-    private bool isStepping;
-    private bool isSprinting;
-    private bool isCrouching;
-    private float currentCrouchOffset = 0f;
-    private bool jumpRequested;
     private bool isJumping;
-    private float timeLeftGround;
+    private float lastGroundedTime = float.NegativeInfinity;
+    private float currentCrouchOffset;
+    private float bodyYaw;
+    private bool idleTurning;
     private MovementState currentState = MovementState.Idle;
 
-    void Start()
+    void Awake()
     {
         // Terrain collision reads the voxel data directly (VoxelPhysics) instead of Unity physics.
-        if (!TryGetComponent(out rb))
-            rb = gameObject.AddComponent<VoxelBody>();
-        rb.useGravity = true;
-        rb.interpolate = true;
+        if (!TryGetComponent(out body))
+            body = gameObject.AddComponent<VoxelBody>();
+        body.useGravity = true;
+        body.interpolate = true;
+
+        look = GetComponent<MouseLookController>();
 
         if (cameraTransform == null)
-        {
-            cameraTransform = Camera.main?.transform;
-        }
+            cameraTransform = Camera.main != null ? Camera.main.transform : null;
 
-        targetHeight = transform.position.y;
+        if (bodyTransform != null)
+            bodyYaw = bodyTransform.eulerAngles.y;
     }
 
+    // Runs after VoxelBody.FixedUpdate: reads the result of this step, sets the velocity for the next.
     void FixedUpdate()
     {
+        float dt = Time.fixedDeltaTime;
+
         CalculateMovementInput();
-        CheckGround();
+
+        isGrounded = body.IsGrounded;
+        if (isGrounded)
+        {
+            lastGroundedTime = Time.time;
+            if (isJumping && body.linearVelocity.y <= 0f)
+                isJumping = false;
+        }
+
+        // Horizontal velocity eases toward the target (frame-rate independent).
+        float accel = isGrounded ? acceleration : acceleration * airControlMultiplier;
+        Vector3 targetVelocity = moveInput * CurrentMaxSpeed();
+        currentVelocity = Vector3.Lerp(currentVelocity, targetVelocity, 1f - Mathf.Exp(-accel * dt));
+
+        Vector3 vel = body.linearVelocity;
+        vel.x = currentVelocity.x;
+        vel.z = currentVelocity.z;
+
+        bool jumpBuffered = Time.time - jumpPressedTime <= jumpBufferTime;
+        bool canJump = !isJumping && !isCrouching && (isGrounded || Time.time - lastGroundedTime <= coyoteTime);
+        if (jumpBuffered && canJump)
+        {
+            vel.y = jumpForce;
+            isJumping = true;
+            isGrounded = false;
+            jumpPressedTime = float.NegativeInfinity;
+            lastGroundedTime = float.NegativeInfinity;
+        }
+
+        if (vel.y < terminalVelocity)
+            vel.y = terminalVelocity;
+
+        body.linearVelocity = vel;
+
+        // Small tolerance so whole blocks are always reachable despite the collision skin.
+        body.stepHeight = maxStepHeight > 0f ? maxStepHeight + 0.02f : 0f;
+        body.groundSnapDistance = !isJumping && groundSnapDistance > 0f ? groundSnapDistance + 0.02f : 0f;
+
+        float targetCrouch = isCrouching ? -crouchHeight : 0f;
+        currentCrouchOffset = Mathf.Lerp(currentCrouchOffset, targetCrouch, 1f - Mathf.Exp(-crouchTransitionSpeed * dt));
+
         UpdateMovementState();
-        HandleJump();
-        HandleCrouch();
-        CheckForSteps();
-        ApplyMovement();
-        RotateBody();
+    }
+
+    // Body facing is visual only, so it runs per frame for smoothness.
+    void Update()
+    {
+        if (bodyTransform == null)
+            return;
+
+        float cameraYaw = CameraYaw() + ModelYawOffset;
+        bool moving = moveInput.sqrMagnitude > 0.01f;
+        float targetYaw = bodyYaw;
+
+        if (moving && rotateBodyToMovement)
+        {
+            idleTurning = false;
+            bool faceMovement = look != null && look.IsThirdPerson;
+            targetYaw = faceMovement
+                ? Mathf.Atan2(moveInput.x, moveInput.z) * Mathf.Rad2Deg + ModelYawOffset
+                : cameraYaw;
+        }
+        else if (!moving && (look == null || !look.IsThirdPerson))
+        {
+            // Turn in place when the head has turned too far.
+            float diff = Mathf.Abs(Mathf.DeltaAngle(bodyYaw, cameraYaw));
+            if (diff > idleTurnAngle) idleTurning = true;
+            else if (diff < 3f) idleTurning = false;
+            if (idleTurning) targetYaw = cameraYaw;
+        }
+        else
+        {
+            idleTurning = false;
+        }
+
+        float speed = idleTurning ? bodyRotationSpeed * 0.8f : bodyRotationSpeed;
+        bodyYaw = Mathf.LerpAngle(bodyYaw, targetYaw, 1f - Mathf.Exp(-speed * Time.deltaTime));
+
+        // ProceduralLegIK adds lean on top of this in LateUpdate.
+        bodyTransform.rotation = Quaternion.Euler(0f, bodyYaw, 0f);
+    }
+
+    float CameraYaw()
+    {
+        if (look != null)
+            return look.CameraYaw;
+        return cameraTransform != null ? cameraTransform.eulerAngles.y : transform.eulerAngles.y;
     }
 
     void CalculateMovementInput()
     {
-        // Calculate camera-relative movement
-        if (cameraTransform != null)
-        {
-            Vector3 forward = cameraTransform.forward;
-            Vector3 right = cameraTransform.right;
+        Quaternion yaw = Quaternion.Euler(0f, CameraYaw(), 0f);
+        Vector3 forward = yaw * Vector3.forward;
+        Vector3 right = yaw * Vector3.right;
 
-            forward.y = 0;
-            right.y = 0;
-            forward.Normalize();
-            right.Normalize();
-
-            moveInput = (forward * moveInputRaw.y + right * moveInputRaw.x).normalized;
-        }
-        else
-        {
-            moveInput = new Vector3(moveInputRaw.x, 0, moveInputRaw.y).normalized;
-        }
+        Vector3 wish = forward * moveInputRaw.y + right * moveInputRaw.x;
+        moveInput = wish.sqrMagnitude > 1f ? wish.normalized : wish;
     }
 
-    void CheckGround()
+    bool SprintActive => sprintHeld && !isCrouching && moveInputRaw.y > 0.1f;
+
+    float CurrentMaxSpeed()
     {
-        Vector3 rayStart = transform.position + Vector3.up * 0.1f;
-        bool wasGrounded = isGrounded;
-
-        // Only disable ground check while jumping AND moving upward
-        if (isJumping && rb.linearVelocity.y > 0f)
-        {
-            isGrounded = false;
-        }
-        else
-        {
-            // Use extended distance when jumping/falling to detect landing earlier
-            float checkDistance = isJumping ? (groundCheckDistance + airborneGroundCheckDistance) : (groundCheckDistance + 0.1f);
-            isGrounded = VoxelPhysics.Raycast(rayStart, Vector3.down, checkDistance);
-        }
-
-        Debug.DrawRay(rayStart, Vector3.down * (groundCheckDistance + 0.1f), isGrounded ? Color.green : Color.red);
-
-        // Track time since leaving ground for coyote time
-        if (!isGrounded && wasGrounded)
-        {
-            timeLeftGround = Time.time;
-        }
-
-        // Clear jumping flag when we land
-        if (isGrounded && isJumping)
-        {
-            isJumping = false;
-        }
+        if (isCrouching) return crouchSpeed;
+        return SprintActive ? sprintSpeed : walkSpeed;
     }
 
     void UpdateMovementState()
     {
-        // Check if jumping (highest priority)
         if (isJumping)
-        {
             currentState = MovementState.Jumping;
-            return;
-        }
-
-        // Check if falling (not grounded and not jumping)
-        if (!isGrounded)
-        {
+        else if (!isGrounded)
             currentState = MovementState.Falling;
-            return;
-        }
-
-        // Check if crouching
-        if (isCrouching)
-        {
+        else if (isCrouching)
             currentState = MovementState.Crouching;
-            return;
-        }
-
-        if (moveInput.magnitude < 0.1f)
-        {
-            // Check if body is rotating (turning in place)
-            if (bodyTransform != null && rotateBodyToMovement && cameraTransform != null)
-            {
-                Vector3 cameraForward = cameraTransform.forward;
-                cameraForward.y = 0;
-                cameraForward.Normalize();
-
-                float targetYaw = Mathf.Atan2(cameraForward.x, cameraForward.z) * Mathf.Rad2Deg + 180f;
-                float angleDiff = Mathf.Abs(Mathf.DeltaAngle(bodyTransform.eulerAngles.y, targetYaw));
-
-                currentState = angleDiff > 5f ? MovementState.Turning : MovementState.Idle;
-            }
-            else
-            {
-                currentState = MovementState.Idle;
-            }
-        }
+        else if (moveInput.sqrMagnitude < 0.01f)
+            currentState = idleTurning ? MovementState.Turning : MovementState.Idle;
         else
-        {
-            // Sprint only works when moving forward (positive Y input) and not crouching
-            bool isMovingForward = moveInputRaw.y > 0.1f;
-            currentState = (isSprinting && isMovingForward) ? MovementState.Sprinting : MovementState.Walking;
-        }
+            currentState = SprintActive ? MovementState.Sprinting : MovementState.Walking;
     }
 
-    void HandleJump()
-    {
-        if (jumpRequested)
-        {
-            // Can't jump while crouching
-            if (isCrouching)
-            {
-                jumpRequested = false;
-                return;
-            }
-
-            // Allow jump if grounded OR within coyote time
-            bool canJump = isGrounded || (Time.time - timeLeftGround < coyoteTime);
-
-            if (canJump)
-            {
-                Vector3 vel = rb.linearVelocity;
-                vel.y = jumpForce;
-                rb.linearVelocity = vel;
-                isGrounded = false;
-                isJumping = true;
-            }
-
-            jumpRequested = false;
-        }
-    }
-
-    void HandleCrouch()
-    {
-        // Calculate target crouch offset
-        float targetCrouchOffset = isCrouching ? -crouchHeight : 0f;
-
-        // Smoothly interpolate to target
-        currentCrouchOffset = Mathf.Lerp(currentCrouchOffset, targetCrouchOffset, Time.fixedDeltaTime * crouchTransitionSpeed);
-    }
-
-    void CheckForSteps()
-    {
-        // Allow stepping when grounded OR when falling (not during upward jump)
-        bool canStep = isGrounded || (rb.linearVelocity.y <= 0f);
-
-        if (!canStep || moveInput.magnitude < 0.1f) return;
-
-        Vector3 checkOrigin = transform.position + Vector3.up * 0.1f;
-        Vector3 checkDirection = moveInput;
-
-        bool hasObstacle = VoxelPhysics.Raycast(checkOrigin, checkDirection, out VoxelRaycastHit obstacleHit, stepCheckDistance);
-
-        Debug.DrawRay(checkOrigin, checkDirection * stepCheckDistance, hasObstacle ? Color.red : Color.blue);
-
-        if (hasObstacle)
-        {
-            Vector3 stepCheckOrigin = checkOrigin + checkDirection * (obstacleHit.distance + 0.1f) + Vector3.up * (maxStepHeight + 0.1f);
-            if (VoxelPhysics.Raycast(stepCheckOrigin, Vector3.down, out VoxelRaycastHit stepHit, maxStepHeight + 0.2f))
-            {
-                float stepHeight = stepHit.point.y - transform.position.y;
-
-                Debug.DrawRay(stepCheckOrigin, Vector3.down * (maxStepHeight + 0.2f), Color.cyan);
-
-                if (stepHeight > 0.1f && stepHeight <= maxStepHeight)
-                {
-                    targetHeight = stepHit.point.y;
-                    isStepping = true;
-                }
-            }
-        }
-    }
-
-    void ApplyMovement()
-    {
-        // Determine movement speed based on state
-        float moveSpeed = walkSpeed;
-        if (isCrouching)
-        {
-            moveSpeed = crouchSpeed;
-        }
-        else
-        {
-            // Sprint only works when moving forward (positive Y input)
-            bool isMovingForward = moveInputRaw.y > 0.1f;
-            bool canSprint = isSprinting && isMovingForward;
-            moveSpeed = canSprint ? sprintSpeed : walkSpeed;
-        }
-
-        float stepSpeed = isSprinting ? sprintStepUpSpeed : walkStepUpSpeed;
-
-        // Reduce control when airborne (but maintain momentum)
-        float accelMultiplier = isGrounded ? 1f : airControlMultiplier;
-
-        // Horizontal movement
-        if (moveInput.magnitude < 0.1f)
-        {
-            currentVelocity = Vector3.Lerp(currentVelocity, Vector3.zero, acceleration * accelMultiplier * Time.fixedDeltaTime);
-        }
-        else
-        {
-            Vector3 targetVelocity = moveInput * moveSpeed;
-            currentVelocity = Vector3.Lerp(currentVelocity, targetVelocity, acceleration * accelMultiplier * Time.fixedDeltaTime);
-        }
-
-        // Vertical movement
-        if (isStepping)
-        {
-            float heightDiff = targetHeight - transform.position.y;
-
-            if (Mathf.Abs(heightDiff) < 0.05f)
-            {
-                Vector3 pos = rb.position;
-                pos.y = targetHeight;
-                rb.MovePosition(pos);
-                isStepping = false;
-                rb.linearVelocity = new Vector3(currentVelocity.x, 0, currentVelocity.z);
-            }
-            else
-            {
-                float newY = Mathf.MoveTowards(rb.position.y, targetHeight, stepSpeed * Time.fixedDeltaTime);
-                Vector3 pos = rb.position;
-                pos.y = newY;
-                rb.MovePosition(pos);
-                rb.linearVelocity = new Vector3(currentVelocity.x, 0, currentVelocity.z);
-            }
-        }
-        else
-        {
-            Vector3 vel = rb.linearVelocity;
-            vel.x = currentVelocity.x;
-            vel.z = currentVelocity.z;
-
-            // Apply terminal velocity
-            if (vel.y < terminalVelocity)
-            {
-                vel.y = terminalVelocity;
-            }
-
-            rb.linearVelocity = vel;
-        }
-    }
-
-    void RotateBody()
-    {
-        if (!rotateBodyToMovement || bodyTransform == null) return;
-
-        if (moveInput.magnitude > 0.1f && cameraTransform != null)
-        {
-            Vector3 cameraForward = cameraTransform.forward;
-            cameraForward.y = 0;
-            cameraForward.Normalize();
-
-            float targetYaw = Mathf.Atan2(cameraForward.x, cameraForward.z) * Mathf.Rad2Deg + 180f;
-            float currentYaw = bodyTransform.eulerAngles.y;
-            float newYaw = Mathf.LerpAngle(currentYaw, targetYaw, bodyRotationSpeed * Time.fixedDeltaTime);
-
-            // Preserve the X rotation (tilt) that's being set by ProceduralLegIK
-            Vector3 currentEuler = bodyTransform.eulerAngles;
-            bodyTransform.rotation = Quaternion.Euler(currentEuler.x, newYaw, 0);
-        }
-    }
-
-    // Input callbacks
+    // Input callbacks (wired up by PlayerInput)
     public void OnMove(InputAction.CallbackContext context)
     {
         moveInputRaw = context.ReadValue<Vector2>();
@@ -379,7 +236,7 @@ public class SimpleVoxelController : MonoBehaviour
 
     public void OnSprint(InputAction.CallbackContext context)
     {
-        isSprinting = context.ReadValueAsButton();
+        sprintHeld = context.ReadValueAsButton();
     }
 
     public void OnCrouch(InputAction.CallbackContext context)
@@ -390,19 +247,21 @@ public class SimpleVoxelController : MonoBehaviour
     public void OnJump(InputAction.CallbackContext context)
     {
         if (context.performed)
-        {
-            jumpRequested = true;
-        }
+            jumpPressedTime = Time.time;
     }
 
     // Public accessors
     public Vector3 MoveDirection => moveInput;
     public float CurrentSpeed => currentVelocity.magnitude;
+    public float WalkSpeed => walkSpeed;
+    public float SprintSpeed => sprintSpeed;
     public bool IsGrounded => isGrounded;
     public MovementState State => currentState;
-    public bool IsSprinting => isSprinting;
+    public bool IsSprinting => SprintActive;
     public bool IsFalling => currentState == MovementState.Falling;
     public bool IsJumping => isJumping;
     public bool IsCrouching => isCrouching;
     public float CrouchOffset => currentCrouchOffset;
+    public float BodyYaw => bodyYaw;
+    public VoxelBody Body => body;
 }

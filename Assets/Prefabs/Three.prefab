@@ -388,6 +388,7 @@ MonoBehaviour:
   maxUpwardVelocity: 5
   maxDownwardVelocity: -5
   sprintTiltAngle: -20
+  walkTiltAngle: -4
   sprintTiltSpeed: 10
   enableArmSwing: 1
   armSwingAngle: 15

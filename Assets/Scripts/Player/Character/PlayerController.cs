@@ -41,7 +41,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     [Tooltip("Speed multiplier climbing 45 degree block stairs (one block up per block forward). Steeper slows more, gentler less")]
     [SerializeField] private float uphillSpeedMultiplier = 0.65f;
     [Tooltip("Speed multiplier going down 45 degree block stairs")]
-    [SerializeField] private float downhillSpeedMultiplier = 0.9f;
+    [SerializeField] private float downhillSpeedMultiplier = 0.45f;
     [Tooltip("How quickly speed adapts to the slope (1/s)")]
     [SerializeField] private float slopeResponse = 6f;
 
@@ -244,6 +244,13 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
 
         if (grounded)
             lastGroundHeight = motor.GroundHeight;
+    }
+
+    /// <summary>Turns the body to face <paramref name="yaw"/> immediately (after a teleport, getting up...).</summary>
+    public void SetFacing(float yaw)
+    {
+        facingYaw = yaw;
+        facingVelocity = 0f;
     }
 
     void UpdateFacing(float dt)

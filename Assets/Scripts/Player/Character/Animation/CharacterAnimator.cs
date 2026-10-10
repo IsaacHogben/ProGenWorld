@@ -48,6 +48,13 @@ public class CharacterAnimator : MonoBehaviour
         RefreshLayers();
     }
 
+    /// <summary>Tells every layer to start fresh (after the character is teleported or gets up).</summary>
+    public void ResetLayers()
+    {
+        foreach (var layer in layers)
+            if (layer != null) layer.ResetState();
+    }
+
     /// <summary>Re-collects layer components (call after adding or removing one at runtime).</summary>
     public void RefreshLayers()
     {

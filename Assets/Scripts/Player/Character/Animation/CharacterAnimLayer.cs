@@ -42,6 +42,9 @@ public abstract class CharacterAnimLayer : MonoBehaviour
 
     public abstract void Evaluate(CharacterPose pose, CharacterAnimContext context);
 
+    /// <summary>Forget any state tied to where the character was (after a teleport, ragdoll...).</summary>
+    public virtual void ResetState() { }
+
     /// <summary>Exponential smoothing factor for a rate (1/s), frame-rate independent.</summary>
     protected static float Damp(float rate, float dt) => 1f - Mathf.Exp(-rate * dt);
 }

@@ -24,6 +24,8 @@ public class LocomotionLayer : CharacterAnimLayer
     [Range(0.2f, 0.8f)] [SerializeField] private float runStanceFraction = 0.34f;
     [Tooltip("Extra cadence on slopes (per unit of slope): shorter, quicker steps on stairs and hills")]
     [SerializeField] private float slopeCadence = 0.7f;
+    [Tooltip("Longest step. Faster than this x cadence, the steps get quicker instead of longer")]
+    [SerializeField] private float maxStepLength = 1.6f;
 
     [Header("Foot Placement")]
     [Tooltip("Extra stance width added to the model's rest pose")]
@@ -34,6 +36,8 @@ public class LocomotionLayer : CharacterAnimLayer
     [SerializeField] private float settleDistance = 0.14f;
     [Tooltip("Standing still, a foot turned further than this (degrees) steps to realign")]
     [SerializeField] private float settleAngle = 35f;
+    [Tooltip("Planted feet keep at least this far back from a step up ahead (room for the shin and knee)")]
+    [SerializeField] private float riserMargin = 0.35f;
     [Tooltip("Deepest drop a foot reaches down to (should match the body's max step down)")]
     [SerializeField] private float maxFootDrop = 1.25f;
     [Tooltip("Raise or lower the feet relative to the ground (if they float or sink)")]
@@ -43,7 +47,11 @@ public class LocomotionLayer : CharacterAnimLayer
     [SerializeField] private float walkLift = 0.25f;
     [SerializeField] private float runLift = 0.5f;
     [Tooltip("Gap kept between the swinging foot and block edges in its path")]
-    [SerializeField] private float obstacleClearance = 0.15f;
+    [SerializeField] private float obstacleClearance = 0.12f;
+    [Tooltip("Extra room kept ahead of the toe while the foot is low (the knee leads the foot)")]
+    [SerializeField] private float kneeClearance = 0.3f;
+    [Tooltip("Steepest climb or drop of the swing path (rise per metre); lower = lifts earlier before edges")]
+    [SerializeField] private float maxSwingSlope = 3f;
     [Tooltip("Toe pitch through the swing (degrees)")]
     [SerializeField] private float walkToePitch = 15f;
     [SerializeField] private float runToePitch = 30f;
@@ -124,6 +132,10 @@ public class LocomotionLayer : CharacterAnimLayer
     float gaitWeight;
     float airBlend;
     float sole;
+    float footToe = 0.2f;   // foot extent ahead of / behind the foot bone, measured from the mesh
+    float footHeel = 0.12f;
+    readonly float[] pathGround = new float[96];
+    readonly float[] pathY = new float[64];
     Vector3 lastRoot;
     bool initialized;
 
@@ -142,6 +154,8 @@ public class LocomotionLayer : CharacterAnimLayer
             r.y = 0f;
             feet[i].rest = r;
         }
+
+        MeasureFoot(rig, context);
 
         if (context.Source != null)
         {
@@ -288,6 +302,7 @@ public class LocomotionLayer : CharacterAnimLayer
             : Mathf.Lerp(walkCadence, runCadence, runBlend);
         duty = Mathf.Lerp(duty, Mathf.Lerp(walkStanceFraction, runStanceFraction, runBlend), Damp(4f, dt));
         cadence *= 1f + slopeCadence * Mathf.Min(Mathf.Abs(s.Slope), 1.5f);
+        cadence = Mathf.Max(cadence, speed / Mathf.Max(0.3f, maxStepLength));
         float cycleRate = cadence * 0.5f;
 
         // Standing still: keep stepping only until the feet are back under the body.
@@ -383,46 +398,183 @@ public class LocomotionLayer : CharacterAnimLayer
         Vector3 target = rest + velocity * timeToLand + lead;
 
         // Never plant inside a wall: fall back toward the hip.
-        return OnGround(target, ctx, Vector3.Lerp(rest, target, 0.4f));
+        target = OnGround(target, ctx, Vector3.Lerp(rest, target, 0.4f));
+        Vector3 dir = velocity.sqrMagnitude > 0.09f ? velocity.normalized : ctx.Forward;
+        return ClearOfEdges(target, dir, ctx);
     }
 
+    // Moves a landing spot so the foot sits on one tread: not hanging back over a drop or jammed
+    // against a step up. Close to a step, the foot goes onto it; otherwise it stops short of it.
+    Vector3 ClearOfEdges(Vector3 target, Vector3 dir, CharacterAnimContext ctx)
+    {
+        dir.y = 0f;
+        if (dir.sqrMagnitude < 1e-6f) return target;
+        dir.Normalize();
+
+        for (int pass = 0; pass < 2; pass++)
+        {
+            bool moved = false;
+
+            // Heel over higher ground behind (just came down a step): move forward off it.
+            if (TryGround(target - dir * footHeel, target.y, out float behind) && behind > target.y + 0.2f)
+            {
+                float edge = DistanceToChange(target, -dir, footHeel, target.y);
+                target = OnGround(target + dir * (footHeel - edge + 0.05f), ctx, target);
+                moved = true;
+            }
+
+            // A step up just ahead: room is needed for the toe, shin and knee.
+            float reach = footToe + riserMargin;
+            float riser = DistanceToChange(target, dir, reach, target.y);
+            if (riser < reach && TryGround(target + dir * (riser + 0.05f), target.y, out float ahead) && ahead > target.y + 0.2f)
+            {
+                Vector3 onto = OnGround(target + dir * (riser + footHeel + 0.08f), ctx, target);
+                if (riser < footToe * 0.6f && onto.y > target.y + 0.2f)
+                    target = onto;
+                else
+                    target = OnGround(target - dir * (reach - riser), ctx, target);
+                moved = true;
+            }
+
+            if (!moved) break;
+        }
+        return target;
+    }
+
+    // Distance along dir (up to max) before the ground stops being at height y.
+    float DistanceToChange(Vector3 from, Vector3 dir, float max, float y)
+    {
+        for (float d = 0.05f; d <= max + 1e-4f; d += 0.05f)
+        {
+            if (!TryGround(from + dir * d, y, out float g) || Mathf.Abs(g - y) > 0.2f)
+                return d - 0.05f;
+        }
+        return max;
+    }
+
+    void MeasureFoot(CharacterRig rig, CharacterAnimContext ctx)
+    {
+        float toe = 0f, heel = 0f;
+        bool any = false;
+        Vector3 forward = ctx.Forward;
+        foreach (var leg in rig.Legs)
+        {
+            if (!leg.Valid) continue;
+            foreach (var mf in leg.End.GetComponentsInChildren<MeshFilter>())
+            {
+                if (mf.sharedMesh == null) continue;
+                var b = mf.sharedMesh.bounds;
+                for (int i = 0; i < 8; i++)
+                {
+                    Vector3 corner = new Vector3((i & 1) == 0 ? b.min.x : b.max.x, (i & 2) == 0 ? b.min.y : b.max.y, (i & 4) == 0 ? b.min.z : b.max.z);
+                    float along = Vector3.Dot(mf.transform.TransformPoint(corner) - leg.End.position, forward);
+                    toe = Mathf.Max(toe, along);
+                    heel = Mathf.Max(heel, -along);
+                    any = true;
+                }
+            }
+        }
+        if (any)
+        {
+            footToe = Mathf.Clamp(toe, 0.05f, 0.6f);
+            footHeel = Mathf.Clamp(heel, 0.05f, 0.6f);
+        }
+    }
+
+    // The swing follows a path planned over the voxel ground between lift-off and landing: it
+    // stays clear of every edge under the foot (toe to heel, plus room for the knee while low),
+    // climbs before an edge rather than at it, and the foot moves along it at an eased pace, so
+    // near a step it lifts first and then steps over.
     void UpdateSwing(Foot f, CharacterAnimContext ctx, Vector3 target, float t)
     {
         t = Mathf.Clamp01(t);
         f.target = target;
         Vector3 from = f.liftPos;
-        float rise = target.y - from.y;
-        bool up = rise > 0.25f;
-        bool down = rise < -0.25f;
 
-        // Stepping up: lift before moving forward. Stepping down: move out before dropping.
-        float h = Smooth(Mathf.InverseLerp(up ? 0.15f : 0f, down ? 0.85f : 1f, t));
+        Vector3 flat = target - from;
+        flat.y = 0f;
+        float distance = flat.magnitude;
+        Vector3 dir = distance > 1e-3f ? flat / distance : ctx.Forward;
 
-        float distance = HorizontalDistance(from, target);
+        const float step = 0.1f;
+        int n = Mathf.Clamp(Mathf.CeilToInt(distance / step), 1, pathY.Length - 1);
+        float du = distance / n;
         float lift = Mathf.Lerp(walkLift, runLift, runBlend) * Mathf.Clamp(distance / 0.8f, 0.35f, 1f);
 
-        // Clear any block edge between here and the landing spot.
-        float highestGround = Mathf.Max(from.y, target.y);
-        for (int k = 1; k <= 3; k++)
+        // Ground along the path, from behind the heel to beyond the toe and knee.
+        float refY = Mathf.Max(from.y, target.y);
+        float start = -footHeel;
+        int groundCount = Mathf.Min(pathGround.Length, Mathf.CeilToInt((distance + footHeel + footToe + kneeClearance) / step) + 1);
+        for (int g = 0; g < groundCount; g++)
         {
-            Vector3 q = Vector3.Lerp(from, target, k / 4f);
-            if (TryGround(q, highestGround, out float y))
-                highestGround = Mathf.Max(highestGround, y);
+            Vector3 q = from + dir * (start + g * step);
+            pathGround[g] = TryGround(q, refY, out float y) ? y : refY + 1.5f; // a wall: far above
         }
-        float peak = Mathf.Max(Mathf.Max(from.y, target.y) + lift, highestGround + obstacleClearance + lift * 0.5f);
 
-        float peakT = up ? 0.5f : down ? 0.3f : 0.45f;
-        float y2 = t < peakT
-            ? Mathf.Lerp(from.y, peak, Mathf.Sin(t / peakT * Mathf.PI * 0.5f))
-            : Mathf.Lerp(peak, target.y, Smooth((t - peakT) / (1f - peakT)));
+        for (int k = 0; k <= n; k++)
+        {
+            float u = k * du;
+            float frac = distance > 1e-3f ? u / distance : 1f;
+            float baseY = Mathf.Lerp(from.y, target.y, Smooth(frac)) + lift * Mathf.Sin(frac * Mathf.PI);
 
-        f.pos = new Vector3(Mathf.Lerp(from.x, target.x, h), y2, Mathf.Lerp(from.z, target.z, h));
+            // Highest ground under the foot; the knee needs room ahead while the foot is still low.
+            float ahead = footToe + kneeClearance * (1f - Smooth(frac));
+            int g0 = Mathf.Clamp(Mathf.FloorToInt((u - footHeel - start) / step), 0, groundCount - 1);
+            int g1 = Mathf.Clamp(Mathf.CeilToInt((u + ahead - start) / step), 0, groundCount - 1);
+            float highest = float.NegativeInfinity;
+            for (int g = g0; g <= g1; g++) highest = Mathf.Max(highest, pathGround[g]);
+
+            pathY[k] = Mathf.Max(baseY, highest + obstacleClearance);
+        }
+        pathY[n] = target.y;
+
+        // Rise ahead of edges and come down gradually after them.
+        float maxDelta = maxSwingSlope * du;
+        for (int k = n - 1; k >= 0; k--) pathY[k] = Mathf.Max(pathY[k], pathY[k + 1] - maxDelta);
+        for (int k = 1; k < n; k++) pathY[k] = Mathf.Max(pathY[k], pathY[k - 1] - maxDelta);
+
+        // Walk the path (straight up from the lift-off point first if needed) by arc length.
+        float first = Mathf.Abs(pathY[0] - from.y);
+        float total = first;
+        for (int k = 1; k <= n; k++) total += Segment(du, pathY[k] - pathY[k - 1]);
+        float s = Smooth(t) * total;
+
+        float along, height;
+        if (s <= first || total < 1e-5f)
+        {
+            along = 0f;
+            height = first > 1e-5f ? Mathf.Lerp(from.y, pathY[0], s / first) : from.y;
+        }
+        else
+        {
+            s -= first;
+            along = distance;
+            height = pathY[n];
+            for (int k = 1; k <= n; k++)
+            {
+                float len = Segment(du, pathY[k] - pathY[k - 1]);
+                if (s <= len)
+                {
+                    float a = len > 1e-6f ? s / len : 1f;
+                    along = (k - 1 + a) * du;
+                    height = Mathf.Lerp(pathY[k - 1], pathY[k], a);
+                    break;
+                }
+                s -= len;
+            }
+        }
+
+        float h = distance > 1e-3f ? along / distance : t;
+        Vector3 p = from + dir * along;
+        f.pos = new Vector3(p.x, height, p.z);
         f.yaw = Mathf.LerpAngle(f.liftYaw, ctx.State.FacingYaw, h);
 
         // Toes push down leaving the ground, lift to clear the edge before landing.
         float toe = Mathf.Lerp(walkToePitch, runToePitch, runBlend) * Mathf.Max(gaitWeight, 0.3f);
         f.pitch = toe * Mathf.Sin(t * 2f * Mathf.PI);
     }
+
+    static float Segment(float dx, float dy) => Mathf.Sqrt(dx * dx + dy * dy);
 
     // ----------------------------------------------------------------------------------
     // Air
@@ -468,7 +620,8 @@ public class LocomotionLayer : CharacterAnimLayer
         foreach (var f in feet)
         {
             Vector3 rest = RestTarget(f, ctx);
-            f.plant = OnGround(rest + lead, ctx, rest);
+            Vector3 dir = velocity.sqrMagnitude > 0.09f ? velocity.normalized : ctx.Forward;
+            f.plant = ClearOfEdges(OnGround(rest + lead, ctx, rest), dir, ctx);
             f.plantYaw = ctx.State.FacingYaw;
             f.landFrom = f.pos;
             f.landT = 0f;

@@ -27,6 +27,15 @@ public class CharacterRig
     public Transform rightShin;
     public Transform rightFoot;
 
+    [Header("Knees")]
+    [Tooltip("How far (degrees) a knee may turn outward to stay out of terrain (high steps)")]
+    public float maxKneeSplay = 70f;
+    [Tooltip("How fast the knees turn out / back in (degrees per second)")]
+    public float kneeSplaySpeed = 900f;
+    public float kneeReturnSpeed = 150f;
+    [Tooltip("Thickness of the legs used when keeping them out of terrain")]
+    public float legRadius = 0.13f;
+
     [Header("Arms")]
     public Transform leftUpperArm;
     public Transform leftForearm;
@@ -51,6 +60,9 @@ public class CharacterRig
         public Quaternion RestUpperLocal, RestLowerLocal;
 
         public bool Valid => Upper != null && Lower != null && End != null;
+
+        /// <summary>Current outward turn of the bend plane (degrees), used to keep knees out of terrain.</summary>
+        public float Splay;
     }
 
     public readonly Limb[] Legs = { new Limb(), new Limb() };
@@ -60,6 +72,9 @@ public class CharacterRig
     Vector3 pelvisRestPosition;
     Quaternion pelvisRestRotation;
     Quaternion chestRestLocal, headRestLocal;
+
+    /// <summary>Optional terrain test for knee avoidance (true = point is inside something solid).</summary>
+    public Func<Vector3, bool> IsBlocked;
 
     public bool IsValid { get; private set; }
     /// <summary>Height of the foot bones above the ground in the rest pose.</summary>
@@ -160,7 +175,7 @@ public class CharacterRig
     }
 
     /// <summary>Poses the bones. <paramref name="character"/> is the root the pose is relative to (the feet pivot).</summary>
-    public void Apply(CharacterPose pose, Transform character)
+    public void Apply(CharacterPose pose, Transform character, float deltaTime)
     {
         if (!IsValid)
             return;
@@ -185,7 +200,8 @@ public class CharacterRig
                 continue;
 
             var foot = pose.Feet[i];
-            SolveLimb(leg, facing, foot.Position, knee, foot.Weight);
+            UpdateKneeSplay(leg, facing, foot.Position, knee, deltaTime);
+            SolveLimb(leg, facing, foot.Position, knee, foot.Weight, leg.Splay);
 
             Quaternion footRotation = Quaternion.Euler(0f, foot.Yaw, 0f) * Quaternion.AngleAxis(foot.Pitch, Vector3.right) * leg.RestEndRotation;
             Quaternion followRotation = leg.Lower.rotation * Quaternion.Inverse(facing * leg.RestLowerRotation) * (facing * leg.RestEndRotation);
@@ -214,31 +230,87 @@ public class CharacterRig
         bone.rotation = facing * additive * Quaternion.Inverse(facing) * fk;
     }
 
-    /// <summary>Two-bone IK: bends the limb toward <paramref name="pole"/> so its end reaches the target, blended with the current pose by weight.</summary>
-    static void SolveLimb(Limb limb, Quaternion facing, Vector3 target, Vector3 pole, float weight)
+    // Turns the knee outward while it (or the thigh/shin) would be inside terrain - like taking
+    // a very high step - and lets it come back in once clear.
+    void UpdateKneeSplay(Limb leg, Quaternion facing, Vector3 target, Vector3 pole, float deltaTime)
     {
-        if (weight <= 0f)
-            return;
+        float wanted = 0f;
+        if (IsBlocked != null && maxKneeSplay > 0f)
+        {
+            wanted = maxKneeSplay;
+            for (float s = 0f; s <= maxKneeSplay; s += 10f)
+            {
+                if (!LegBlocked(leg, facing, target, pole, s))
+                {
+                    wanted = s;
+                    break;
+                }
+            }
+        }
+        float speed = wanted > leg.Splay ? kneeSplaySpeed : kneeReturnSpeed;
+        leg.Splay = Mathf.MoveTowards(leg.Splay, wanted, speed * Mathf.Max(deltaTime, 0f));
+    }
 
-        Vector3 root = limb.Upper.position;
+    bool LegBlocked(Limb leg, Quaternion facing, Vector3 target, Vector3 pole, float splay)
+    {
+        Plan(leg, facing, target, pole, splay, out Vector3 root, out Vector3 joint, out Vector3 end, out Vector3 bend, out _, out _);
+
+        // Sample the thigh and shin as thick segments: centre line plus the front (knee side)
+        // and the forward-facing surface.
+        Vector3 front = bend * legRadius;
+        Vector3 ahead = facing * Vector3.forward * legRadius;
+        for (int k = 0; k <= 6; k++)
+        {
+            float f = k / 6f;
+            Vector3 p = k <= 3 ? Vector3.Lerp(root, joint, Mathf.Max(0.3f, f * 2f)) : Vector3.Lerp(joint, end, (f - 0.5f) * 2f * 0.85f);
+            if (IsBlocked(p) || IsBlocked(p + front) || IsBlocked(p + ahead))
+                return true;
+        }
+        return false;
+    }
+
+    // Solves where the middle joint goes: bent toward the pole, with the bend plane turned toward
+    // the limb's outer side by splay degrees.
+    static void Plan(Limb limb, Quaternion facing, Vector3 target, Vector3 pole, float splay,
+        out Vector3 root, out Vector3 joint, out Vector3 end, out Vector3 bend, out Vector3 dir, out float distance)
+    {
+        root = limb.Upper.position;
         Vector3 toTarget = target - root;
-        float distance = toTarget.magnitude;
-        Vector3 dir = distance > 1e-5f ? toTarget / distance : facing * Vector3.down;
+        distance = toTarget.magnitude;
+        dir = distance > 1e-5f ? toTarget / distance : facing * Vector3.down;
 
         float a = limb.UpperLength, b = limb.LowerLength;
         distance = Mathf.Clamp(distance, Mathf.Abs(a - b) + 1e-3f, (a + b) * 0.9999f);
 
         // Bend plane from the pole, falling back to "up" when the pole lines up with the limb.
-        Vector3 bend = pole - Vector3.Dot(pole, dir) * dir;
+        bend = pole - Vector3.Dot(pole, dir) * dir;
         if (bend.sqrMagnitude < 1e-4f)
             bend = facing * Vector3.up - Vector3.Dot(facing * Vector3.up, dir) * dir;
         bend.Normalize();
 
+        if (splay > 0.01f)
+        {
+            Vector3 outward = facing * (limb.RestUpperPosition.x < 0f ? Vector3.left : Vector3.right);
+            Vector3 side = Vector3.Cross(dir, bend);
+            if (Vector3.Dot(side, outward) < 0f) side = -side;
+            float r = splay * Mathf.Deg2Rad;
+            bend = (bend * Mathf.Cos(r) + side.normalized * Mathf.Sin(r)).normalized;
+        }
+
         float cosAngle = Mathf.Clamp((a * a + distance * distance - b * b) / (2f * a * distance), -1f, 1f);
         float angle = Mathf.Acos(cosAngle);
-        Vector3 jointDir = dir * Mathf.Cos(angle) + bend * Mathf.Sin(angle);
-        Vector3 joint = root + jointDir * a;
-        Vector3 end = root + dir * distance;
+        joint = root + (dir * Mathf.Cos(angle) + bend * Mathf.Sin(angle)) * a;
+        end = root + dir * distance;
+    }
+
+    /// <summary>Two-bone IK: bends the limb toward <paramref name="pole"/> so its end reaches the target, blended with the current pose by weight.</summary>
+    static void SolveLimb(Limb limb, Quaternion facing, Vector3 target, Vector3 pole, float weight, float splay = 0f)
+    {
+        if (weight <= 0f)
+            return;
+
+        Plan(limb, facing, target, pole, splay, out Vector3 root, out Vector3 joint, out Vector3 end, out Vector3 bend, out Vector3 dir, out _);
+        Vector3 jointDir = (joint - root).normalized;
         Vector3 normal = BendNormal(dir, bend);
 
         Quaternion restFrame = Quaternion.Inverse(Quaternion.LookRotation(facing * limb.RestUpperDirection, facing * limb.RestBendNormal));

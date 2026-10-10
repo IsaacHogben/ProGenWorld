@@ -13,6 +13,8 @@ public class CharacterAnimator : MonoBehaviour
     [SerializeField] private CharacterRig rig = new CharacterRig();
     [Tooltip("Find missing bone references by name on start")]
     [SerializeField] private bool autoBindBones = true;
+    [Tooltip("Turn knees outward when they would go into blocks (high steps)")]
+    [SerializeField] private bool kneesAvoidTerrain = true;
 
     private readonly List<CharacterAnimLayer> layers = new List<CharacterAnimLayer>();
     private readonly CharacterPose pose = new CharacterPose();
@@ -32,6 +34,9 @@ public class CharacterAnimator : MonoBehaviour
         rig.CaptureRest(transform);
         if (!rig.IsValid)
             Debug.LogWarning($"{name}: CharacterAnimator could not find the model root / pelvis bones.", this);
+
+        if (kneesAvoidTerrain)
+            rig.IsBlocked = p => VoxelPhysics.IsSolid(new Unity.Mathematics.int3(Mathf.FloorToInt(p.x), Mathf.FloorToInt(p.y), Mathf.FloorToInt(p.z)));
 
         context.Rig = rig;
         context.Source = source;
@@ -82,6 +87,6 @@ public class CharacterAnimator : MonoBehaviour
                 layer.Evaluate(pose, context);
         }
 
-        rig.Apply(pose, transform);
+        rig.Apply(pose, transform, dt);
     }
 }

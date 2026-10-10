@@ -92,15 +92,15 @@ public class NoiseSystem
 
                 Profiler.StartNoise();
 
-                density.CopyFrom(
-                    noiseGenerator.FillDensity(
-                        coord,
-                        config.chunkSize,
-                        config.frequency,
-                        sampleRes,
-                        biome,
-                        config.biomeDataManager.terrainTypes
-                    ));
+                noiseGenerator.FillDensity(
+                    density,
+                    coord,
+                    config.chunkSize,
+                    config.frequency,
+                    sampleRes,
+                    biome,
+                    config.biomeDataManager.terrainTypes
+                );
 
                 Profiler.EndNoise();
 

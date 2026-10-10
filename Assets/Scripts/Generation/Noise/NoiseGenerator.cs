@@ -14,6 +14,8 @@
 //noise = FastNoise.FromEncodedNodeTree("EQACAAAAAAAAQBAAexSuPhkAGQATAB+F6z8lAAAAgD/D9eg/AACAPwAAgD8RAAQAAACuRwFAEAAK12NADQADAAAAAAAAQBAAAAAAPwcAAJqZmT4AKVwPPwDXo3A/AM3MzD0AzcyMPwAUrgdAAQAAj8J1PQEEAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOF6FEAAMzMzPwAAAAA/");
 // Terrain Type 1: Delve with caps
 //secondaryNoise = FastNoise.FromEncodedNodeTree("GgABHQAEAAAAAABI4bo/AAAAAAAAAAAAAAAAzcyMPwAAAAAAAAAAAAAAAAABGgABJQAAAIA/AADAPwAAgD8AAIA/DQAEAAAAH4XrPwcAAAAAAD8AAAAAAAEQAArXA0AeAAQAAAAAAAAA8EEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK1yM9");
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Unity.Collections;
@@ -68,10 +70,38 @@ public class NoiseGenerator
         UnityEngine.Debug.Log($"Available terrain IDs: {string.Join(", ", noiseGenerators.Keys)}");
     }
 
+    // Scratch buffers for the per-terrain noise fields and the blended result. Reused across
+    // chunks instead of allocating ~1 MB arrays per terrain type per chunk, which landed on the
+    // large object heap and caused GC hitches.
+    static readonly ConcurrentBag<float[]> scratchPool = new ConcurrentBag<float[]>();
+    const int MaxPooledBuffers = 48;
+
+    // Per thread lookup: terrain id -> noise field for the chunk being generated
+    [ThreadStatic] static float[][] tlsFieldsById;
+    [ThreadStatic] static bool[] tlsUsedIds;
+
+    static float[] RentScratch(int length)
+    {
+        while (scratchPool.TryTake(out var buffer))
+        {
+            if (buffer.Length == length)
+                return buffer;
+        }
+        return new float[length];
+    }
+
+    static void ReturnScratch(float[] buffer)
+    {
+        if (buffer != null && scratchPool.Count < MaxPooledBuffers)
+            scratchPool.Add(buffer);
+    }
+
     /// <summary>
-    /// Generates density by blending between multiple terrain-specific noise generators
+    /// Generates density by blending between multiple terrain-specific noise generators,
+    /// writing the result straight into <paramref name="output"/>.
     /// </summary>
-    public float[] FillDensity(
+    public void FillDensity(
+        NativeArray<float> output,
         int3 chunkCoord,
         int chunkSize,
         float frequency,
@@ -86,70 +116,69 @@ public class NoiseGenerator
         int3 worldPos = (chunkCoord * chunkSize) / sampleRes;
         float relativeFrequency = frequency / 100f * sampleRes;
 
-        // OPTIMIZATION: First, scan biome hints to find which terrain types are actually used
-        HashSet<byte> usedTerrainIDs = new HashSet<byte>();
-        int biomeRes = biome.resolution;
-        int biomeSide = biomeRes + 1;
+        var fieldsById = tlsFieldsById ??= new float[256][];
+        var usedIds = tlsUsedIds ??= new bool[256];
+        Array.Clear(usedIds, 0, usedIds.Length);
 
+        // Only generate noise for terrain types this chunk actually uses
         for (int i = 0; i < biome.grid.Length; i++)
         {
             BiomeHint hint = biome.grid[i];
-            usedTerrainIDs.Add(hint.primaryTerrainType);
+            usedIds[hint.primaryTerrainType] = true;
             if (hint.terrainBlend > 0)
-            {
-                usedTerrainIDs.Add(hint.secondaryTerrainType);
-            }
+                usedIds[hint.secondaryTerrainType] = true;
         }
 
-        // Generate noise ONLY for terrain types actually used in this chunk
-        Dictionary<byte, float[]> terrainDensities = new Dictionary<byte, float[]>();
-
-        foreach (byte terrainID in usedTerrainIDs)
+        float[] blended = RentScratch(voxelCount);
+        try
         {
-            // Check if we have a noise generator for this terrain
-            if (!noiseGenerators.ContainsKey(terrainID))
+            for (int id = 0; id < 256; id++)
             {
-                UnityEngine.Debug.LogWarning($"Terrain ID {terrainID} used in chunk but no noise generator configured!");
-                continue;
+                if (!usedIds[id])
+                    continue;
+
+                byte terrainID = (byte)id;
+                if (!noiseGenerators.TryGetValue(terrainID, out FastNoise noise))
+                {
+                    UnityEngine.Debug.LogWarning($"Terrain ID {terrainID} used in chunk but no noise generator configured!");
+                    continue;
+                }
+
+                // Terrain-specific settings
+                TerrainTypeDefinitionSO terrainSO = terrainTypeSOs[terrainID];
+                float terrainFrequency = relativeFrequency * terrainSO.frequencyMultiplier;
+                int3 terrainWorldPos = worldPos;
+                terrainWorldPos.y += terrainSO.yOffset / sampleRes;  // Apply Y offset
+
+                float[] field = RentScratch(voxelCount);
+                noise.GenUniformGrid3D(
+                    field,
+                    terrainWorldPos.x,
+                    terrainWorldPos.y,
+                    terrainWorldPos.z,
+                    side,
+                    side,
+                    side,
+                    terrainFrequency,
+                    seed
+                );
+                fieldsById[id] = field;
             }
 
-            // Get terrain-specific settings
-            TerrainTypeDefinitionSO terrainSO = terrainTypeSOs[terrainID];
-            float terrainFrequency = relativeFrequency * terrainSO.frequencyMultiplier;
-            int3 terrainWorldPos = worldPos;
-            terrainWorldPos.y += terrainSO.yOffset / sampleRes;  // Apply Y offset
-
-            FastNoise noise = noiseGenerators[terrainID];
-            float[] density = new float[voxelCount];
-
-            noise.GenUniformGrid3D(
-                density,
-                terrainWorldPos.x,
-                terrainWorldPos.y,  // Uses offset Y position
-                terrainWorldPos.z,
-                side,
-                side,
-                side,
-                terrainFrequency,   // Uses terrain-specific frequency
-                seed
-            );
-
-            terrainDensities[terrainID] = density;
+            BlendTerrainNoises(blended, fieldsById, chunkSize, sampleRes, side, biome);
+            NativeArray<float>.Copy(blended, output, voxelCount);
         }
-
-        // Create final blended density
-        float[] finalDensity = new float[voxelCount];
-
-        BlendTerrainNoises(
-            finalDensity,
-            terrainDensities,
-            chunkSize,
-            sampleRes,
-            side,
-            biome
-        );
-
-        return finalDensity;
+        finally
+        {
+            for (int id = 0; id < 256; id++)
+            {
+                if (fieldsById[id] == null)
+                    continue;
+                ReturnScratch(fieldsById[id]);
+                fieldsById[id] = null;
+            }
+            ReturnScratch(blended);
+        }
     }
 
     /// <summary>
@@ -157,7 +186,7 @@ public class NoiseGenerator
     /// </summary>
     static void BlendTerrainNoises(
         float[] finalDensity,
-        Dictionary<byte, float[]> terrainDensities,
+        float[][] fieldsById,
         int chunkSize,
         int sampleRes,
         int side,
@@ -182,37 +211,24 @@ public class NoiseGenerator
                 bx = math.min(bx, biomeRes);
 
                 BiomeHint hint = biome.grid[bx + bzOffset];
-                byte primaryTerrainID = hint.primaryTerrainType;
-                byte secondaryTerrainID = hint.secondaryTerrainType;
                 float terrainBlendFactor = hint.terrainBlend * 0.00392156862745098f;
 
+                // Look the fields up once per column instead of once per voxel
+                float[] primary = fieldsById[hint.primaryTerrainType];
+                float[] secondary = terrainBlendFactor > 0.001f ? fieldsById[hint.secondaryTerrainType] : null;
+
+                if (primary == null)
+                    UnityEngine.Debug.LogError($"Primary terrain ID {hint.primaryTerrainType} has no noise generator!");
+
                 int columnBaseIdx = x + z * side * side;
-
-                // Check if terrains have noise (with error handling)
-                bool hasPrimaryNoise = terrainDensities.ContainsKey(primaryTerrainID);
-                bool hasSecondaryNoise = terrainDensities.ContainsKey(secondaryTerrainID);
-
-                if (!hasPrimaryNoise)
-                {
-                    UnityEngine.Debug.LogError($"Primary terrain ID {primaryTerrainID} not found in noise generators! Available: {string.Join(", ", terrainDensities.Keys)}");
-                }
 
                 for (int y = 0; y < side; y++)
                 {
                     int idx = columnBaseIdx + y * side;
-
-                    // Get primary noise value (fallback to 0 if missing)
-                    float primaryValue = hasPrimaryNoise ? terrainDensities[primaryTerrainID][idx] : 0f;
-
-                    // Blend with secondary if needed
-                    float finalValue = primaryValue;
-                    if (terrainBlendFactor > 0.001f && hasSecondaryNoise)
-                    {
-                        float secondaryValue = terrainDensities[secondaryTerrainID][idx];
-                        finalValue = primaryValue + (secondaryValue - primaryValue) * terrainBlendFactor;
-                    }
-
-                    finalDensity[idx] = finalValue;
+                    float primaryValue = primary != null ? primary[idx] : 0f;
+                    finalDensity[idx] = secondary != null
+                        ? primaryValue + (secondary[idx] - primaryValue) * terrainBlendFactor
+                        : primaryValue;
                 }
             }
         }

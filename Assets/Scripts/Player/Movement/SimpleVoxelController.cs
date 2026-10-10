@@ -4,7 +4,7 @@ using UnityEngine.InputSystem;
 /// <summary>
 /// Simple voxel character controller with smooth step up/down and sprint
 /// </summary>
-[RequireComponent(typeof(Rigidbody))]
+[RequireComponent(typeof(VoxelBody))]
 public class SimpleVoxelController : MonoBehaviour
 {
     [Header("Movement")]
@@ -48,8 +48,6 @@ public class SimpleVoxelController : MonoBehaviour
     [SerializeField] private float groundCheckDistance = 0.2f;
     [Tooltip("Additional distance to check for ground when jumping/falling (for early landing detection)")]
     [SerializeField] private float airborneGroundCheckDistance = 1.0f;
-    [Tooltip("Terrain layer mask")]
-    [SerializeField] private LayerMask terrainLayer;
 
     [Header("References")]
     [Tooltip("Camera for relative movement (optional)")]
@@ -67,7 +65,7 @@ public class SimpleVoxelController : MonoBehaviour
     public enum MovementState { Idle, Turning, Walking, Sprinting, Crouching, Jumping, Falling }
 
     // Components
-    private Rigidbody rb;
+    private VoxelBody rb;
 
     // State
     private Vector2 moveInputRaw;
@@ -86,12 +84,11 @@ public class SimpleVoxelController : MonoBehaviour
 
     void Start()
     {
-        rb = GetComponent<Rigidbody>();
-        rb.freezeRotation = true;
-        rb.interpolation = RigidbodyInterpolation.Interpolate;
+        // Terrain collision reads the voxel data directly (VoxelPhysics) instead of Unity physics.
+        if (!TryGetComponent(out rb))
+            rb = gameObject.AddComponent<VoxelBody>();
         rb.useGravity = true;
-        rb.mass = 1f;
-        rb.linearDamping = 0f;
+        rb.interpolate = true;
 
         if (cameraTransform == null)
         {
@@ -148,7 +145,7 @@ public class SimpleVoxelController : MonoBehaviour
         {
             // Use extended distance when jumping/falling to detect landing earlier
             float checkDistance = isJumping ? (groundCheckDistance + airborneGroundCheckDistance) : (groundCheckDistance + 0.1f);
-            isGrounded = Physics.Raycast(rayStart, Vector3.down, checkDistance, terrainLayer);
+            isGrounded = VoxelPhysics.Raycast(rayStart, Vector3.down, checkDistance);
         }
 
         Debug.DrawRay(rayStart, Vector3.down * (groundCheckDistance + 0.1f), isGrounded ? Color.green : Color.red);
@@ -262,17 +259,14 @@ public class SimpleVoxelController : MonoBehaviour
         Vector3 checkOrigin = transform.position + Vector3.up * 0.1f;
         Vector3 checkDirection = moveInput;
 
-        RaycastHit obstacleHit;
-        bool hasObstacle = Physics.Raycast(checkOrigin, checkDirection, out obstacleHit, stepCheckDistance, terrainLayer);
+        bool hasObstacle = VoxelPhysics.Raycast(checkOrigin, checkDirection, out VoxelRaycastHit obstacleHit, stepCheckDistance);
 
         Debug.DrawRay(checkOrigin, checkDirection * stepCheckDistance, hasObstacle ? Color.red : Color.blue);
 
         if (hasObstacle)
         {
             Vector3 stepCheckOrigin = checkOrigin + checkDirection * (obstacleHit.distance + 0.1f) + Vector3.up * (maxStepHeight + 0.1f);
-            RaycastHit stepHit;
-
-            if (Physics.Raycast(stepCheckOrigin, Vector3.down, out stepHit, maxStepHeight + 0.2f, terrainLayer))
+            if (VoxelPhysics.Raycast(stepCheckOrigin, Vector3.down, out VoxelRaycastHit stepHit, maxStepHeight + 0.2f))
             {
                 float stepHeight = stepHit.point.y - transform.position.y;
 
@@ -326,18 +320,18 @@ public class SimpleVoxelController : MonoBehaviour
 
             if (Mathf.Abs(heightDiff) < 0.05f)
             {
-                Vector3 pos = transform.position;
+                Vector3 pos = rb.position;
                 pos.y = targetHeight;
-                transform.position = pos;
+                rb.MovePosition(pos);
                 isStepping = false;
                 rb.linearVelocity = new Vector3(currentVelocity.x, 0, currentVelocity.z);
             }
             else
             {
-                float newY = Mathf.MoveTowards(transform.position.y, targetHeight, stepSpeed * Time.fixedDeltaTime);
-                Vector3 pos = transform.position;
+                float newY = Mathf.MoveTowards(rb.position.y, targetHeight, stepSpeed * Time.fixedDeltaTime);
+                Vector3 pos = rb.position;
                 pos.y = newY;
-                transform.position = pos;
+                rb.MovePosition(pos);
                 rb.linearVelocity = new Vector3(currentVelocity.x, 0, currentVelocity.z);
             }
         }

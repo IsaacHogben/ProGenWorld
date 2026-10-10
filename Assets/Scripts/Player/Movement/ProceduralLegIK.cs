@@ -108,8 +108,6 @@ public class ProceduralLegIK : MonoBehaviour
     [SerializeField] private float stepDownDistance = 1f;
     [Tooltip("Speed at which body adjusts height")]
     [SerializeField] private float bodyHeightAdjustSpeed = 5f;
-    [Tooltip("Layer mask for terrain/ground detection")]
-    [SerializeField] private LayerMask terrainLayer;
 
     // Target positions for feet (world space)
     private Vector3 leftFootTarget;
@@ -287,11 +285,10 @@ public class ProceduralLegIK : MonoBehaviour
     {
         // Raycast from above to find ground, checking extra distance for step-down
         Vector3 rayStart = worldPosition + Vector3.up * raycastStartHeight;
-        RaycastHit hit;
 
         float totalDistance = raycastDistance + stepDownDistance;
 
-        if (Physics.Raycast(rayStart, Vector3.down, out hit, totalDistance, terrainLayer))
+        if (VoxelPhysics.Raycast(rayStart, Vector3.down, out VoxelRaycastHit hit, totalDistance))
         {
             return hit.point + Vector3.up * footHeightOffset;
         }
@@ -321,7 +318,7 @@ public class ProceduralLegIK : MonoBehaviour
         if (bodyTransform == null || controller == null) return;
 
         // Get current vertical velocity
-        float verticalVelocity = controller.GetComponent<Rigidbody>()?.linearVelocity.y ?? 0f;
+        float verticalVelocity = controller.TryGetComponent(out VoxelBody body) ? body.linearVelocity.y : 0f;
 
         // Calculate blend factor based on velocity
         // +maxUpwardVelocity = 1.0 (full airborne pose)

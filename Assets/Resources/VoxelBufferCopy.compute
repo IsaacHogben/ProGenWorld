@@ -1,0 +1,16 @@
+// Copies the contents of one uint buffer into another. Used by VoxelWorldRenderer
+// when a GPU voxel buffer has to grow.
+#pragma kernel CopyUints
+
+StructuredBuffer<uint>   _Src;
+RWStructuredBuffer<uint> _Dst;
+uint _Offset;
+uint _Count;
+
+[numthreads(256, 1, 1)]
+void CopyUints(uint3 id : SV_DispatchThreadID)
+{
+    uint i = _Offset + id.x;
+    if (id.x < _Count)
+        _Dst[i] = _Src[i];
+}

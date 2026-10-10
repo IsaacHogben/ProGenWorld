@@ -27,7 +27,6 @@ public enum ShapeStyle : byte
 [BurstCompile]
 public static class ShapePlacer
 {
-    [BurstCompile]
     public static void Place(
         ShapeStyle style,
         BlockType block,
@@ -36,25 +35,25 @@ public static class ShapePlacer
         int branchDepth,
         int maxDepth,
         ref Unity.Mathematics.Random rng,
-        ApplyBlockDelegate applyBlock)
+        ref BlockWriter applyBlock)
     {
         switch (style)
         {
-            case ShapeStyle.HangingHemisphere: PlaceHangingHemisphere(pos, size, block, ref rng, applyBlock); break;
-            case ShapeStyle.Cluster: PlaceCluster(pos, size, block, ref rng, applyBlock); break;
-            case ShapeStyle.PalmCrown: PlacePalmCrown(size, pos, block, ref rng, applyBlock); break;
-            case ShapeStyle.Sphere: PlaceSphere(pos, size, block, applyBlock); break;
-            case ShapeStyle.Cube: PlaceCube(pos, size, block, applyBlock); break;
-            case ShapeStyle.SquareFlat: PlaceSquareFlat(pos, size, block, applyBlock); break;
-            case ShapeStyle.CircleFlat: PlaceCircleFlat(pos, size, block, applyBlock); break;
-            case ShapeStyle.LineDown: PlaceLineDown(pos, size, block, applyBlock); break;
+            case ShapeStyle.HangingHemisphere: PlaceHangingHemisphere(pos, size, block, ref rng, ref applyBlock); break;
+            case ShapeStyle.Cluster: PlaceCluster(pos, size, block, ref rng, ref applyBlock); break;
+            case ShapeStyle.PalmCrown: PlacePalmCrown(size, pos, block, ref rng, ref applyBlock); break;
+            case ShapeStyle.Sphere: PlaceSphere(pos, size, block, ref applyBlock); break;
+            case ShapeStyle.Cube: PlaceCube(pos, size, block, ref applyBlock); break;
+            case ShapeStyle.SquareFlat: PlaceSquareFlat(pos, size, block, ref applyBlock); break;
+            case ShapeStyle.CircleFlat: PlaceCircleFlat(pos, size, block, ref applyBlock); break;
+            case ShapeStyle.LineDown: PlaceLineDown(pos, size, block, ref applyBlock); break;
         }
     }
 
     // Hemisphere of blocks above the tip, with randomised downward-hanging strands.
     // size = diameter of the hemisphere's equator. R = size/2 reproduces the
     // original fixed-R3 look at size=7 (R = 7/2 = 3, integer division).
-    private static void PlaceHangingHemisphere(int3 p, int size, BlockType block, ref Unity.Mathematics.Random rng, ApplyBlockDelegate ab)
+    private static void PlaceHangingHemisphere(int3 p, int size, BlockType block, ref Unity.Mathematics.Random rng, ref BlockWriter ab)
     {
         int x = p.x, y = p.y, z = p.z;
         int R = math.max(1, size / 2);
@@ -66,7 +65,7 @@ public static class ShapePlacer
                 {
                     float dist = math.sqrt(dx * dx + dy * dy + dz * dz);
                     if (dist <= R + 0.5f && rng.NextFloat() > 0.15f)
-                        ab(x + dx, y + dy, z + dz, block);
+                        ab.ApplyBlock(x + dx, y + dy, z + dz, block);
                 }
 
         // Hanging strands — random lengths dropping below the tip
@@ -79,7 +78,7 @@ public static class ShapePlacer
                 {
                     int hangLen = rng.NextInt(1, 5);
                     for (int dy = -1; dy >= -hangLen; dy--)
-                        ab(x + dx, y + dy, z + dz, block);
+                        ab.ApplyBlock(x + dx, y + dy, z + dz, block);
                 }
             }
     }
@@ -87,7 +86,7 @@ public static class ShapePlacer
     // Sparse wispy cluster — a small filled core plus radiating fingers.
     // size = diameter of the overall cluster including arms.
     // outerRadius = size/2; core is a fraction of that, arms fill the rest.
-    private static void PlaceCluster(int3 p, int size, BlockType block, ref Unity.Mathematics.Random rng, ApplyBlockDelegate ab)
+    private static void PlaceCluster(int3 p, int size, BlockType block, ref Unity.Mathematics.Random rng, ref BlockWriter ab)
     {
         int x = p.x, y = p.y, z = p.z;
 
@@ -100,7 +99,7 @@ public static class ShapePlacer
             for (int dy = -1; dy <= coreRadius; dy++)
                 for (int dz = -coreRadius; dz <= coreRadius; dz++)
                     if (dx * dx + dy * dy + dz * dz <= coreRadiusSq && rng.NextFloat() > 0.2f)
-                        ab(x + dx, y + dy, z + dz, block);
+                        ab.ApplyBlock(x + dx, y + dy, z + dz, block);
 
         // Sparse radiating fingers — 5-8 directions, length scaled off outerRadius
         int armMin = math.max(1, outerRadius / 3);
@@ -122,17 +121,17 @@ public static class ShapePlacer
                 int bx = x + (int)math.round(armDx * t);
                 int bz = z + (int)math.round(armDz * t);
                 int by = y + armDy;
-                ab(bx, by, bz, block);
+                ab.ApplyBlock(bx, by, bz, block);
                 // Optional second layer on the lower half of each arm for volume
                 if (t < 0.5f && rng.NextFloat() > 0.4f)
-                    ab(bx, by + 1, bz, block);
+                    ab.ApplyBlock(bx, by + 1, bz, block);
             }
         }
     }
 
     // size = diameter of the crown (fronds radiate out to roughly size/2 + droop).
     private static void PlacePalmCrown(int size, int3 p, BlockType block,
-        ref Unity.Mathematics.Random rng, ApplyBlockDelegate ab)
+        ref Unity.Mathematics.Random rng, ref BlockWriter ab)
     {
         int x = p.x, y = p.y, z = p.z;
         int crownRadius = math.max(1, size / 2);
@@ -142,7 +141,7 @@ public static class ShapePlacer
             for (int dy = 0; dy <= 4; dy++)
                 for (int dz = -1; dz <= 1; dz++)
                     if (rng.NextFloat() > 0.1f)
-                        ab(x + dx, y + dy, z + dz, block);
+                        ab.ApplyBlock(x + dx, y + dy, z + dz, block);
 
         int numFronds = rng.NextInt(crownRadius + 3, crownRadius + 10);
         for (int f = 0; f < numFronds; f++)
@@ -179,8 +178,8 @@ public static class ShapePlacer
                 int fy = (int)math.round(pos.y);
                 int fz = (int)math.round(pos.z);
 
-                ab(fx, fy, fz, block);
-                ab(fx, fy + 1, fz, block);
+                ab.ApplyBlock(fx, fy, fz, block);
+                ab.ApplyBlock(fx, fy + 1, fz, block);
 
                 float leafWidth = 1.5f * math.sin(t * math.PI);
                 int leafExt = (int)math.round(leafWidth);
@@ -188,19 +187,19 @@ public static class ShapePlacer
                 {
                     int lx = fx + (int)math.round(perpCos * l);
                     int lz = fz + (int)math.round(perpSin * l);
-                    ab(lx, fy, lz, block);
+                    ab.ApplyBlock(lx, fy, lz, block);
                     if (t < 0.7f && rng.NextFloat() > 0.2f)
-                        ab(lx, fy + 1, lz, block);
+                        ab.ApplyBlock(lx, fy + 1, lz, block);
                 }
 
                 if (t > 0.5f && rng.NextFloat() > 0.5f)
-                    ab(fx, fy - 1, fz, block);
+                    ab.ApplyBlock(fx, fy - 1, fz, block);
             }
         }
     }
 
     // Filled sphere. size = diameter, centered on p.
-    private static void PlaceSphere(int3 p, int size, BlockType block, ApplyBlockDelegate ab)
+    private static void PlaceSphere(int3 p, int size, BlockType block, ref BlockWriter ab)
     {
         int x = p.x, y = p.y, z = p.z;
         float r = size * 0.5f;
@@ -214,13 +213,13 @@ public static class ShapePlacer
                     // +0.25 softens the surface slightly, matching the rounding
                     // tolerance used elsewhere (e.g. PlaceRoundSlice's circle test).
                     if (dx * dx + dy * dy + dz * dz <= rSq + 0.25f)
-                        ab(x + dx, y + dy, z + dz, block);
+                        ab.ApplyBlock(x + dx, y + dy, z + dz, block);
                 }
     }
 
     // Filled cube. size = side length, centered on p (odd sizes center exactly
     // on a block; even sizes bias one extra layer toward +axis).
-    private static void PlaceCube(int3 p, int size, BlockType block, ApplyBlockDelegate ab)
+    private static void PlaceCube(int3 p, int size, BlockType block, ref BlockWriter ab)
     {
         int x = p.x, y = p.y, z = p.z;
         int half = math.max(1, size) / 2;
@@ -230,12 +229,12 @@ public static class ShapePlacer
         for (int dx = lo; dx <= hi; dx++)
             for (int dy = lo; dy <= hi; dy++)
                 for (int dz = lo; dz <= hi; dz++)
-                    ab(x + dx, y + dy, z + dz, block);
+                    ab.ApplyBlock(x + dx, y + dy, z + dz, block);
     }
 
     // Flat filled square, one block thick, lying in the horizontal (XZ) plane.
     // size = side length, centered on p.
-    private static void PlaceSquareFlat(int3 p, int size, BlockType block, ApplyBlockDelegate ab)
+    private static void PlaceSquareFlat(int3 p, int size, BlockType block, ref BlockWriter ab)
     {
         int x = p.x, y = p.y + 1, z = p.z;  // Ensure shape appears above branch with a +1 on y
         int half = math.max(1, size) / 2;
@@ -244,12 +243,12 @@ public static class ShapePlacer
 
         for (int dx = lo; dx <= hi; dx++)
             for (int dz = lo; dz <= hi; dz++)
-                ab(x + dx, y, z + dz, block);
+                ab.ApplyBlock(x + dx, y, z + dz, block);
     }
 
     // Flat filled circle, one block thick, lying in the horizontal (XZ) plane.
     // size = diameter, centered on p.
-    private static void PlaceCircleFlat(int3 p, int size, BlockType block, ApplyBlockDelegate ab)
+    private static void PlaceCircleFlat(int3 p, int size, BlockType block, ref BlockWriter ab)
     {
         int x = p.x, y = p.y + 1, z = p.z;  // Ensure shape appears above branch with a +1 on y
         float r = size * 0.5f;
@@ -259,15 +258,15 @@ public static class ShapePlacer
         for (int dx = -ext; dx <= ext; dx++)
             for (int dz = -ext; dz <= ext; dz++)
                 if (dx * dx + dz * dz <= rSq + 0.25f)
-                    ab(x + dx, y, z + dz, block);
+                    ab.ApplyBlock(x + dx, y, z + dz, block);
     }
 
     // Straight line of blocks descending from p. size = number of blocks placed,
     // starting at p itself and going downward (size = 1 places just p).
-    private static void PlaceLineDown(int3 p, int size, BlockType block, ApplyBlockDelegate ab)
+    private static void PlaceLineDown(int3 p, int size, BlockType block, ref BlockWriter ab)
     {
         int count = math.max(1, size);
         for (int i = 0; i < count; i++)
-            ab(p.x, p.y - i, p.z, block);
+            ab.ApplyBlock(p.x, p.y - i, p.z, block);
     }
 }

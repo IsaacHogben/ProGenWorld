@@ -4,9 +4,6 @@ using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
 
-// Function pointer delegate for block placement
-public delegate void ApplyBlockDelegate(int x, int y, int z, BlockType block);
-
 [BurstCompile]
 public static class TreeGenerator
 {
@@ -18,7 +15,8 @@ public static class TreeGenerator
         DecorationType.Tree treeType,
         int x, int y, int z,
         ref Unity.Mathematics.Random rng,
-        ref BlockWriter writer)
+        ref BlockWriter writer,
+        NativeArray<LSystemTreeData> rulesets)
     {
         switch (treeType)
         {
@@ -34,7 +32,7 @@ public static class TreeGenerator
             case DecorationType.Tree.Palm:
             case DecorationType.Tree.SmallPalm:
             case DecorationType.Tree.NightBlossom:
-                LSystemTreeGenerator.Generate(treeType, x, y, z, ref rng, ref writer);
+                LSystemTreeGenerator.Generate(treeType, x, y, z, ref rng, ref writer, rulesets);
                 break;
 
         }

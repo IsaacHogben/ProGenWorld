@@ -25,6 +25,7 @@ public struct DecorationJob : IJob
     [ReadOnly] public NativeArray<BiomeDefinition> biomes;
     [ReadOnly] public NativeArray<DecorationData> decorations;
     [ReadOnly] public NativeArray<LSystemTreeData> lsystemTrees;
+    [ReadOnly] public NativeArray<LSystemTreeData> builtinTreeRulesets;   // TreeRulesets.GetNativeTable()
     [ReadOnly] public NativeArray<byte> spawnBlocks;
 
     public void Execute()
@@ -158,7 +159,7 @@ public struct DecorationJob : IJob
         };
 
         LSystemTreeData tree = lsystemTrees[treeIndex];
-        LSystemInterpreter.Interpret(in tree, x, y, z, ref rng, writer.ApplyBlock);
+        LSystemInterpreter.Interpret(in tree, x, y, z, ref rng, ref writer);
     }
 
     // ========================================================================
@@ -175,7 +176,7 @@ public struct DecorationJob : IJob
             blockIds = blockIds,
             pendingWrites = pendingWrites
         };
-        TreeGenerator.Generate(treeType, x, y, z, ref rng, ref writer);
+        TreeGenerator.Generate(treeType, x, y, z, ref rng, ref writer, builtinTreeRulesets);
     }
 
     // ========================================================================

@@ -194,18 +194,15 @@ public class ChunkProfiler : MonoBehaviour
 
         if (showMeshStats)
         {
-            GUILayout.Label("<b>Mesh Stats</b>", label);
+            GUILayout.Label("<b>GPU Voxel Stats</b>", label);
 
-            int poolCount = chunkManager?.meshPool?.Count ?? 0;
-            var meshes = Resources.FindObjectsOfTypeAll<Mesh>();
-            int activeMeshes = FindObjectsByType<MeshFilter>(FindObjectsSortMode.None)
-                .Count(mf => mf.sharedMesh != null);
-            int vertTotal = meshes.Sum(m => m.vertexCount);
-
-            GUILayout.Label($"Active Meshes:  {activeMeshes}");
-            GUILayout.Label($"Mesh Pool:      {poolCount}");
-            GUILayout.Label($"All Meshes:     {meshes.Length}");
-            GUILayout.Label($"Total Vertices: {vertTotal:N0}");
+            var voxels = chunkManager != null ? chunkManager.VoxelRenderer : null;
+            if (voxels != null)
+            {
+                GUILayout.Label($"GPU Chunks:     {voxels.LoadedChunks}");
+                GUILayout.Label($"Voxel Pages:    {voxels.UsedPages:N0} / {voxels.PageCapacity:N0}");
+                GUILayout.Label($"GPU Memory:     {voxels.GpuBytes / (1024f * 1024f):F1} MB");
+            }
         }
 
         if (showOnMoveStats)

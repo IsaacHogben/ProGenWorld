@@ -995,7 +995,7 @@ MonoBehaviour:
   seed: 1531
   frequency: 1.2
   chunkSize: 64
-  viewDistance: 9
+  viewDistance: 18
   unloadPastViewDistance: 1
   minMoveBeforeUpdate: 9
   renderShape: 1
@@ -1007,13 +1007,10 @@ MonoBehaviour:
   biomeDataManager: {fileID: 1148720671}
   blockDatabase: {fileID: 11400000, guid: f9b2a5fcc2fa09d4caac36b7d550818c, type: 2}
   textureArrayBuilder: {fileID: 11400000, guid: 3f71b64aadbc3bf498224a3efb12f316, type: 2}
-  voxelMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
-  waterMaterial: {fileID: 2100000, guid: 69040e81b2415104b96d7de415c84b42, type: 2}
-  nearRange: 9
-  midRange: 20
+  renderSettings: {fileID: 900000003}
+  nearRange: 8
+  midRange: 16
   farRange: 30
-  nearMaterial: {fileID: 2100000, guid: 750d85c602cf32d47bc8646be8068a7e, type: 2}
-  farMaterial: {fileID: 2100000, guid: 32e68a70545044440ba9739f8303acfa, type: 2}
   maxConcurrentSchedualTasks: 4
   minConcurrentNoiseTasks: 12
   maxMeshUploadsPerFrame: 2
@@ -1023,8 +1020,6 @@ MonoBehaviour:
   meshDebounceFrames: 3
   maxDensityPoolPerLod: 32
   prewarmDensityPerLod: 24
-  prewarmChunks: 100
-  prewarmMeshes: 100
   adaptiveInterval: 0.25
 --- !u!114 &695623965
 MonoBehaviour:
@@ -1723,6 +1718,72 @@ GameObject:
   m_CorrespondingSourceObject: {fileID: 4832851365894791019, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
   m_PrefabInstance: {fileID: 8197220575024738206}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &900000001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 900000002}
+  - component: {fileID: 900000003}
+  m_Layer: 0
+  m_Name: Voxel Render Settings
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &900000002
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 900000001}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &900000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 900000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 346c9690bfbbc6544b430af479ff0b83, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::VoxelRenderSettings
+  opaqueMaterial: {fileID: 0}
+  translucentMaterial: {fileID: 0}
+  smallScale: 2
+  largeScale: 16
+  largeBlend: 0.5
+  blendMode: 0
+  smoothness: 0.1
+  sunShadowDistance: 256
+  shadowDetailDistance: 124.8
+  shadowMaxDistance: 512
+  shadowIgnoreDistance: 0
+  castIntoShadowMap: 0
+  shadowMapDistance: 64
+  shadowMapBias: 1
+  surfaceTint: {r: 0.55, g: 0.8, b: 1, a: 1}
+  surfaceOpacity: 0.25
+  deepColor: {r: 0.02, g: 0.18, b: 0.28, a: 1}
+  absorption: 0.18
+  specular: 1.5
+  initialChunkCapacity: 2048
+  initialPageCapacity: 65536
+  uploadsPerFrame: 8
 --- !u!1 &933868395
 GameObject:
   m_ObjectHideFlags: 0
@@ -1866,6 +1927,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDataManager
   terrainTypes:
+  - {fileID: 11400000, guid: d594719eed73471448d55230ef310275, type: 2}
   - {fileID: 11400000, guid: ac30749d934c76b488557c1d909942de, type: 2}
   biomes:
   - {fileID: 11400000, guid: bdf93638ce508f24c946a8bbd360e96e, type: 2}
@@ -1954,7 +2016,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!64 &1201536338
 MeshCollider:
   m_ObjectHideFlags: 0
@@ -2714,3 +2776,4 @@ SceneRoots:
   - {fileID: 444542669}
   - {fileID: 1148720673}
   - {fileID: 695623963}
+  - {fileID: 900000002}

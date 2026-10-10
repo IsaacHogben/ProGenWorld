@@ -103,20 +103,56 @@ public static class TreeRulesets
 {
     public static LSystemTreeData Get(DecorationType.Tree treeType)
     {
+        if (!TryBuild(treeType, out var tree))
+            Debug.LogWarning($"[LSystemTreeGenerator] No ruleset for {treeType}.");
+        return tree;
+    }
+
+    static bool TryBuild(DecorationType.Tree treeType, out LSystemTreeData tree)
+    {
         switch (treeType)
         {
-            case DecorationType.Tree.SmallPine: return Temp();
-            case DecorationType.Tree.RedFancy: return RedFancy();
-            case DecorationType.Tree.Willow: return Willow();
-            case DecorationType.Tree.Tallow: return Tallow();
-            case DecorationType.Tree.Palm: return Palm();
-            case DecorationType.Tree.SmallPalm: return SmallPalm();
-            case DecorationType.Tree.NightBlossom: return NightBlossom();
-
-            default:
-                Debug.LogWarning($"[LSystemTreeGenerator] No ruleset for {treeType}.");
-                return default;
+            case DecorationType.Tree.SmallPine: tree = Temp(); return true;
+            case DecorationType.Tree.RedFancy: tree = RedFancy(); return true;
+            case DecorationType.Tree.Willow: tree = Willow(); return true;
+            case DecorationType.Tree.Tallow: tree = Tallow(); return true;
+            case DecorationType.Tree.Palm: tree = Palm(); return true;
+            case DecorationType.Tree.SmallPalm: tree = SmallPalm(); return true;
+            case DecorationType.Tree.NightBlossom: tree = NightBlossom(); return true;
+            default: tree = default; return false;
         }
+    }
+
+    // Rulesets are built from C# strings, which Burst cannot touch. Jobs read this table instead,
+    // built once on the main thread and indexed by (int)DecorationType.Tree.
+    static NativeArray<LSystemTreeData> nativeTable;
+
+    public static NativeArray<LSystemTreeData> GetNativeTable()
+    {
+        if (nativeTable.IsCreated)
+            return nativeTable;
+
+        var values = (DecorationType.Tree[])System.Enum.GetValues(typeof(DecorationType.Tree));
+        int count = 0;
+        foreach (var v in values)
+            count = math.max(count, (int)v + 1);
+
+        nativeTable = new NativeArray<LSystemTreeData>(count, Allocator.Persistent);
+        foreach (var v in values)
+        {
+            if (TryBuild(v, out var tree))
+                nativeTable[(int)v] = tree;
+        }
+
+        Application.quitting -= DisposeNativeTable;
+        Application.quitting += DisposeNativeTable;
+        return nativeTable;
+    }
+
+    static void DisposeNativeTable()
+    {
+        if (nativeTable.IsCreated)
+            nativeTable.Dispose();
     }
 
     // Template 
@@ -278,12 +314,11 @@ public static class LSystemInterpreter
 {
     private const int MaxStackDepth = 128;
 
-    [BurstCompile]
     public static void Interpret(
         in LSystemTreeData tree,
         int originX, int originY, int originZ,
         ref Unity.Mathematics.Random rng,
-        ApplyBlockDelegate applyBlock)
+        ref BlockWriter applyBlock)
     {
         // Dry-run pass: find max [ ] and ! nesting depth for width/foliage tapering,
         // without drawing anything or building any string.
@@ -318,7 +353,7 @@ public static class LSystemInterpreter
 
         var branchHasChild = new NativeArray<bool>(MaxStackDepth, Allocator.Temp, NativeArrayOptions.ClearMemory);
 
-        WalkString(in tree, tree.Axiom, 0, ref state, ref stack, ref branchHasChild, ref stackTop, in ctx, ref rng, applyBlock);
+        WalkString(in tree, tree.Axiom, 0, ref state, ref stack, ref branchHasChild, ref stackTop, in ctx, ref rng, ref applyBlock);
         stack.Dispose();
         branchHasChild.Dispose();
     }
@@ -351,7 +386,7 @@ public static class LSystemInterpreter
     private static void WalkString<T>(
     in LSystemTreeData tree, in T symbols, int iterDepth,
     ref TurtleState state, ref NativeArray<TurtleState> stack, ref NativeArray<bool> branchHasChild, ref int stackTop,
-    in WalkContext ctx, ref Unity.Mathematics.Random rng, ApplyBlockDelegate applyBlock)
+    in WalkContext ctx, ref Unity.Mathematics.Random rng, ref BlockWriter applyBlock)
     where T : struct, INativeList<byte>, IUTF8Bytes
     {
         for (int i = 0; i < symbols.Length; i++)
@@ -364,11 +399,11 @@ public static class LSystemInterpreter
                 for (int lvl = 0; lvl <= stackTop; lvl++)
                     branchHasChild[lvl] = true;
 
-                WalkString(in tree, replacement, iterDepth + 1, ref state, ref stack, ref branchHasChild, ref stackTop, in ctx, ref rng, applyBlock);
+                WalkString(in tree, replacement, iterDepth + 1, ref state, ref stack, ref branchHasChild, ref stackTop, in ctx, ref rng, ref applyBlock);
             }
             else
             {
-                ExecuteSymbol(in tree, (char)sym, ref state, ref stack,ref stackTop, in ctx, ref rng, ref branchHasChild, applyBlock);
+                ExecuteSymbol(in tree, (char)sym, ref state, ref stack,ref stackTop, in ctx, ref rng, ref branchHasChild, ref applyBlock);
             }
         }
     }
@@ -376,7 +411,7 @@ public static class LSystemInterpreter
     private static void ExecuteSymbol(
         in LSystemTreeData tree, char sym,
         ref TurtleState state, ref NativeArray<TurtleState> stack, ref int stackTop,
-        in WalkContext ctx, ref Unity.Mathematics.Random rng, ref NativeArray<bool> branchHasChild, ApplyBlockDelegate applyBlock)
+        in WalkContext ctx, ref Unity.Mathematics.Random rng, ref NativeArray<bool> branchHasChild, ref BlockWriter applyBlock)
     {
         switch (sym)
         {
@@ -405,7 +440,7 @@ public static class LSystemInterpreter
                     }
 
                     float3 end = state.Position + dir * taperedLength;
-                    DrawLogSegment(state.Position, end, width, tree.BodyBlock, applyBlock);
+                    DrawLogSegment(state.Position, end, width, tree.BodyBlock, ref applyBlock);
                     state.Position = end;
                     break;
                 }
@@ -438,7 +473,7 @@ public static class LSystemInterpreter
             case ']':
                 if ((stackTop < 0 || !branchHasChild[stackTop]) && !state.SuppressFoliage)
                 {
-                    PlaceFoliageAt(tree.Foliage, tree.FoliageBlock, tree.FoliageSize, state.Position, state.BranchDepth, ctx.MaxDepth, ref rng, applyBlock);
+                    PlaceFoliageAt(tree.Foliage, tree.FoliageBlock, tree.FoliageSize, state.Position, state.BranchDepth, ctx.MaxDepth, ref rng, ref applyBlock);
                 }
                 if (stackTop >= 0)
                     state = stack[stackTop--];
@@ -449,7 +484,7 @@ public static class LSystemInterpreter
                 break;
 
             case 'T':
-                PlaceFoliageAt(tree.Foliage, tree.FoliageBlock, tree.FoliageSize, state.Position, state.BranchDepth, ctx.MaxDepth, ref rng, applyBlock);
+                PlaceFoliageAt(tree.Foliage, tree.FoliageBlock, tree.FoliageSize, state.Position, state.BranchDepth, ctx.MaxDepth, ref rng, ref applyBlock);
                 break;
 
             case 'Q':
@@ -474,10 +509,10 @@ public static class LSystemInterpreter
 // Helpers
 private static void PlaceFoliageAt(
         ShapeStyle style, BlockType foliageBlock, int size, float3 pos, int branchDepth, int maxDepth,
-        ref Unity.Mathematics.Random rng, ApplyBlockDelegate applyBlock)
+        ref Unity.Mathematics.Random rng, ref BlockWriter applyBlock)
     {
         var ip = new int3((int)math.round(pos.x), (int)math.round(pos.y), (int)math.round(pos.z));
-        ShapePlacer.Place(style, foliageBlock, size, ip, branchDepth, maxDepth, ref rng, applyBlock);
+        ShapePlacer.Place(style, foliageBlock, size, ip, branchDepth, maxDepth, ref rng, ref applyBlock);
     }
 
     private static void CountDepth<T>(
@@ -513,7 +548,7 @@ private static void PlaceFoliageAt(
         }
     }
 
-    private static void DrawLogSegment(float3 start, float3 end, int width, BlockType bodyBlock, ApplyBlockDelegate applyBlock)
+    private static void DrawLogSegment(float3 start, float3 end, int width, BlockType bodyBlock, ref BlockWriter applyBlock)
     {
         float3 dir = end - start;
         float len = math.length(dir);
@@ -529,7 +564,7 @@ private static void PlaceFoliageAt(
         {
             float t = steps > 0 ? i / (float)steps : 0f;
             float3 p = math.lerp(start, end, t);
-            PlaceRoundSlice(p, right, up, width, bodyBlock, applyBlock);
+            PlaceRoundSlice(p, right, up, width, bodyBlock, ref applyBlock);
         }
     }
 
@@ -539,11 +574,11 @@ private static void PlaceFoliageAt(
     // width >= 2 circle of radius (width-1)/2 in the branch-perpendicular plane.
     private static void PlaceRoundSlice(
         float3 p, float3 right, float3 up, int width,
-        BlockType bodyBlock, ApplyBlockDelegate applyBlock)
+        BlockType bodyBlock, ref BlockWriter applyBlock)
     {
         if (width <= 1)
         {
-            applyBlock((int)math.round(p.x), (int)math.round(p.y), (int)math.round(p.z), bodyBlock);
+            applyBlock.ApplyBlock((int)math.round(p.x), (int)math.round(p.y), (int)math.round(p.z), bodyBlock);
             return;
         }
 
@@ -554,7 +589,7 @@ private static void PlaceFoliageAt(
                 for (int du = 0; du <= 1; du++)
                 {
                     float3 offset = right * dr + up * du;
-                    applyBlock(
+                    applyBlock.ApplyBlock(
                         (int)math.round(p.x + offset.x),
                         (int)math.round(p.y + offset.y),
                         (int)math.round(p.z + offset.z),
@@ -572,7 +607,7 @@ private static void PlaceFoliageAt(
             {
                 if ((float)dr * dr + (float)du * du > rSq + 0.01f) continue;
                 float3 offset = right * dr + up * du;
-                applyBlock(
+                applyBlock.ApplyBlock(
                     (int)math.round(p.x + offset.x),
                     (int)math.round(p.y + offset.y),
                     (int)math.round(p.z + offset.z),
@@ -587,14 +622,14 @@ private static void PlaceFoliageAt(
 [BurstCompile]
 public static class LSystemTreeGenerator
 {
-    [BurstCompile]
     public static void Generate(
         DecorationType.Tree treeType,
         int x, int y, int z,
         ref Unity.Mathematics.Random rng,
-        ref BlockWriter writer)
+        ref BlockWriter writer,
+        NativeArray<LSystemTreeData> rulesets)
     {
-        LSystemTreeData tree = TreeRulesets.Get(treeType);
-        LSystemInterpreter.Interpret(in tree, x, y, z, ref rng, writer.ApplyBlock);
+        LSystemTreeData tree = rulesets[(int)treeType];
+        LSystemInterpreter.Interpret(in tree, x, y, z, ref rng, ref writer);
     }
 }

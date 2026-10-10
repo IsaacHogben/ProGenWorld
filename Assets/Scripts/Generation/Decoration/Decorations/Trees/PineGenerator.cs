@@ -19,15 +19,15 @@ public static class PineGenerator
         switch (treeType)
         {
             case DecorationType.Tree.SmallPine:
-                MakeSmallPine(x, y, z, ref rng, writer.ApplyBlock);
+                MakeSmallPine(x, y, z, ref rng, ref writer);
                 break;
 
             case DecorationType.Tree.MediumPine:
-                MakeMediumPine(x, y, z, ref rng, writer.ApplyBlock);
+                MakeMediumPine(x, y, z, ref rng, ref writer);
                 break;
 
             case DecorationType.Tree.LargePine:
-                MakeLargePine(x, y, z, ref rng, writer.ApplyBlock);
+                MakeLargePine(x, y, z, ref rng, ref writer);
                 break;
         }
     }
@@ -39,26 +39,26 @@ public static class PineGenerator
     private static void MakeSmallPine(
         int x, int y, int z,
         ref Unity.Mathematics.Random rng,
-        ApplyBlockDelegate applyBlock)
+        ref BlockWriter applyBlock)
     {
         int trunkHeight = rng.NextInt(8, 16);
 
         // Place trunk
         for (int i = 0; i < trunkHeight; i++)
         {
-            applyBlock(x, y + i, z, BlockType.Log);
+            applyBlock.ApplyBlock(x, y + i, z, BlockType.Log);
         }
 
         // Simple tip cluster
         int tipY = y + trunkHeight;
-        applyBlock(x + 1, tipY - 1, z, BlockType.PineLeaves);
-        applyBlock(x - 1, tipY - 1, z, BlockType.PineLeaves);
-        applyBlock(x, tipY - 1, z + 1, BlockType.PineLeaves);
-        applyBlock(x, tipY - 1, z - 1, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x + 1, tipY - 1, z, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x - 1, tipY - 1, z, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x, tipY - 1, z + 1, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x, tipY - 1, z - 1, BlockType.PineLeaves);
 
-        applyBlock(x, tipY, z, BlockType.PineLeaves);
-        applyBlock(x, tipY + 1, z, BlockType.PineLeaves);
-        applyBlock(x, tipY + 2, z, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x, tipY, z, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x, tipY + 1, z, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x, tipY + 2, z, BlockType.PineLeaves);
 
         // Simple branch layers - just 4 cardinal directions
         int numWhorls = trunkHeight / 2;
@@ -76,20 +76,20 @@ public static class PineGenerator
             // Place simple branches in cardinal directions with connected PineLeaves
             for (int i = 1; i <= branchLength; i++)
             {
-                PlaceSimpleBranch(x + i, whorlY, z, applyBlock);
-                PlaceSimpleBranch(x - i, whorlY, z, applyBlock);
-                PlaceSimpleBranch(x, whorlY, z + i, applyBlock);
-                PlaceSimpleBranch(x, whorlY, z - i, applyBlock);
+                PlaceSimpleBranch(x + i, whorlY, z, ref applyBlock);
+                PlaceSimpleBranch(x - i, whorlY, z, ref applyBlock);
+                PlaceSimpleBranch(x, whorlY, z + i, ref applyBlock);
+                PlaceSimpleBranch(x, whorlY, z - i, ref applyBlock);
             }
         }
     }
 
     private static void PlaceSimpleBranch(
         int bx, int by, int bz,
-        ApplyBlockDelegate applyBlock)
+        ref BlockWriter applyBlock)
     {
         // Place leaf at the end
-        applyBlock(bx, by, bz, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(bx, by, bz, BlockType.PineLeaves);
     }
 
     // ========================================================================
@@ -99,7 +99,7 @@ public static class PineGenerator
     private static void MakeMediumPine(
         int x, int y, int z,
         ref Unity.Mathematics.Random rng,
-        ApplyBlockDelegate applyBlock)
+        ref BlockWriter applyBlock)
     {
         z -= 1;
         int trunkHeight = rng.NextInt(22, 36);
@@ -107,10 +107,10 @@ public static class PineGenerator
         // Place 2x2 trunk
         for (int i = 0; i < trunkHeight; i++)
         {
-            applyBlock(x, y + i, z, BlockType.Log);
-            applyBlock(x + 1, y + i, z, BlockType.Log);
-            applyBlock(x, y + i, z + 1, BlockType.Log);
-            applyBlock(x + 1, y + i, z + 1, BlockType.Log);
+            applyBlock.ApplyBlock(x, y + i, z, BlockType.Log);
+            applyBlock.ApplyBlock(x + 1, y + i, z, BlockType.Log);
+            applyBlock.ApplyBlock(x, y + i, z + 1, BlockType.Log);
+            applyBlock.ApplyBlock(x + 1, y + i, z + 1, BlockType.Log);
         }
 
         // Improved tip cluster - layer of PineLeaves around trunk before the spire
@@ -123,7 +123,7 @@ public static class PineGenerator
                     continue; // Skip corners
                 if (dx >= 0 && dx <= 1 && dz >= 0 && dz <= 1)
                     continue; // Skip trunk area
-                applyBlock(x + dx, tipY - 1, z + dz, BlockType.PineLeaves);
+                applyBlock.ApplyBlock(x + dx, tipY - 1, z + dz, BlockType.PineLeaves);
             }
         }
 
@@ -132,12 +132,12 @@ public static class PineGenerator
         {
             for (int tz = 0; tz < 2; tz++)
             {
-                applyBlock(x + tx, tipY, z + tz, BlockType.PineLeaves);
-                applyBlock(x + tx, tipY + 1, z + tz, BlockType.PineLeaves);
+                applyBlock.ApplyBlock(x + tx, tipY, z + tz, BlockType.PineLeaves);
+                applyBlock.ApplyBlock(x + tx, tipY + 1, z + tz, BlockType.PineLeaves);
             }
         }
-        applyBlock(x, tipY + 2, z, BlockType.PineLeaves);
-        applyBlock(x, tipY + 3, z, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x, tipY + 2, z, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x, tipY + 3, z, BlockType.PineLeaves);
 
         // Create branch whorls with spiral rotation
         int numWhorls = (int)(trunkHeight / 3);
@@ -188,7 +188,7 @@ public static class PineGenerator
                 int dx = (int)math.round(math.cos(angle) * finalBranchLength);
                 int dz = (int)math.round(math.sin(angle) * finalBranchLength);
 
-                PlaceMediumBranch(x, branchY, z, dx, dz, ref rng, applyBlock);
+                PlaceMediumBranch(x, branchY, z, dx, dz, ref rng, ref applyBlock);
             }
 
             // Add spiral rotation for next whorl
@@ -200,7 +200,7 @@ public static class PineGenerator
         int trunkX, int trunkY, int trunkZ,
         int targetDx, int targetDz,
         ref Unity.Mathematics.Random rng,
-        ApplyBlockDelegate applyBlock)
+        ref BlockWriter applyBlock)
     {
         int steps = math.max(math.abs(targetDx), math.abs(targetDz));
 
@@ -215,7 +215,7 @@ public static class PineGenerator
             int bz = startZ + (int)math.round(targetDz * t);
             int by = trunkY + (i > steps * 0.6f ? -1 : 0);
 
-            applyBlock(bx, by, bz, BlockType.Log);
+            applyBlock.ApplyBlock(bx, by, bz, BlockType.Log);
 
             // PineLeaves on the sides of branch (perpendicular to branch direction)
             if (i >= steps - 2 || (i > 2 && rng.NextFloat() > 0.5f))
@@ -224,8 +224,8 @@ public static class PineGenerator
                 int perpDx = targetDz != 0 ? 1 : 0;
                 int perpDz = targetDx != 0 ? 1 : 0;
 
-                applyBlock(bx + perpDx, by, bz + perpDz, BlockType.PineLeaves);
-                applyBlock(bx - perpDx, by, bz - perpDz, BlockType.PineLeaves);
+                applyBlock.ApplyBlock(bx + perpDx, by, bz + perpDz, BlockType.PineLeaves);
+                applyBlock.ApplyBlock(bx - perpDx, by, bz - perpDz, BlockType.PineLeaves);
 
                 if (i == steps)
                 {
@@ -235,7 +235,7 @@ public static class PineGenerator
                         for (int dz = -1; dz <= 1; dz++)
                         {
                             if (dx == 0 && dz == 0) continue;
-                            applyBlock(bx + dx, by, bz + dz, BlockType.PineLeaves);
+                            applyBlock.ApplyBlock(bx + dx, by, bz + dz, BlockType.PineLeaves);
                         }
                     }
                 }
@@ -250,7 +250,7 @@ public static class PineGenerator
     private static void MakeLargePine(
         int x, int y, int z,
         ref Unity.Mathematics.Random rng,
-        ApplyBlockDelegate applyBlock)
+        ref BlockWriter applyBlock)
     {
         z -= 1;
         x -= 1;
@@ -263,7 +263,7 @@ public static class PineGenerator
             {
                 for (int tz = 0; tz < 3; tz++)
                 {
-                    applyBlock(x + tx, y + i, z + tz, BlockType.Log);
+                    applyBlock.ApplyBlock(x + tx, y + i, z + tz, BlockType.Log);
                 }
             }
         }
@@ -278,7 +278,7 @@ public static class PineGenerator
                     continue; // Skip corners
                 if (dx >= 0 && dx <= 2 && dz >= 0 && dz <= 2)
                     continue; // Skip trunk area
-                applyBlock(x + dx, tipY - 1, z + dz, BlockType.PineLeaves);
+                applyBlock.ApplyBlock(x + dx, tipY - 1, z + dz, BlockType.PineLeaves);
             }
         }
 
@@ -287,13 +287,13 @@ public static class PineGenerator
         {
             for (int tz = 0; tz < 3; tz++)
             {
-                applyBlock(x + tx, tipY, z + tz, BlockType.PineLeaves);
-                applyBlock(x + tx, tipY + 1, z + tz, BlockType.PineLeaves);
+                applyBlock.ApplyBlock(x + tx, tipY, z + tz, BlockType.PineLeaves);
+                applyBlock.ApplyBlock(x + tx, tipY + 1, z + tz, BlockType.PineLeaves);
             }
         }
-        applyBlock(x + 1, tipY + 2, z + 1, BlockType.PineLeaves);
-        applyBlock(x + 1, tipY + 3, z + 1, BlockType.PineLeaves);
-        applyBlock(x + 1, tipY + 4, z + 1, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x + 1, tipY + 2, z + 1, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x + 1, tipY + 3, z + 1, BlockType.PineLeaves);
+        applyBlock.ApplyBlock(x + 1, tipY + 4, z + 1, BlockType.PineLeaves);
 
         // Create branch whorls with spiral rotation
         int numWhorls = (int)(trunkHeight / 4);
@@ -344,7 +344,7 @@ public static class PineGenerator
                 int dx = (int)math.round(math.cos(angle) * finalBranchLength);
                 int dz = (int)math.round(math.sin(angle) * finalBranchLength);
 
-                PlaceLargeBranch(x + 1, branchY, z + 1, dx, dz, ref rng, applyBlock);
+                PlaceLargeBranch(x + 1, branchY, z + 1, dx, dz, ref rng, ref applyBlock);
             }
 
             // Add spiral rotation for next whorl
@@ -356,7 +356,7 @@ public static class PineGenerator
         int trunkX, int trunkY, int trunkZ,
         int targetDx, int targetDz,
         ref Unity.Mathematics.Random rng,
-        ApplyBlockDelegate applyBlock)
+        ref BlockWriter applyBlock)
     {
         int steps = math.max(math.abs(targetDx), math.abs(targetDz));
 
@@ -368,10 +368,10 @@ public static class PineGenerator
             int by = trunkY + (i > steps * 0.5f ? -1 : 0) + (i > steps * 0.75f ? -1 : 0);
 
             // Thicker branch base
-            applyBlock(bx, by, bz, BlockType.Log);
+            applyBlock.ApplyBlock(bx, by, bz, BlockType.Log);
             if (i <= 2)
             {
-                applyBlock(bx, by + 1, bz, BlockType.Log);
+                applyBlock.ApplyBlock(bx, by + 1, bz, BlockType.Log);
             }
 
             // PineLeaves on the SIDES of branch (perpendicular to branch direction)
@@ -381,8 +381,8 @@ public static class PineGenerator
                 int perpDx = targetDz != 0 ? 1 : 0;
                 int perpDz = targetDx != 0 ? 1 : 0;
 
-                applyBlock(bx + perpDx, by, bz + perpDz, BlockType.PineLeaves);
-                applyBlock(bx - perpDx, by, bz - perpDz, BlockType.PineLeaves);
+                applyBlock.ApplyBlock(bx + perpDx, by, bz + perpDz, BlockType.PineLeaves);
+                applyBlock.ApplyBlock(bx - perpDx, by, bz - perpDz, BlockType.PineLeaves);
 
                 if (i == steps)
                 {
@@ -391,10 +391,10 @@ public static class PineGenerator
                     {
                         for (int dz = -1; dz <= 1; dz++)
                         {
-                            applyBlock(bx + dx, by, bz + dz, BlockType.PineLeaves);
+                            applyBlock.ApplyBlock(bx + dx, by, bz + dz, BlockType.PineLeaves);
                             if (math.abs(dx) + math.abs(dz) <= 1)
                             {
-                                applyBlock(bx + dx, by + 1, bz + dz, BlockType.PineLeaves);
+                                applyBlock.ApplyBlock(bx + dx, by + 1, bz + dz, BlockType.PineLeaves);
                             }
                         }
                     }

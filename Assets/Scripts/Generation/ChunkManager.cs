@@ -14,7 +14,7 @@ using Unity.Profiling;
 using UnityEngine;
 using static Unity.Burst.Intrinsics.X86.Avx;
 
-public class ChunkManager : MonoBehaviour
+public class ChunkManager : MonoBehaviour, IVoxelWorldSource
 {
     // ==================================================
     // World Configuration
@@ -49,8 +49,8 @@ public class ChunkManager : MonoBehaviour
     [SerializeField] private BlockDatabase blockDatabase;
     [SerializeField] public BlockTextureArrayBuilder textureArrayBuilder;
 
-    [SerializeField] public Material voxelMaterial;
-    [SerializeField] public Material waterMaterial;
+    [Tooltip("Voxel rendering / shadow / texture settings. Found or created automatically when empty.")]
+    [SerializeField] VoxelRenderSettings renderSettings;
 
 
     // ==================================================
@@ -58,13 +58,10 @@ public class ChunkManager : MonoBehaviour
     // ==================================================
 
     [Header("LOD Settings")]
+    [Tooltip("Chunks closer than this (in chunks) are Near: full detail, ECS decorations.")]
     [SerializeField] int nearRange = 4;
+    [Tooltip("Chunks closer than this (in chunks) are Mid; anything further is Far. Rendering switches to 1/2 and 1/4 resolution voxels at the same distances.")]
     [SerializeField] int midRange = 10;
-    [SerializeField] int farRange = 20;
-
-    [SerializeField] Material nearMaterial;
-    //[SerializeField] Material midMaterial;
-    [SerializeField] Material farMaterial;
 
 
     // ==================================================
@@ -92,8 +89,6 @@ public class ChunkManager : MonoBehaviour
     [Header("Pre-allocation Tuning")]
     [SerializeField] int maxDensityPoolPerLod = 32;
     [SerializeField] int prewarmDensityPerLod = 8;
-    [SerializeField] int prewarmChunks = 200;
-    [SerializeField] int prewarmMeshes = 400;
 
 
     // ==================================================
@@ -209,8 +204,6 @@ public class ChunkManager : MonoBehaviour
     readonly Dictionary<LODLevel, Stack<NativeArray<float>>> densityPoolByLod = new();
     readonly object densityPoolLock = new();
 
-    readonly Stack<GameObject> chunkGoPool = new();
-    public Stack<Mesh> meshPool = new();
 
 
     // ==================================================
@@ -231,7 +224,10 @@ public class ChunkManager : MonoBehaviour
     private BlockGenSystem blockGenSystem;
     private DecorationSystem decorationSystem;
     private WriteSystem writeSystem;
-    private MeshSystem meshSystem;
+    private VoxelPackSystem packSystem;
+    private VoxelWorldRenderer voxelRenderer;
+
+    public VoxelWorldRenderer VoxelRenderer => voxelRenderer;
 
     void Awake()
     {
@@ -241,16 +237,15 @@ public class ChunkManager : MonoBehaviour
 
         InitializeSystems();
 
-        // load texture array
-        var texture = textureArrayBuilder.GetTextureArray();
-        nearMaterial.SetTexture("_Textures", texture);
-        farMaterial.SetTexture("_Textures", texture);
-        waterMaterial.SetTexture("_Textures", texture);
+        // GPU voxel storage + raymarch rendering, voxel collision queries
+        InitializeVoxelRenderer();
+        VoxelPhysics.Source = this;
 
-        //Define LODs
-        lodConfigs[LODLevel.Near] = new LODSettings { meshRes = 1, sampleRes = 1, blockSize = 1, detailedBlocks = true, material = nearMaterial };
-        lodConfigs[LODLevel.Mid] = new LODSettings { meshRes = 2, sampleRes = 1, blockSize = 2, detailedBlocks = false, material = farMaterial };
-        lodConfigs[LODLevel.Far] = new LODSettings { meshRes = 4, sampleRes = 1, blockSize = 4, detailedBlocks = false, material = farMaterial };
+        // Define LODs. Block data is always generated at full resolution; voxelScale is the size of
+        // the GPU detail level the renderer draws at this distance.
+        lodConfigs[LODLevel.Near] = new LODSettings { voxelScale = 1, sampleRes = 1 };
+        lodConfigs[LODLevel.Mid] = new LODSettings { voxelScale = 2, sampleRes = 1 };
+        lodConfigs[LODLevel.Far] = new LODSettings { voxelScale = 4, sampleRes = 1 };
         // Compute density counts per LOD
         foreach (var kv in lodConfigs.ToArray())
         {
@@ -291,7 +286,7 @@ public class ChunkManager : MonoBehaviour
         ChunkProfiler.ActiveNoiseTasks = noiseSystem.ActiveTasks;
         ChunkProfiler.ActiveBlockJobs = blockGenSystem.ActiveJobs;
         ChunkProfiler.ActiveDecoJobs = decorationSystem.ActiveJobs;
-        ChunkProfiler.ActiveMeshJobs = meshSystem.ActiveJobs;
+        ChunkProfiler.ActiveMeshJobs = packSystem.ActiveJobs;
         ChunkProfiler.PendingWriteChunks = writeSystem.PendingWritesCount;
         ChunkProfiler.TotalChunks = chunks.Count;
         UnityEngine.Profiling.Profiler.EndSample();
@@ -364,8 +359,8 @@ public class ChunkManager : MonoBehaviour
         RemeshChunksNeedingRemesh();
         UnityEngine.Profiling.Profiler.EndSample();
 
-        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: MeshSystem.Update");
-        meshSystem.Update();
+        UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: VoxelPackSystem.Update");
+        packSystem.Update();
         UnityEngine.Profiling.Profiler.EndSample();
 
         UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: AdaptivePerformance");
@@ -402,12 +397,8 @@ public class ChunkManager : MonoBehaviour
                 // Compute what LOD we *actually want now* based on player distance
                 LODLevel targetLod = GetLODForCoord(coord, lastPlayerPos, currentLod);
 
-                // Debounce
-                if (!CanMeshNow(coord))
-                    continue;
-
-                // Schedule through MeshSystem at the desired LOD
-                meshSystem.RequestMesh(coord, blockIds, targetLod, keepBlocks: true, isWaterMesh: false);
+                // Schedule a GPU repack at the desired LOD (debounced requests are queued, not dropped)
+                packSystem.RequestPack(coord, blockIds, targetLod);
             }
 
             chunksNeedingRemesh.Clear();
@@ -492,14 +483,13 @@ public class ChunkManager : MonoBehaviour
                 if (!chunks.ContainsKey(coord))
                     continue;
 
-                // If target LOD uses full-res and we already have full-res blockIds,
-                // there is no need to re-run density + blockgen: just remesh instead.
+                // Block data already exists at full resolution: the GPU holds every detail level,
+                // so a LOD change is just bookkeeping (no regeneration, no re-upload).
                 if (lodConfigs[targetLod].sampleRes == 1 &&
                     fullResBlocksByChunk.TryGetValue(coord, out var existing) &&
                     existing.IsCreated)
                 {
-                    // Just mark for remesh; block data already exists
-                    MarkChunkForRemesh(coord);
+                    ApplyLodChange(coord, targetLod);
                     continue;
                 }
 
@@ -680,7 +670,7 @@ public class ChunkManager : MonoBehaviour
         emaFrameTime = Mathf.Lerp(emaFrameTime, frameMs, alpha);
 
         int activeNoise = noiseSystem.ActiveTasks;
-        int activeMesh = meshSystem.ActiveJobs;
+        int activeMesh = packSystem.ActiveJobs;
         int activeDeco = decorationSystem.ActiveJobs;
 
         int coreCount = Mathf.Max(1, SystemInfo.processorCount);
@@ -969,7 +959,7 @@ public class ChunkManager : MonoBehaviour
         writeSystem.Initialize(
             chunkSize,
             coord => chunksStillDecorating.Contains(coord),
-            coord => meshSystem.IsMeshInProgress(coord),
+            coord => packSystem.IsPackInProgress(coord),
             coord => fullResBlocksByChunk.ContainsKey(coord) && fullResBlocksByChunk[coord].IsCreated,
             coord => fullResBlocksByChunk[coord],
             coord => MarkChunkForRemesh(coord),
@@ -978,58 +968,19 @@ public class ChunkManager : MonoBehaviour
             EnqueueFrontier                                                           // queueFrontier()
         );
 
-        // MeshSystem set-up      
-        meshSystem = new MeshSystem();
-        meshSystem.Initialize(
-            new MeshSystem.Config
+        // VoxelPackSystem set-up (block arrays -> GPU brick format)
+        packSystem = new VoxelPackSystem();
+        packSystem.Initialize(
+            new VoxelPackSystem.Config
             {
                 chunkSize = chunkSize,
                 blockDb = nativeBlockDatabase,
-                GetMeshRes = lod => lodConfigs[lod].meshRes,
-                GetSampleRes = lod => lodConfigs[lod].sampleRes,
-                GetBlockSize = lod => lodConfigs[lod].blockSize,
-                GetMaxUploadsPerFrame = () => currentMeshUploadsPerFrame
+                GetMaxUploadsPerFrame = () => Math.Max(1, (renderSettings != null ? renderSettings.uploadsPerFrame : 8) * Math.Min(currentMeshUploadsPerFrame, maxMeshUploadsPerFrame) / Math.Max(1, maxMeshUploadsPerFrame))
             },
-            rentMesh: () =>
-            {
-                if (meshPool.Count > 0)
-                    return meshPool.Pop();
-                return new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
-            },
-            returnMesh: mesh =>
-            {
-                mesh.Clear();
-                meshPool.Push(mesh);
-            },
-            allocMeshData: () =>
-            {
-                return new MeshData
-                {
-                    vertices = new NativeList<float3>(Allocator.Persistent),
-                    triangles = new NativeList<int>(Allocator.Persistent),
-                    normals = new NativeList<float3>(Allocator.Persistent),
-                    colors = new NativeList<float4>(Allocator.Persistent),
-                    UV0s = new NativeList<float2>(Allocator.Persistent),
-                    isWaterMesh = new NativeReference<bool>(Allocator.Persistent),
-                    requestWaterMesh = new NativeReference<bool>(Allocator.Persistent),
-                    ecsSpawns = new NativeList<ECSSpawnPoint>(Allocator.Persistent)
-                };
-            },
-            freeMeshData: data =>
-            {
-                if (data.vertices.IsCreated) data.vertices.Dispose();
-                if (data.triangles.IsCreated) data.triangles.Dispose();
-                if (data.normals.IsCreated) data.normals.Dispose();
-                if (data.colors.IsCreated) data.colors.Dispose();
-                if (data.UV0s.IsCreated) data.UV0s.Dispose();
-                if (data.isWaterMesh.IsCreated) data.requestWaterMesh.Dispose();
-                if (data.requestWaterMesh.IsCreated) data.requestWaterMesh.Dispose();
-                if (data.ecsSpawns.IsCreated) data.ecsSpawns.Dispose();
-            },
-            markMeshed: coord => lastMeshFrame[coord] = Time.frameCount,
-            canMeshNow: coord => CanMeshNow(coord)
+            canPackNow: coord => CanMeshNow(coord),
+            markPacked: coord => lastMeshFrame[coord] = Time.frameCount
         );
-        meshSystem.OnMeshReady += HandleMeshReady;
+        packSystem.OnChunkPacked += HandleChunkPacked;
     }
 
     // =============================
@@ -1046,81 +997,54 @@ public class ChunkManager : MonoBehaviour
         LODLevel lod = GetLODForCoord(coord, lastPlayerPos, LODLevel.Mid);
         noiseSystem.RequestDensity(coord, lod, biomeDataByChunk[coord]);
     }
-    private void HandleECSSpawns(int3 coord, MeshData meshData)
+    private void HandleECSSpawns(int3 coord, VoxelPackResult result)
     {
-        if (meshData.lod != LODLevel.Near) return;
-        if (meshData.isWaterMesh.Value) return;
-        if (!meshData.ecsSpawns.IsCreated || meshData.ecsSpawns.Length == 0) return;
+        if (result.lod != LODLevel.Near) return;
+        if (!result.ecsSpawns.IsCreated || result.ecsSpawns.Length == 0) return;
 
         float3 worldOffset = (float3)ChunkToWorld(coord);
 
-        // Destroy previous ECS decorations for this chunk (remesh case)
+        // Destroy previous ECS decorations for this chunk (repack case)
         ECSSpawnSystem.DestroyChunk(new int3(coord.x, coord.y, coord.z));
 
-        // RequestSpawn copies data into a blob — ecsSpawns stays owned by MeshData pool
+        // RequestSpawn copies data into a blob - ecsSpawns stays owned by the pack result pool
         ECSSpawnSystem.RequestSpawn(
             new int3(coord.x, coord.y, coord.z),
             worldOffset,
-            meshData.ecsSpawns.AsArray()  // read-only view, not transferred
+            result.ecsSpawns.AsArray()
         );
-
-        // Don't dispose — MeshData pool owns ecsSpawns, freeMeshData handles it
     }
-    private void HandleMeshReady(int3 coord, MeshData meshData)
+    private void HandleChunkPacked(int3 coord, VoxelPackResult result)
     {
-        bool empty = !meshData.vertices.IsCreated || meshData.vertices.Length == 0;
-        lodByCoord[coord] = meshData.lod;
-        // Try get existing chunk entry
-        chunks.TryGetValue(coord, out var chunk);
+        bool hadLod = lodByCoord.TryGetValue(coord, out var previousLod);
+        lodByCoord[coord] = result.lod;
+        if (hadLod && previousLod != result.lod)
+            OnChunkLodChanged?.Invoke(coord, previousLod, result.lod);
 
-        if (empty && !meshData.requestWaterMesh.Value)
+        if (result.IsEmpty)
         {
-            // Assign
+            // Nothing visible: keep a null entry so the chunk still counts as generated
+            voxelRenderer.RemoveChunk(coord);
             chunks[coord] = null;
-            // No mesh to apply just cleanup - same as below
-            meshSystem.ReleaseMeshData(meshData);
-            generatingSet.Remove(coord);
-            deferredFrontier.Remove(coord);
-
-            return;
         }
-
-        // Create chunk GO only if missing
-        if (chunk == null)
+        else
         {
-            GameObject go = (chunkGoPool.Count > 0) ? chunkGoPool.Pop() : new GameObject();
-            go.SetActive(true);
-            go.name = $"Chunk_{coord.x}_{coord.y}_{coord.z}";
-            go.transform.position = ChunkToWorld(coord);
-            go.transform.parent = transform;
+            if (!chunks.TryGetValue(coord, out var chunk) || chunk == null)
+            {
+                chunk = new Chunk();
+                chunks[coord] = chunk;
+            }
+            chunk.lod = result.lod;
 
-            chunk = go.GetComponent<Chunk>();
-            if (chunk == null)
-                chunk = go.AddComponent<Chunk>();
+            Profiler.StartUpload();
+            voxelRenderer.SetChunk(coord, result);
+            Profiler.EndUpload();
 
-            chunks[coord] = chunk;
-        }
-        if (meshData.isWaterMesh.Value == true)
-        {
-            chunk.waterMaterial = waterMaterial;
-            chunk.ApplyWaterMesh(meshData, meshPool);
-        }
-        else if (!empty) // Apply mesh normally
-        {   
-            chunk.chunkMaterial = lodConfigs[meshData.lod].material;
-            chunk.lod = meshData.lod;
-            chunk.ApplyMesh(meshData, meshPool);
-
-            // ECS spawns only on Near non-water mesh
-            HandleECSSpawns(coord, meshData);
+            HandleECSSpawns(coord, result);
         }
 
-        if (meshData.requestWaterMesh.Value == meshData.isWaterMesh.Value) // This means we are still waiting on a water mesh
-        {
-            meshSystem.ReleaseMeshData(meshData);
-            generatingSet.Remove(coord);
-            deferredFrontier.Remove(coord);
-        }
+        generatingSet.Remove(coord);
+        deferredFrontier.Remove(coord);
     }
     private void HandleDecorationCompleted(int3 coord, NativeList<PendingBlockWrite> writes)
     {
@@ -1204,13 +1128,111 @@ public class ChunkManager : MonoBehaviour
             var faces = DetectTerrainFlowFromBlocks(blockIds, lod);
             ExpandFrontierFromFaces(coord, lastPlayerPos, faces);
 
-            // Far LOD - don't keep blocks; MeshSystem frees them after mesh
-            meshSystem.RequestMesh(coord, blockIds, lod, keepBlocks: true, isWaterMesh: false);
+            packSystem.RequestPack(coord, blockIds, lod);
         }
     }
     private void HandleDensityReady(int3 coord, LODLevel lod, NativeArray<float> density)
     {
         completedNoiseQueue.Enqueue((coord, density, lod));
+    }
+
+    // =============================
+    // ===== VOXEL RENDER/PHYSICS ==
+    // =============================
+    void InitializeVoxelRenderer()
+    {
+        if (renderSettings == null)
+            renderSettings = VoxelRenderSettings.FindOrCreate();
+        renderSettings.Apply();
+
+        var opaque = renderSettings.OpaqueMaterialOrDefault;
+        var translucent = renderSettings.TranslucentMaterialOrDefault;
+        if (opaque == null || translucent == null)
+            Debug.LogError("[ChunkManager] Voxel raymarch materials are missing (Assets/Resources/VoxelRaymarch*.mat).");
+
+        voxelRenderer = new VoxelWorldRenderer(new VoxelWorldRenderer.Settings
+        {
+            chunkSize = chunkSize,
+            initialChunkCapacity = renderSettings.initialChunkCapacity,
+            initialPageCapacity = renderSettings.initialPageCapacity,
+            opaqueMaterial = opaque,
+            translucentMaterial = translucent,
+            blockTextures = textureArrayBuilder != null ? textureArrayBuilder.GetTextureArray() : null,
+            blockDb = nativeBlockDatabase,
+            layer = gameObject.layer,
+            gridDims = VoxelGridDims()
+        });
+    }
+
+    void LateUpdate()
+    {
+        if (voxelRenderer == null)
+            return;
+
+        // Live settings
+        voxelRenderer.castShadows = renderSettings.castIntoShadowMap;
+        voxelRenderer.shadowMapDistance = renderSettings.shadowMapDistance;
+        voxelRenderer.SetLodDistances(nearRange * chunkSize, midRange * chunkSize);
+        voxelRenderer.FlushUploads();
+    }
+
+    // =============================
+    // ============ LOD ============
+    // =============================
+
+    /// <summary>Raised when a loaded chunk changes LOD: (coord, previous, current).</summary>
+    public event Action<int3, LODLevel, LODLevel> OnChunkLodChanged;
+
+    /// <summary>Current LOD of a loaded (or generating) chunk.</summary>
+    public bool TryGetChunkLod(int3 coord, out LODLevel lod) => lodByCoord.TryGetValue(coord, out lod);
+
+    /// <summary>LOD at a world position: the chunk's current LOD, or what it would get from its distance.</summary>
+    public LODLevel GetLodAt(Vector3 worldPosition)
+    {
+        int3 coord = WorldToChunkCoord(worldPosition);
+        return TryGetChunkLod(coord, out var lod) ? lod : GetLODForCoord(coord, lastPlayerPos, LODLevel.Mid);
+    }
+
+    public LODSettings GetLodSettings(LODLevel lod) => lodConfigs[lod];
+
+    void ApplyLodChange(int3 coord, LODLevel lod)
+    {
+        LODLevel previous = lodByCoord.TryGetValue(coord, out var stored) ? stored : lod;
+        lodByCoord[coord] = lod;
+        if (chunks.TryGetValue(coord, out var chunk) && chunk != null)
+            chunk.lod = lod;
+
+        // ECS decorations are only collected for Near chunks - a chunk coming into Near range
+        // needs one pack pass to spawn them (cheap: block data is already in memory).
+        if (lod == LODLevel.Near && previous != LODLevel.Near)
+            MarkChunkForRemesh(coord);
+
+        if (previous != lod)
+            OnChunkLodChanged?.Invoke(coord, previous, lod);
+    }
+
+    // Toroidal chunk lookup grid used by GPU rays that cross chunk borders. Must be at least as
+    // large as the loaded area, otherwise distant chunks alias onto the same cell.
+    int3 VoxelGridDims()
+    {
+        int span = Mathf.NextPowerOfTwo(2 * (viewDistance + unloadPastViewDistance) + 3);
+        return new int3(span, Mathf.Min(span, 64), span);
+    }
+
+    // IVoxelWorldSource - lets VoxelPhysics read block data directly.
+    int IVoxelWorldSource.ChunkSize => chunkSize;
+    NativeArray<BlockDatabase.BlockInfoUnmanaged> IVoxelWorldSource.BlockDatabase => nativeBlockDatabase;
+
+    bool IVoxelWorldSource.TryGetChunkBlocks(int3 coord, out NativeArray<byte> blocks)
+    {
+        // Chunks being decorated are written by a job - not safe to read on the main thread.
+        if (chunksStillDecorating.Contains(coord) ||
+            !fullResBlocksByChunk.TryGetValue(coord, out blocks) || !blocks.IsCreated)
+        {
+            blocks = default;
+            return false;
+        }
+        return true;
     }
 
     // =============================
@@ -1366,6 +1388,9 @@ public class ChunkManager : MonoBehaviour
             biomeDataByChunk.Remove(coord);
         }
 
+        // Stop any pack job still reading this chunk's blocks before they are disposed
+        packSystem.Cancel(coord);
+
         // Clear stored block data
         if (fullResBlocksByChunk.TryGetValue(coord, out var arr))
         {
@@ -1378,16 +1403,7 @@ public class ChunkManager : MonoBehaviour
         lodByCoord.Remove(coord);
         chunksNeedingRemesh.Remove(coord);
 
-        if (!chunks.TryGetValue(coord, out var chunk))
-            return;
-
-        // Handle null seperatly here as empty chunks can exist in the dictionary
-        if (chunk != null)
-        {    
-            chunk.Release(meshPool);
-            chunkGoPool.Push(chunk.gameObject);
-        }
-
+        voxelRenderer.RemoveChunk(coord);
         chunks.Remove(coord);
     }
     public Vector3 ChunkToWorld(int3 coord)
@@ -1420,24 +1436,6 @@ public class ChunkManager : MonoBehaviour
         }
     void PrewarmPools()
     {
-        for (int i = 0; i < prewarmChunks; i++)
-        {
-            var go = new GameObject($"PooledChunk_{i}");
-            go.SetActive(false);
-            go.transform.parent = transform;
-
-            var chunk = go.AddComponent<Chunk>();
-            chunk.chunkMaterial = voxelMaterial;
-            chunkGoPool.Push(go);
-        }
-
-        for (int i = 0; i < prewarmMeshes; i++)
-        {
-            var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
-            mesh.MarkDynamic(); // helps when reusing buffer content
-            meshPool.Push(mesh);
-        }
-
         // Density per LOD
         lock (densityPoolLock)
         {
@@ -1539,13 +1537,11 @@ public class ChunkManager : MonoBehaviour
         generatingSet.Clear();
         //activeNoiseTasks.Clear();
 
-        // Destroy pooled chunk gameobjects
-        while (chunkGoPool.Count > 0)
-        {
-            var go = chunkGoPool.Pop();
-            if (go != null)
-                DestroyImmediate(go);
-        }
+        // Pending pack jobs read the block arrays disposed below
+        packSystem?.Dispose();
+        voxelRenderer?.Dispose();
+        if (ReferenceEquals(VoxelPhysics.Source, this))
+            VoxelPhysics.Source = null;
 
         // Dispose all full-res block arrays that were never cleaned
         foreach (var kv in fullResBlocksByChunk)

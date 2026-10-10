@@ -58,6 +58,8 @@ public class CharacterPose
     public float GaitWeight;
     /// <summary>0 walking .. 1 running.</summary>
     public float RunBlend;
+    /// <summary>0 running .. 1 full sprint (long bounding strides with time in the air).</summary>
+    public float SprintBlend;
     /// <summary>0 grounded .. 1 fully in the air pose.</summary>
     public float Airborne;
 

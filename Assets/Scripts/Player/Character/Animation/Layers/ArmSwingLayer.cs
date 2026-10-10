@@ -9,6 +9,7 @@ public class ArmSwingLayer : CharacterAnimLayer
     [Header("Swing (degrees)")]
     [SerializeField] private float walkSwing = 20f;
     [SerializeField] private float runSwing = 38f;
+    [SerializeField] private float sprintSwing = 55f;
     [Tooltip("Flip if the arms swing with the leg on the same side instead of against it")]
     [SerializeField] private bool invertSwing = false;
 
@@ -16,6 +17,7 @@ public class ArmSwingLayer : CharacterAnimLayer
     [SerializeField] private float idleElbow = 6f;
     [SerializeField] private float walkElbow = 15f;
     [SerializeField] private float runElbow = 65f;
+    [SerializeField] private float sprintElbow = 85f;
     [Tooltip("Extra bend while the arm is forward")]
     [SerializeField] private float forwardElbow = 12f;
 
@@ -40,6 +42,7 @@ public class ArmSwingLayer : CharacterAnimLayer
         float k = Damp(responsiveness, ctx.DeltaTime);
         float gait = pose.GaitWeight;
         float run = pose.RunBlend;
+        float sprint = pose.SprintBlend;
         float air = pose.Airborne;
 
         for (int i = 0; i < 2; i++)
@@ -49,8 +52,8 @@ public class ArmSwingLayer : CharacterAnimLayer
             float legForward = Mathf.Cos(Mathf.Repeat(pose.GaitPhase + 0.5f * i, 1f) * 2f * Mathf.PI);
             float armForward = invertSwing ? legForward : -legForward;
 
-            float targetSwing = Mathf.Lerp(walkSwing, runSwing, run) * gait * armForward;
-            float targetElbow = idleElbow + Mathf.Lerp(walkElbow, runElbow, run) * gait + Mathf.Max(0f, armForward) * forwardElbow * gait;
+            float targetSwing = Mathf.Lerp(Mathf.Lerp(walkSwing, runSwing, run), sprintSwing, sprint) * gait * armForward;
+            float targetElbow = idleElbow + Mathf.Lerp(Mathf.Lerp(walkElbow, runElbow, run), sprintElbow, sprint) * gait + Mathf.Max(0f, armForward) * forwardElbow * gait;
             float targetSpread = Mathf.Lerp(walkSpread, runSpread, run) * gait;
 
             targetSwing = Mathf.Lerp(targetSwing, airForward, air);

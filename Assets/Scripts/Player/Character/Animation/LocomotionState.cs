@@ -14,9 +14,10 @@ public struct LocomotionState
     public float FacingYaw;
     /// <summary>World direction the character is looking (head aims here).</summary>
     public Vector3 LookDirection;
-    /// <summary>Reference speeds the gait blends between.</summary>
+    /// <summary>Reference speeds the gait blends between (walk, run, full sprint).</summary>
     public float WalkSpeed;
     public float RunSpeed;
+    public float SprintSpeed;
     public bool Sprinting;
     /// <summary>0 = standing, 1 = fully crouched.</summary>
     public float Crouch;

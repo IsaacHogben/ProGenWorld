@@ -24,8 +24,12 @@ public class LocomotionLayer : CharacterAnimLayer
     [Range(0.2f, 0.8f)] [SerializeField] private float runStanceFraction = 0.34f;
     [Tooltip("Extra cadence on slopes (per unit of slope): shorter, quicker steps on stairs and hills")]
     [SerializeField] private float slopeCadence = 0.7f;
-    [Tooltip("Longest step. Faster than this x cadence, the steps get quicker instead of longer")]
-    [SerializeField] private float maxStepLength = 1.6f;
+    [Tooltip("Steps per second at full sprint speed. Faster still, strides only get longer")]
+    [SerializeField] private float sprintCadence = 5f;
+    [Tooltip("Fraction of the cycle a foot is on the ground at full sprint")]
+    [Range(0.15f, 0.5f)] [SerializeField] private float sprintStanceFraction = 0.27f;
+    [Tooltip("Furthest a planted foot travels under the body (front to back). Strides longer than the legs can cover this way are made up by time in the air")]
+    [SerializeField] private float stanceReach = 1.3f;
 
     [Header("Foot Placement")]
     [Tooltip("Extra stance width added to the model's rest pose")]
@@ -46,6 +50,8 @@ public class LocomotionLayer : CharacterAnimLayer
     [Header("Swing")]
     [SerializeField] private float walkLift = 0.25f;
     [SerializeField] private float runLift = 0.5f;
+    [Tooltip("Foot lift at full sprint; the heel also kicks up behind early in the swing")]
+    [SerializeField] private float sprintLift = 0.8f;
     [Tooltip("Gap kept between the swinging foot and block edges in its path")]
     [SerializeField] private float obstacleClearance = 0.12f;
     [Tooltip("Extra room kept ahead of the toe while the foot is low (the knee leads the foot)")]
@@ -55,10 +61,13 @@ public class LocomotionLayer : CharacterAnimLayer
     [Tooltip("Toe pitch through the swing (degrees)")]
     [SerializeField] private float walkToePitch = 15f;
     [SerializeField] private float runToePitch = 30f;
+    [SerializeField] private float sprintToePitch = 40f;
 
     [Header("Pelvis")]
     [SerializeField] private float walkBob = 0.035f;
     [SerializeField] private float runBob = 0.07f;
+    [Tooltip("Pelvis rise and fall over each bounding stride at full sprint")]
+    [SerializeField] private float sprintBob = 0.12f;
     [Tooltip("Side to side shift over the standing foot when walking")]
     [SerializeField] private float walkSway = 0.03f;
     [Tooltip("Fraction of the leg length used before the pelvis lowers to keep a foot reachable")]
@@ -73,6 +82,7 @@ public class LocomotionLayer : CharacterAnimLayer
     [Tooltip("Knee bend kept while walking / running (pelvis lowered by this much)")]
     [SerializeField] private float walkCrouch = 0.05f;
     [SerializeField] private float runCrouch = 0.14f;
+    [SerializeField] private float sprintCrouch = 0.18f;
     [Tooltip("How far the pelvis lowers when fully crouched")]
     [SerializeField] private float crouchDepth = 0.5f;
 
@@ -129,6 +139,7 @@ public class LocomotionLayer : CharacterAnimLayer
     float compression;
     float compressionVelocity;
     float runBlend;
+    float sprintBlend;
     float gaitWeight;
     float airBlend;
     float sole;
@@ -203,7 +214,10 @@ public class LocomotionLayer : CharacterAnimLayer
         float speed = velocity.magnitude;
 
         float walkSpeed = Mathf.Max(0.5f, s.WalkSpeed);
-        runBlend = Mathf.Lerp(runBlend, Mathf.InverseLerp(walkSpeed, Mathf.Max(walkSpeed + 0.1f, s.RunSpeed), speed), Damp(8f, dt));
+        float runSpeed = Mathf.Max(walkSpeed + 0.1f, s.RunSpeed);
+        runBlend = Mathf.Lerp(runBlend, Mathf.InverseLerp(walkSpeed, runSpeed, speed), Damp(8f, dt));
+        float sprintTarget = s.SprintSpeed > runSpeed + 0.1f ? Mathf.InverseLerp(runSpeed, s.SprintSpeed, speed) : 0f;
+        sprintBlend = Mathf.Lerp(sprintBlend, sprintTarget, Damp(6f, dt));
         gaitWeight = Mathf.Lerp(gaitWeight, Mathf.Clamp01(speed / walkSpeed), Damp(10f, dt));
 
         bool air = jumped || (!s.Grounded && s.AirTime > airPoseDelay);
@@ -236,6 +250,7 @@ public class LocomotionLayer : CharacterAnimLayer
         pose.GaitPhase = phase;
         pose.GaitWeight = inAir ? 0f : gaitWeight;
         pose.RunBlend = runBlend;
+        pose.SprintBlend = inAir ? 0f : sprintBlend;
         pose.Airborne = airBlend;
     }
 
@@ -297,13 +312,22 @@ public class LocomotionLayer : CharacterAnimLayer
         float dt = ctx.DeltaTime;
         float walkSpeed = Mathf.Max(0.5f, s.WalkSpeed);
 
+        // Steps get quicker up to sprint cadence; beyond that only the stride grows.
         float cadence = speed < walkSpeed
             ? Mathf.Lerp(minCadence, walkCadence, speed / walkSpeed)
-            : Mathf.Lerp(walkCadence, runCadence, runBlend);
-        duty = Mathf.Lerp(duty, Mathf.Lerp(walkStanceFraction, runStanceFraction, runBlend), Damp(4f, dt));
+            : Mathf.Lerp(Mathf.Lerp(walkCadence, runCadence, runBlend), sprintCadence, sprintBlend);
         cadence *= 1f + slopeCadence * Mathf.Min(Mathf.Abs(s.Slope), 1.5f);
-        cadence = Mathf.Max(cadence, speed / Mathf.Max(0.3f, maxStepLength));
         float cycleRate = cadence * 0.5f;
+
+        // Time on the ground per foot: shorter as the gait speeds up, and never longer than the
+        // legs can carry the body over. Longer strides than that are covered in the air.
+        float targetDuty = Mathf.Lerp(Mathf.Lerp(walkStanceFraction, runStanceFraction, runBlend), sprintStanceFraction, sprintBlend);
+        if (speed > 0.5f)
+        {
+            float stepLength = speed / cadence;
+            targetDuty = Mathf.Min(targetDuty, stanceReach / (2f * stepLength));
+        }
+        duty = Mathf.Lerp(duty, Mathf.Max(0.15f, targetDuty), Damp(4f, dt));
 
         // Standing still: keep stepping only until the feet are back under the body.
         bool moving = speed >= 0.2f;
@@ -499,7 +523,9 @@ public class LocomotionLayer : CharacterAnimLayer
         const float step = 0.1f;
         int n = Mathf.Clamp(Mathf.CeilToInt(distance / step), 1, pathY.Length - 1);
         float du = distance / n;
-        float lift = Mathf.Lerp(walkLift, runLift, runBlend) * Mathf.Clamp(distance / 0.8f, 0.35f, 1f);
+        float lift = Mathf.Lerp(Mathf.Lerp(walkLift, runLift, runBlend), sprintLift, sprintBlend) * Mathf.Clamp(distance / 0.8f, 0.35f, 1f);
+        // Sprinting, the heel kicks up early in the swing (peak moves forward in the swing).
+        float liftShape = Mathf.Lerp(1f, 0.45f, sprintBlend);
 
         // Ground along the path, from behind the heel to beyond the toe and knee.
         float refY = Mathf.Max(from.y, target.y);
@@ -515,7 +541,7 @@ public class LocomotionLayer : CharacterAnimLayer
         {
             float u = k * du;
             float frac = distance > 1e-3f ? u / distance : 1f;
-            float baseY = Mathf.Lerp(from.y, target.y, Smooth(frac)) + lift * Mathf.Sin(frac * Mathf.PI);
+            float baseY = Mathf.Lerp(from.y, target.y, Smooth(frac)) + lift * Mathf.Sin(Mathf.Pow(frac, liftShape) * Mathf.PI);
 
             // Highest ground under the foot; the knee needs room ahead while the foot is still low.
             float ahead = footToe + kneeClearance * (1f - Smooth(frac));
@@ -570,7 +596,7 @@ public class LocomotionLayer : CharacterAnimLayer
         f.yaw = Mathf.LerpAngle(f.liftYaw, ctx.State.FacingYaw, h);
 
         // Toes push down leaving the ground, lift to clear the edge before landing.
-        float toe = Mathf.Lerp(walkToePitch, runToePitch, runBlend) * Mathf.Max(gaitWeight, 0.3f);
+        float toe = Mathf.Lerp(Mathf.Lerp(walkToePitch, runToePitch, runBlend), sprintToePitch, sprintBlend) * Mathf.Max(gaitWeight, 0.3f);
         f.pitch = toe * Mathf.Sin(t * 2f * Mathf.PI);
     }
 
@@ -644,11 +670,11 @@ public class LocomotionLayer : CharacterAnimLayer
         // Steps: walking rides highest over the standing foot, running sinks into each stride.
         float stepPhase = Mathf.Repeat(2f * phase - duty, 1f);
         float wave = Mathf.Cos(stepPhase * 2f * Mathf.PI);
-        float bob = Mathf.Lerp(walkBob * wave, -runBob * wave, runBlend) * gaitWeight;
+        float bob = Mathf.Lerp(walkBob * wave, -Mathf.Lerp(runBob, sprintBob, sprintBlend) * wave, runBlend) * gaitWeight;
         float sway = walkSway * Mathf.Cos((phase - duty * 0.5f) * 2f * Mathf.PI) * (1f - runBlend) * gaitWeight;
         if (inAir) bob = sway = 0f;
 
-        float gaitCrouch = inAir ? 0f : Mathf.Lerp(walkCrouch, runCrouch, runBlend) * gaitWeight;
+        float gaitCrouch = inAir ? 0f : Mathf.Lerp(Mathf.Lerp(walkCrouch, runCrouch, runBlend), sprintCrouch, sprintBlend) * gaitWeight;
         Vector3 offset = new Vector3(feet[0].rest.x < 0f ? -sway : sway, bob - gaitCrouch - ctx.State.Crouch * crouchDepth, 0f);
 
         // Height: ride on the ground under the feet that carry the weight, so on stairs the body
@@ -679,7 +705,8 @@ public class LocomotionLayer : CharacterAnimLayer
                 sum += w * y;
                 total += w;
             }
-            float feetGround = total > 0.01f ? sum / total : ctx.Root.y;
+            const float bodyWeight = 0.05f;
+            float feetGround = (sum + ctx.Root.y * bodyWeight) / (total + bodyWeight);
             float target = Mathf.Lerp(feetGround, ctx.Root.y, bodyHeightFollow);
             pelvisGround = Mathf.SmoothDamp(pelvisGround, target, ref pelvisGroundVelocity, groundFollowSmoothTime, Mathf.Infinity, dt);
         }

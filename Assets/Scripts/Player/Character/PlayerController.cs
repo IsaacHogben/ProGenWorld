@@ -14,8 +14,23 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
 {
     [Header("Speed")]
     [SerializeField] private float walkSpeed = 4f;
+    [Tooltip("Speed when the sprint key is first held (a run)")]
     [SerializeField] private float sprintSpeed = 7.5f;
     [SerializeField] private float crouchSpeed = 2f;
+
+    [Header("Sprint Momentum")]
+    [Tooltip("Top speed reached by sprinting without interruption")]
+    [SerializeField] private float topSprintSpeed = 11f;
+    [Tooltip("Seconds of uninterrupted sprinting to build up to top speed")]
+    [SerializeField] private float sprintBuildUpTime = 1.6f;
+    [Tooltip("Momentum lost each time the ground steps up or down by a block")]
+    [Range(0f, 1f)] [SerializeField] private float momentumLossPerStep = 0.3f;
+    [Tooltip("Momentum lost per second while not sprinting, turning hard or climbing")]
+    [SerializeField] private float momentumDecay = 2f;
+    [Tooltip("Slopes steeper than this (rise per metre) stop momentum building")]
+    [SerializeField] private float maxBuildUpSlope = 0.35f;
+    [Tooltip("Turning faster than this (degrees per second) stops momentum building")]
+    [SerializeField] private float maxBuildUpTurnRate = 120f;
 
     [Header("Acceleration")]
     [SerializeField] private float groundAcceleration = 30f;
@@ -75,10 +90,15 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     private bool idleTurning;
     private float slope;
     private float crouch;
+    private float sprintMomentum;
+    private float lastGroundHeight;
+    private float lastWishYaw;
 
     public VoxelCharacterMotor Motor => motor;
     public bool IsSprinting => sprintHeld && moveInput.sqrMagnitude > 0.09f && crouch < 0.5f && (IsThirdPerson || moveInput.y > 0.3f);
     public float FacingYaw => facingYaw;
+    /// <summary>0 = sprint just started .. 1 = at top sprint speed.</summary>
+    public float SprintMomentum => sprintMomentum;
 
     bool IsThirdPerson => playerCamera == null || playerCamera.IsThirdPerson;
 
@@ -166,7 +186,11 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             ? Mathf.Max(0.3f, Mathf.LerpUnclamped(1f, uphillSpeedMultiplier, Mathf.Min(slope, 1.5f)))
             : Mathf.Lerp(1f, downhillSpeedMultiplier, -slope);
 
-        float maxSpeed = crouch > 0.5f ? crouchSpeed : IsSprinting ? sprintSpeed : walkSpeed;
+        UpdateSprintMomentum(dt, grounded);
+
+        float maxSpeed = crouch > 0.5f ? crouchSpeed
+            : IsSprinting ? Mathf.Lerp(sprintSpeed, Mathf.Max(sprintSpeed, topSprintSpeed), sprintMomentum)
+            : walkSpeed;
         Vector3 target = wishDirection * (maxSpeed * slopeMultiplier);
 
         // Start from what the body actually did, so walls don't store phantom speed.
@@ -192,6 +216,34 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             lastJumpPressedTime = float.NegativeInfinity;
             lastGroundedTime = float.NegativeInfinity;
         }
+    }
+
+    // Holding sprint on open ground builds momentum toward top speed; stepping up or down blocks,
+    // hills, hard turns, walls and letting go of sprint take it away.
+    void UpdateSprintMomentum(float dt, bool grounded)
+    {
+        float wishYaw = Mathf.Atan2(wishDirection.x, wishDirection.z) * Mathf.Rad2Deg;
+        float turnRate = Mathf.Abs(Mathf.DeltaAngle(lastWishYaw, wishYaw)) / dt;
+        lastWishYaw = wishYaw;
+
+        if (!IsSprinting || motor.HitWall)
+        {
+            sprintMomentum = Mathf.MoveTowards(sprintMomentum, 0f, momentumDecay * dt * (motor.HitWall ? 4f : 1f));
+        }
+        else if (grounded)
+        {
+            if (Mathf.Abs(motor.GroundHeight - lastGroundHeight) > 0.5f)
+                sprintMomentum = Mathf.Max(0f, sprintMomentum - momentumLossPerStep);
+
+            bool open = Mathf.Abs(slope) <= maxBuildUpSlope && turnRate <= maxBuildUpTurnRate;
+            sprintMomentum = open
+                ? Mathf.MoveTowards(sprintMomentum, 1f, dt / Mathf.Max(0.05f, sprintBuildUpTime))
+                : Mathf.MoveTowards(sprintMomentum, 0f, momentumDecay * dt);
+        }
+        // In the air (jumping while sprinting) momentum is kept.
+
+        if (grounded)
+            lastGroundHeight = motor.GroundHeight;
     }
 
     void UpdateFacing(float dt)
@@ -237,6 +289,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             LookDirection = look,
             WalkSpeed = walkSpeed,
             RunSpeed = sprintSpeed,
+            SprintSpeed = Mathf.Max(sprintSpeed, topSprintSpeed),
             Sprinting = IsSprinting,
             Crouch = crouch,
             Slope = slope,

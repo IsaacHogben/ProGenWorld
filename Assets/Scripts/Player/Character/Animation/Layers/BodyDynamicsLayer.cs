@@ -12,6 +12,8 @@ public class BodyDynamicsLayer : CharacterAnimLayer
     [SerializeField] private float maxAccelerationLean = 14f;
     [Tooltip("Forward lean at run speed (degrees)")]
     [SerializeField] private float runLean = 9f;
+    [Tooltip("Extra forward lean at full sprint (degrees)")]
+    [SerializeField] private float sprintLean = 7f;
     [Tooltip("Forward lean per unit of slope going uphill, back lean downhill (degrees)")]
     [SerializeField] private float slopeLean = 7f;
     [Tooltip("Smoothing time of the lean (seconds)")]
@@ -28,6 +30,7 @@ public class BodyDynamicsLayer : CharacterAnimLayer
     [Tooltip("Chest twist against the legs when walking / running (degrees)")]
     [SerializeField] private float walkTwist = 4f;
     [SerializeField] private float runTwist = 9f;
+    [SerializeField] private float sprintTwist = 12f;
 
     [Header("Air")]
     [Tooltip("Lean when rising (negative = back) and when falling (degrees)")]
@@ -65,7 +68,7 @@ public class BodyDynamicsLayer : CharacterAnimLayer
 
         float targetPitch =
             Mathf.Clamp(forwardAccel * accelerationLean, -maxAccelerationLean, maxAccelerationLean) * grounded +
-            runLean * pose.RunBlend * forwardFraction * grounded +
+            (runLean * pose.RunBlend + sprintLean * pose.SprintBlend) * forwardFraction * grounded +
             slopeLean * Mathf.Clamp(s.Slope, -1f, 1.5f) * Mathf.Abs(forwardFraction) * grounded +
             Mathf.Lerp(fallLean, riseLean, Mathf.InverseLerp(-8f, 6f, s.Velocity.y)) * pose.Airborne;
 
@@ -75,7 +78,7 @@ public class BodyDynamicsLayer : CharacterAnimLayer
         pitch = Mathf.SmoothDamp(pitch, targetPitch, ref pitchVelocity, leanSmoothTime, Mathf.Infinity, dt);
         roll = Mathf.SmoothDamp(roll, targetRoll, ref rollVelocity, leanSmoothTime, Mathf.Infinity, dt);
 
-        float twist = Mathf.Lerp(walkTwist, runTwist, pose.RunBlend) * pose.GaitWeight * Mathf.Sin(pose.GaitPhase * 2f * Mathf.PI);
+        float twist = Mathf.Lerp(Mathf.Lerp(walkTwist, runTwist, pose.RunBlend), sprintTwist, pose.SprintBlend) * pose.GaitWeight * Mathf.Sin(pose.GaitPhase * 2f * Mathf.PI);
 
         Quaternion pelvis = Quaternion.Euler(pitch * pelvisShare, -twist * 0.5f, roll * pelvisShare);
         Quaternion chest = Quaternion.Euler(pitch * (1f - pelvisShare), twist, roll * (1f - pelvisShare));

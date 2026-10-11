@@ -221,6 +221,11 @@ struct VoxelHit
     uint   id;
     int    axis;
     float3 posVoxel;
+    // Set by the texel relief (VoxelRelief.hlsl) when it refined the hit.
+    uint   refined;
+    int    texAxis;    // face whose texture colours the hit column
+    float3 texPosWS;   // texel centre of the hit column
+    float  occlusion;  // ambient occlusion from the column depth (1 = none)
 };
 
 bool VoxelRayBox(float3 o, float3 invD, float3 bmin, float3 bmax,
@@ -287,7 +292,10 @@ bool VoxelOutside(int3 p, float3 bmin, float3 bmax)
 // o/d are in chunk voxel space.
 // skipStartSolid: when the ray starts inside solid voxels, ignore them until it reaches open
 // space (used by shadow rays that skip nearby occluders).
-bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3 o, float3 d, float tMin, out VoxelHit hit, bool skipStartSolid = false)
+// stopAtMaskedBefore: masked voxels entered before this t are returned as hits at their entry
+// (the texel relief gives them thickness). 0 = off.
+bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3 o, float3 d, float tMin, out VoxelHit hit,
+                      bool skipStartSolid = false, float stopAtMaskedBefore = 0.0)
 {
     hit = (VoxelHit)0;
     d = VoxelSafeDir(d);
@@ -325,6 +333,12 @@ bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
             continue;
         }
         skipping = false;
+
+        if (vis == VOXEL_VIS_STACKED && cur.t < stopAtMaskedBefore)
+        {
+            hit.t = cur.t; hit.id = id; hit.axis = faceAxis; hit.posVoxel = pos;
+            return true;
+        }
 
         if (vis == VOXEL_VIS_OPAQUE || (vis == VOXEL_VIS_STACKED && VoxelMaskPass(id, faceAxis, pos)))
         {
@@ -606,8 +620,13 @@ float4 VoxelSampleBlockTexture(uint id, int axis, float3 posWS)
     return lerp(small, large, blend);
 }
 
+#include "VoxelRelief.hlsl"
+
 float4 VoxelSampleAlbedo(VoxelHit hit, float3 hitWS)
 {
+    // Relief columns take the colour of their texel on the face they were carved from, walls included.
+    if (hit.refined != 0u)
+        return VoxelSampleBlockTexture(hit.id, hit.texAxis, hit.texPosWS);
     return VoxelSampleBlockTexture(hit.id, hit.axis, hitWS);
 }
 
@@ -678,10 +697,17 @@ bool VoxelTraceCamera(VoxelVaryings input, out VoxelHit hit, out float3 hitWS, o
 
     float vs = c.originSize.w * VoxelLevelScale(input.level);
     float3 o = (ro - c.originSize.xyz) / vs;
-    bool found = VoxelMarchOpaque(c, input.level, bmin, bmax, o, rayDirWS, tMinWS / vs, hit);
+    // Near the camera the march stops at leaf voxels so the relief can give them thickness.
+    float stopMasked = input.level == 0u ? VoxelReliefMaskedStop(vs) : 0.0;
+    bool found = VoxelMarchOpaque(c, input.level, bmin, bmax, o, rayDirWS, tMinWS / vs, hit, false, stopMasked);
 
     hitWS = ro + rayDirWS * (hit.t * vs);
     normalWS = VoxelFaceNormal(hit.axis, rayDirWS);
+
+    // Texel relief near the camera. Every pass (depth, normals, forward) refines the same way,
+    // so their depths agree.
+    if (found && input.level == 0u)
+        found = VoxelReliefRefine(c, bmin, bmax, ro, o, rayDirWS, vs, hit, hitWS, normalWS);
     return found;
 }
 

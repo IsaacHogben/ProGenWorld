@@ -12,6 +12,13 @@ public class BlockTextureArrayBuilder : ScriptableObject
     [HideInInspector]
     public Texture2DArray generatedArray;
 
+    /// <summary>
+    /// Per texel relief height (R8, 1 = surface, 0 = deepest), built with the colour array from
+    /// each texture's brightness relative to its own darkest / brightest texel. Runtime only.
+    /// </summary>
+    [System.NonSerialized]
+    public Texture2DArray generatedHeights;
+
     public void GenerateTextureArray()
     {
         Debug.Log("Building texture array from BlockDatabase...");
@@ -29,12 +36,24 @@ public class BlockTextureArrayBuilder : ScriptableObject
             wrapMode = TextureWrapMode.Repeat
         };
 
+        if (generatedHeights != null)
+            Object.DestroyImmediate(generatedHeights);
+        var heights = new Texture2DArray(textureSize, textureSize, count, TextureFormat.R8, false)
+        {
+            name = "BlockReliefHeights",
+            filterMode = FilterMode.Point,
+            wrapMode = TextureWrapMode.Repeat
+        };
+        var heightBytes = new byte[textureSize * textureSize];
+
         for (int i = 0; i < count; i++)
         {
             var tex = blockDatabase.blocks[i].texture;
             if (tex == null)
             {
                 Debug.LogWarning($"Block {i} ('{blockDatabase.blocks[i].name}') has no texture.");
+                System.Array.Fill(heightBytes, (byte)255);
+                heights.SetPixelData(heightBytes, 0, i);
                 continue;
             }
 
@@ -74,6 +93,9 @@ public class BlockTextureArrayBuilder : ScriptableObject
             converted.SetPixels(pixels);
             converted.Apply();
 
+            BuildHeights(converted.GetPixels(), heightBytes);
+            heights.SetPixelData(heightBytes, 0, i);
+
             // --- Copy into array slice ---
             Graphics.CopyTexture(converted, 0, 0, array, i, 0);
             Object.DestroyImmediate(converted);
@@ -81,8 +103,10 @@ public class BlockTextureArrayBuilder : ScriptableObject
 
         array.Apply(false, true);
         generatedArray = array;
+        heights.Apply(false, true);
+        generatedHeights = heights;
 
-        Debug.Log($"Generated Texture2DArray with {count} slices ({textureSize}×{textureSize}, RGBA32).");
+        Debug.Log($"Generated Texture2DArray with {count} slices ({textureSize}ï¿½{textureSize}, RGBA32).");
 
 #if UNITY_EDITOR
         string pathOut = "Assets/Generated/BlockTextureArray.asset";
@@ -92,6 +116,29 @@ public class BlockTextureArrayBuilder : ScriptableObject
         AssetDatabase.Refresh();
         Debug.Log($"[BlockTextureArrayBuilder] Saved Texture2DArray to {pathOut}");
 #endif
+    }
+
+    // Brightness normalised to the texture's own range, so a dark texture is not sunk as a whole.
+    // Nearly flat textures stay at the surface.
+    static void BuildHeights(Color[] pixels, byte[] heights)
+    {
+        float min = float.MaxValue, max = float.MinValue;
+        var lum = new float[pixels.Length];
+        for (int p = 0; p < pixels.Length; p++)
+        {
+            lum[p] = pixels[p].r * 0.2126f + pixels[p].g * 0.7152f + pixels[p].b * 0.0722f;
+            if (pixels[p].a < 0.5f)
+                continue;
+            min = Mathf.Min(min, lum[p]);
+            max = Mathf.Max(max, lum[p]);
+        }
+
+        bool flat = max - min < 0.04f;
+        for (int p = 0; p < heights.Length; p++)
+        {
+            float h = flat || p >= lum.Length ? 1f : Mathf.Clamp01((lum[p] - min) / (max - min));
+            heights[p] = (byte)Mathf.RoundToInt(h * 255f);
+        }
     }
 
     public Texture2DArray GetTextureArray()

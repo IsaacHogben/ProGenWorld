@@ -32,6 +32,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         public Material opaqueMaterial;
         public Material translucentMaterial;
         public Texture blockTextures;
+        public Texture blockHeights;       // relief heights, same size / slices as blockTextures (optional)
         public NativeArray<BlockDatabase.BlockInfoUnmanaged> blockDb;
         public int layer;
         public int3 gridDims;              // chunk lookup grid size (must cover the loaded area)
@@ -91,6 +92,8 @@ public sealed class VoxelWorldRenderer : IDisposable
         public static readonly int GridDims = Shader.PropertyToID("_VoxelGridDims");
         public static readonly int ChunkWorldSize = Shader.PropertyToID("_VoxelChunkWorldSize");
         public static readonly int LodDistances = Shader.PropertyToID("_VoxelLodDistances");
+        public static readonly int Heights = Shader.PropertyToID("_VoxelHeights");
+        public static readonly int TextureSize = Shader.PropertyToID("_VoxelTextureSize");
     }
 
     readonly Settings settings;
@@ -237,6 +240,12 @@ public sealed class VoxelWorldRenderer : IDisposable
             foreach (var m in new[] { opaqueOutside, opaqueInside, translucentOutside, translucentInside })
                 m.SetTexture(Ids.Textures, s.blockTextures);
         }
+
+        // Texel relief: the shader skips it while the texture size is 0.
+        bool hasHeights = s.blockTextures != null && s.blockHeights != null && s.blockHeights.width == s.blockTextures.width;
+        if (hasHeights)
+            Shader.SetGlobalTexture(Ids.Heights, s.blockHeights);
+        Shader.SetGlobalFloat(Ids.TextureSize, hasHeights ? s.blockTextures.width : 0f);
 
         planes = new NativeArray<float4>(6, Allocator.Persistent);
         sortOpaque = new NativeList<SortItem>(4096, Allocator.Persistent);

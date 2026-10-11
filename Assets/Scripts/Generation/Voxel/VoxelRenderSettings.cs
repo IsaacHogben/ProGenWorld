@@ -30,6 +30,22 @@ public class VoxelRenderSettings : MonoBehaviour
     [Header("Surface")]
     [Range(0f, 1f)] public float smoothness = 0.1f;
 
+    [Header("Texel Relief")]
+    [Tooltip("Carve nearby block faces into small columns, one per texture texel: dark texels sink, bright texels stay at the surface. Follows the Small Scale texel grid.")]
+    public bool relief = true;
+    [Tooltip("Deepest carve (blocks), reached by a texture's darkest texel. Rounded to whole texels.")]
+    [Range(0f, 0.5f)] public float reliefDepth = 0.1875f;
+    [Tooltip("Thickness (blocks) of alpha masked faces (leaves): the opaque texels become small cubes, visible through the holes. 0 = flat cards. Rounded to whole texels.")]
+    [Range(0f, 0.5f)] public float leafThickness = 0.125f;
+    [Tooltip("Surfaces closer to the camera than this (world units) get relief.")]
+    [Min(0f)] public float reliefDistance = 24f;
+    [Tooltip("Distance over which the relief flattens out before Relief Distance.")]
+    [Min(0f)] public float reliefFade = 8f;
+    [Tooltip("Darkens ambient light at the bottom of the deepest texels.")]
+    [Range(0f, 1f)] public float reliefOcclusion = 0.4f;
+    [Tooltip("Relief columns cast sun shadows on each other.")]
+    public bool reliefShadows = true;
+
     [Header("Shadows")]
     [Tooltip("Length of the per-pixel shadow rays voxels cast on each other (world units).")]
     [Min(0f)] public float sunShadowDistance = 256f;
@@ -76,6 +92,9 @@ public class VoxelRenderSettings : MonoBehaviour
         public static readonly int ShadowMaxDistance = Shader.PropertyToID("_VoxelShadowMaxDistance");
         public static readonly int ShadowIgnoreDistance = Shader.PropertyToID("_VoxelShadowIgnoreDistance");
         public static readonly int ShadowMapBias = Shader.PropertyToID("_VoxelShadowMapBias");
+        public static readonly int Relief = Shader.PropertyToID("_VoxelRelief");
+        public static readonly int ReliefShadows = Shader.PropertyToID("_VoxelReliefShadows");
+        public static readonly int ReliefLeaf = Shader.PropertyToID("_VoxelReliefLeaf");
     }
 
     public Material OpaqueMaterialOrDefault => opaqueMaterial != null ? opaqueMaterial : Resources.Load<Material>("VoxelRaymarchOpaque");
@@ -115,5 +134,8 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalFloat(Ids.ShadowMaxDistance, shadowMaxDistance);
         Shader.SetGlobalFloat(Ids.ShadowIgnoreDistance, shadowIgnoreDistance);
         Shader.SetGlobalFloat(Ids.ShadowMapBias, shadowMapBias);
+        Shader.SetGlobalVector(Ids.Relief, new Vector4(relief ? reliefDepth : 0f, reliefDistance, reliefFade, reliefOcclusion));
+        Shader.SetGlobalFloat(Ids.ReliefShadows, reliefShadows ? 1f : 0f);
+        Shader.SetGlobalFloat(Ids.ReliefLeaf, relief ? leafThickness : 0f);
     }
 }

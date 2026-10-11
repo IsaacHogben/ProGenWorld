@@ -81,12 +81,14 @@ Shader "ProGenWorld/VoxelRaymarch"
                 surface.alpha = 1;
                 surface.metallic = 0;
                 surface.smoothness = _VoxelSmoothness;
-                surface.occlusion = 1;
+                surface.occlusion = hit.refined != 0u ? hit.occlusion : 1;
                 surface.normalTS = half3(0, 0, 1);
 
-                // Voxel-on-voxel sun shadows are traced per pixel through the chunk grid.
+                // Voxel-on-voxel sun shadows are traced per pixel through the chunk grid, plus
+                // the texel relief columns shadowing each other up close.
                 float3 sunDir = _MainLightPosition.xyz;
                 half voxelShadow = VoxelSunShadow(hitWS, normalWS, sunDir);
+                voxelShadow *= VoxelReliefSunShadow(_VoxelChunks[input.slot], hit, hitWS, normalWS, sunDir);
 
                 half4 color = VoxelFragmentPBR(inputData, surface, voxelShadow);
                 color.rgb = MixFog(color.rgb, inputData.fogCoord);

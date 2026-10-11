@@ -575,7 +575,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             }
         }
     }
-    void PromoteDeferredToFrontier(Vector3 playerPos) // Player changed chunk � promote deferred coords that are now in range
+    void PromoteDeferredToFrontier(Vector3 playerPos) // Player changed chunk — promote deferred coords that are now in range
     {
         // promote any deferred chunks now within view distance
         List<int3> toPromote = new(32);
@@ -687,7 +687,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         }
 
         // ------------------------------------------------------------
-        // 2. Bootstrap mode � no throttling until world bubble is done
+        // 2. Bootstrap mode — no throttling until world bubble is done
         // ------------------------------------------------------------
         if (bootstrapMode)
         {
@@ -1269,7 +1269,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         lastMeshFrame[coord] = Time.frameCount;
     }
 
-    // temp buffer � allocated once at class scope
+    // temp buffer — allocated once at class scope
     private static readonly List<int3> tmpWriteCoords = new List<int3>(256);
 
     // Process block writes from the write system
@@ -1295,7 +1295,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 continue;
             }
 
-            // Process this snapshot only � re-enqueued writes go to a NEW list
+            // Process this snapshot only — re-enqueued writes go to a NEW list
             // A chunk that isn't ready keeps its batch; otherwise return the list to the pool
             if (writeSystem.ProcessBatch(coord, batch))
                 writeSystem.RecycleList(batch);
@@ -1397,7 +1397,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             fullResBlocksByChunk.Remove(coord);
         }
 
-        // Also clear any �future� writes never applied
+        // Also clear any “future” writes never applied
         writeSystem.Clear(coord);
         lodByCoord.Remove(coord);
         chunksNeedingRemesh.Remove(coord);

@@ -56,6 +56,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         public float3 max;
         public uint flags;
         public int active;
+        public int buried;   // fully enclosed by opaque blocks: never visible, not drawn
     }
 
     struct SortItem : IComparable<SortItem>
@@ -114,11 +115,14 @@ public sealed class VoxelWorldRenderer : IDisposable
     NativeArray<ChunkGpu> chunkRecords;
     NativeArray<uint2> cellBounds;   // GPU mirror, packed bounds per draw cell
     NativeArray<CellCull> cellCull;  // world space bounds per draw cell for culling
+    NativeArray<byte> cellOcclusion; // VoxelGpuFormat.Occ* bits per draw cell
+    readonly int cellsPerAxis;
     int chunkCapacity;
     int pageCapacity;
     int highestSlot = -1;
 
     readonly Dictionary<int3, int> slotByCoord = new();
+    readonly HashSet<int3> emptyChunks = new();   // loaded, but nothing visible (all air)
     readonly Stack<int> freeSlots = new();
     readonly Stack<int> freePages = new();
     List<int>[] pagesBySlot;
@@ -148,6 +152,15 @@ public sealed class VoxelWorldRenderer : IDisposable
     /// <summary>Draw cells submitted for the last rendered camera (opaque + translucent).</summary>
     public int LastDrawnCells { get; private set; }
 
+    /// <summary>Non-empty draw cells in all loaded chunks.</summary>
+    public int TotalCells { get; private set; }
+
+    /// <summary>Draw cells skipped because they are buried in opaque blocks.</summary>
+    public int BuriedCells { get; private set; }
+
+    /// <summary>Skip draw cells buried in opaque blocks (debugging / profiling).</summary>
+    public bool skipBuriedCells = true;
+
     /// <summary>Extra distance around a box in which the camera counts as "inside".</summary>
     public float insideMargin = 1f;
 
@@ -174,6 +187,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         settings = s;
         maxBricksPerChunk = VoxelGpuFormat.TotalBricks(s.chunkSize);
         maxCellsPerChunk = VoxelGpuFormat.MaxCells(s.chunkSize);
+        cellsPerAxis = VoxelGpuFormat.CellsPerAxis(VoxelGpuFormat.Resolution(s.chunkSize));
 
         copyShader = Resources.Load<ComputeShader>("VoxelBufferCopy");
         if (copyShader != null)
@@ -185,6 +199,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         chunkRecords = new NativeArray<ChunkGpu>(chunkCapacity, Allocator.Persistent);
         cellBounds = new NativeArray<uint2>(chunkCapacity * maxCellsPerChunk, Allocator.Persistent);
         cellCull = new NativeArray<CellCull>(chunkCapacity * maxCellsPerChunk, Allocator.Persistent);
+        cellOcclusion = new NativeArray<byte>(chunkCapacity * maxCellsPerChunk, Allocator.Persistent);
         pagesBySlot = new List<int>[chunkCapacity];
 
         chunkBuffer = CreateBuffer(chunkCapacity, Marshal.SizeOf<ChunkGpu>());
@@ -266,14 +281,26 @@ public sealed class VoxelWorldRenderer : IDisposable
 
     public bool HasChunk(int3 coord) => slotByCoord.ContainsKey(coord);
 
+    /// <summary>
+    /// Marks a chunk as loaded but empty (nothing visible). Unlike a chunk that isn't loaded,
+    /// an empty one leaves the faces of its neighbours' draw cells exposed.
+    /// </summary>
+    public void SetChunkEmpty(int3 coord)
+    {
+        RemoveSlot(coord);
+        emptyChunks.Add(coord);
+        UpdateBuriedAround(coord);
+    }
+
     /// <summary>Uploads (or replaces) a chunk's voxel data. The result's brick table is modified in place.</summary>
     public void SetChunk(int3 coord, VoxelPackResult result)
     {
         if (result.IsEmpty)
         {
-            RemoveChunk(coord);
+            SetChunkEmpty(coord);
             return;
         }
+        emptyChunks.Remove(coord);
 
         bool isNew = !slotByCoord.TryGetValue(coord, out int slot);
         if (isNew)
@@ -362,8 +389,9 @@ public sealed class VoxelWorldRenderer : IDisposable
         {
             if (c >= cellCount || result.CellEmpty(c))
             {
+                SetCellCull(baseCell + c, default);
                 cellBounds[baseCell + c] = default;
-                cellCull[baseCell + c] = default;
+                cellOcclusion[baseCell + c] = 0;
                 continue;
             }
 
@@ -372,18 +400,37 @@ public sealed class VoxelWorldRenderer : IDisposable
             cellBounds[baseCell + c] = new uint2(
                 (uint)cmin.x | ((uint)cmin.y << 8) | ((uint)cmin.z << 16),
                 (uint)cmax.x | ((uint)cmax.y << 8) | ((uint)cmax.z << 16));
-            cellCull[baseCell + c] = new CellCull
+            SetCellCull(baseCell + c, new CellCull
             {
                 min = origin + (float3)cmin * voxelSize,
                 max = origin + (float3)cmax * voxelSize,
                 flags = result.CellFlags(c),
                 active = 1
-            };
+            });
+            cellOcclusion[baseCell + c] = (byte)result.CellOcclusion(c);
         }
         cellBuffer.SetData(cellBounds, baseCell, baseCell, maxCellsPerChunk);
+
+        UpdateBuried(slot);
+        UpdateBuriedAround(coord);
     }
 
+    /// <summary>Unloads a chunk. Its neighbours treat it as covered until it is loaded again.</summary>
     public void RemoveChunk(int3 coord)
+    {
+        RemoveSlot(coord);
+        emptyChunks.Remove(coord);
+        UpdateBuriedAround(coord);
+    }
+
+    void UpdateBuriedAround(int3 coord)
+    {
+        for (int f = 0; f < 6; f++)
+            if (slotByCoord.TryGetValue(coord + NeighborDirs[f], out int n))
+                UpdateBuried(n);
+    }
+
+    void RemoveSlot(int3 coord)
     {
         if (!slotByCoord.TryGetValue(coord, out int slot))
             return;
@@ -391,6 +438,13 @@ public sealed class VoxelWorldRenderer : IDisposable
         slotByCoord.Remove(coord);
         if (pagesBySlot[slot] != null)
             ReleasePages(pagesBySlot[slot]);
+
+        int baseCell = slot * maxCellsPerChunk;
+        for (int c = 0; c < maxCellsPerChunk; c++)
+        {
+            SetCellCull(baseCell + c, default);
+            cellOcclusion[baseCell + c] = 0;
+        }
 
         for (int f = 0; f < 6; f++)
         {
@@ -408,10 +462,6 @@ public sealed class VoxelWorldRenderer : IDisposable
             gridCells[g] = new int4(-1, 0, 0, 0);
             dirtyGridCells.Add(g);
         }
-
-        int baseCell = slot * maxCellsPerChunk;
-        for (int c = 0; c < maxCellsPerChunk; c++)
-            cellCull[baseCell + c] = default;
 
         chunkRecords[slot] = default;
         dirtySlots.Remove(slot);
@@ -468,7 +518,86 @@ public sealed class VoxelWorldRenderer : IDisposable
         }
     }
 
+    static int GetNeighbor(in ChunkGpu rec, int face)
+    {
+        switch (face)
+        {
+            case 0: return rec.neighborsA.x;
+            case 1: return rec.neighborsA.y;
+            case 2: return rec.neighborsA.z;
+            case 3: return rec.neighborsA.w;
+            case 4: return rec.neighborsB.x;
+            default: return rec.neighborsB.y;
+        }
+    }
+
     void MarkDirty(int slot) => dirtySlots.Add(slot);
+
+    // Keeps TotalCells / BuriedCells in step with the cull records.
+    void SetCellCull(int index, CellCull value)
+    {
+        var old = cellCull[index];
+        TotalCells += value.active - old.active;
+        BuriedCells += value.buried - old.buried;
+        cellCull[index] = value;
+    }
+
+    /// <summary>
+    /// Re-evaluates which of a chunk's draw cells are buried: fully opaque, and every
+    /// neighbouring cell's facing layer is opaque too. Any ray reaching such a cell has already
+    /// hit an opaque block. Called when the chunk or one of its neighbours changes.
+    ///
+    /// A neighbour chunk that isn't loaded counts as covering the face. The flood fill never
+    /// loads chunks behind a fully opaque chunk face, so the deepest loaded chunks have nothing
+    /// below them; their bottom faces could only be seen from inside unloaded ground (or from
+    /// outside the loaded area, e.g. a spectator camera under the world). Empty (all air)
+    /// chunks are tracked separately and leave faces exposed.
+    /// </summary>
+    void UpdateBuried(int slot)
+    {
+        var rec = chunkRecords[slot];
+        int cpa = cellsPerAxis;
+        int baseCell = slot * maxCellsPerChunk;
+        int3 coord = (int3)math.round(rec.originSize.xyz / settings.chunkSize);
+
+        for (int cz = 0; cz < cpa; cz++)
+        for (int cy = 0; cy < cpa; cy++)
+        for (int cx = 0; cx < cpa; cx++)
+        {
+            int index = baseCell + cx + (cy + cz * cpa) * cpa;
+            var cull = cellCull[index];
+            if (cull.active == 0)
+                continue;
+
+            bool buried = (cellOcclusion[index] & VoxelGpuFormat.OccFull) != 0;
+            var cc = new int3(cx, cy, cz);
+            for (int f = 0; f < 6 && buried; f++)
+            {
+                int3 nc = cc + NeighborDirs[f];
+                int nslot = slot;
+                int axis = f >> 1;
+                if (nc[axis] < 0 || nc[axis] >= cpa)
+                {
+                    nslot = GetNeighbor(rec, f);
+                    nc[axis] = (nc[axis] + cpa) % cpa;
+                    if (nslot < 0)
+                    {
+                        buried = !emptyChunks.Contains(coord + NeighborDirs[f]);
+                        continue;
+                    }
+                }
+                // The neighbour's face pointing back at this cell (f ^ 1) must be opaque.
+                buried = (cellOcclusion[nslot * maxCellsPerChunk + nc.x + (nc.y + nc.z * cpa) * cpa] & (1 << (f ^ 1))) != 0;
+            }
+
+            int b = buried ? 1 : 0;
+            if (cull.buried != b)
+            {
+                cull.buried = b;
+                SetCellCull(index, cull);
+            }
+        }
+    }
 
     void ReleasePages(List<int> pages)
     {
@@ -513,6 +642,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         chunkRecords = Grow(chunkRecords, newCapacity);
         cellBounds = Grow(cellBounds, newCapacity * maxCellsPerChunk);
         cellCull = Grow(cellCull, newCapacity * maxCellsPerChunk);
+        cellOcclusion = Grow(cellOcclusion, newCapacity * maxCellsPerChunk);
         Array.Resize(ref pagesBySlot, newCapacity);
 
         chunkBuffer.Release();
@@ -626,6 +756,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         public float insideMargin;
         public float3 lightDir;        // direction the main light travels
         public float shadowDistance;
+        public bool skipBuried;
 
         public NativeList<SortItem> sortOpaque, sortTranslucent, sortShadow;
         public NativeList<uint> opaqueOut, opaqueIn, translucentOut, translucentIn, shadow;
@@ -638,7 +769,7 @@ public sealed class VoxelWorldRenderer : IDisposable
             for (int i = 0; i < count; i++)
             {
                 var c = cells[i];
-                if (c.active == 0)
+                if (c.active == 0 || (skipBuried && c.buried != 0))
                     continue;
 
                 bool opaque = (c.flags & VoxelGpuFormat.FlagHasOpaque) != 0;
@@ -711,6 +842,7 @@ public sealed class VoxelWorldRenderer : IDisposable
             insideMargin = insideMargin + cam.nearClipPlane * 2f,
             lightDir = MainLightDirection(),
             shadowDistance = Mathf.Min(shadowMapDistance, ShadowDistance(cam)),
+            skipBuried = skipBuriedCells,
             sortOpaque = sortOpaque,
             sortTranslucent = sortTranslucent,
             sortShadow = sortShadow,
@@ -811,6 +943,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         if (chunkRecords.IsCreated) chunkRecords.Dispose();
         if (cellBounds.IsCreated) cellBounds.Dispose();
         if (cellCull.IsCreated) cellCull.Dispose();
+        if (cellOcclusion.IsCreated) cellOcclusion.Dispose();
         if (planes.IsCreated) planes.Dispose();
         if (sortOpaque.IsCreated) sortOpaque.Dispose();
         if (sortTranslucent.IsCreated) sortTranslucent.Dispose();

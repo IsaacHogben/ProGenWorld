@@ -40,7 +40,12 @@ public static class VoxelGpuFormat
     public const int MetaLength = 12;
 
     public const int CellSize = 16;      // draw cell edge in voxels (multiple of BrickSize)
-    public const int CellInts = 8;       // per cell: min xyz, max xyz (exclusive), flags, unused
+    public const int CellInts = 8;       // per cell: min xyz, max xyz (exclusive), flags, occlusion
+
+    // Cell occlusion bits (cell int 7). A cell is buried, and never drawn, when it is fully
+    // opaque and the neighbouring cells' facing layers are opaque at every detail level.
+    public const int OccFaceMask = 0x3F;       // bit f: the cell's boundary layer on face f is all opaque (-x,+x,-y,+y,-z,+z)
+    public const int OccFull = 0x40;           // every voxel of the cell is opaque
 
     public static int Resolution(int chunkSize) => math.max(BrickSize, chunkSize);
 
@@ -101,6 +106,7 @@ public struct VoxelPackResult : IDisposable
     public int3 CellMin(int cell) { int b = cell * VoxelGpuFormat.CellInts; return new int3(cells[b], cells[b + 1], cells[b + 2]); }
     public int3 CellMax(int cell) { int b = cell * VoxelGpuFormat.CellInts; return new int3(cells[b + 3], cells[b + 4], cells[b + 5]); }
     public uint CellFlags(int cell) => (uint)cells[cell * VoxelGpuFormat.CellInts + 6];
+    public int CellOcclusion(int cell) => cells[cell * VoxelGpuFormat.CellInts + 7];
 
     public static VoxelPackResult Create(int maxBricks, int maxCells)
     {
@@ -167,7 +173,7 @@ public struct VoxelPackJob : IJob
             cells[b + 0] = cells[b + 1] = cells[b + 2] = res;   // min
             cells[b + 3] = cells[b + 4] = cells[b + 5] = -1;    // max (inclusive while scanning)
             cells[b + 6] = 0;
-            cells[b + 7] = 0;
+            cells[b + 7] = VoxelGpuFormat.OccFull | VoxelGpuFormat.OccFaceMask;   // cleared per level
         }
 
         int3 bmin = new int3(res);
@@ -177,6 +183,7 @@ public struct VoxelPackJob : IJob
         int brickOffset = 0;
 
         PackLevel(grid, res, brickOffset, ref mixed, true, cellSize, cpa, ref bmin, ref bmax, ref flags);
+        Occlusion(grid, res, cpa, true);
         brickOffset += VoxelGpuFormat.BricksInLevel(res, 0);
 
         bool empty = bmax.x < bmin.x;
@@ -196,6 +203,7 @@ public struct VoxelPackJob : IJob
 
             int3 unusedMin = default, unusedMax = default; uint unusedFlags = 0;
             PackLevel(grid, levelRes, brickOffset, ref mixed, false, 0, 0, ref unusedMin, ref unusedMax, ref unusedFlags);
+            Occlusion(grid, levelRes, cpa, false);
             brickOffset += VoxelGpuFormat.BricksInLevel(res, level);
         }
         grid.Dispose();
@@ -297,6 +305,68 @@ public struct VoxelPackJob : IJob
             }
         }
     }
+
+    // Clears cell occlusion bits that don't hold at this detail level. Coarse levels are checked
+    // too: downsampling can put water or leaves into a boundary layer that is opaque at full
+    // resolution, and the neighbour cell would then be visible through it at a distance.
+    void Occlusion(NativeArray<byte> grid, int res, int cpa, bool checkFull)
+    {
+        int cs = res / cpa;
+        int last = cs - 1;
+        for (int cz = 0; cz < cpa; cz++)
+        for (int cy = 0; cy < cpa; cy++)
+        for (int cx = 0; cx < cpa; cx++)
+        {
+            int b = (cx + (cy + cz * cpa) * cpa) * VoxelGpuFormat.CellInts;
+            int occ = cells[b + 7];
+            if (occ == 0)
+                continue;
+            int3 o = new int3(cx, cy, cz) * cs;
+
+            if (checkFull && (occ & VoxelGpuFormat.OccFull) != 0)
+            {
+                for (int z = 0; z < cs && (occ & VoxelGpuFormat.OccFull) != 0; z++)
+                for (int y = 0; y < cs; y++)
+                for (int x = 0; x < cs; x++)
+                {
+                    if (!IsOpaque(grid, o + new int3(x, y, z), res))
+                    {
+                        occ &= ~VoxelGpuFormat.OccFull;
+                        y = cs;
+                        break;
+                    }
+                }
+            }
+
+            // A fully opaque cell has opaque faces at every level (downsampling keeps opaque blocks).
+            if ((occ & VoxelGpuFormat.OccFull) == 0)
+            {
+                for (int f = 0; f < 6; f++)
+                {
+                    if ((occ & (1 << f)) == 0)
+                        continue;
+                    int axis = f >> 1;
+                    int layer = (f & 1) == 0 ? 0 : last;
+                    int ua = (axis + 1) % 3, va = (axis + 2) % 3;
+                    bool opaque = true;
+                    for (int v = 0; v < cs && opaque; v++)
+                    for (int u = 0; u < cs; u++)
+                    {
+                        int3 p = o;
+                        p[axis] += layer;
+                        p[ua] += u;
+                        p[va] += v;
+                        if (!IsOpaque(grid, p, res)) { opaque = false; break; }
+                    }
+                    if (!opaque)
+                        occ &= ~(1 << f);
+                }
+            }
+            cells[b + 7] = occ;
+        }
+    }
+
+    bool IsOpaque(NativeArray<byte> grid, int3 p, int res) => blockDb[grid[Index(p, res)]].visibility == BlockVisibility.Opaque;
 
     // Keeps the top-most visible block of each 2x2x2 cell so surfaces keep their material
     // (grass stays on top of dirt when seen from a distance).

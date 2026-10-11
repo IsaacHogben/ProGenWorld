@@ -1024,7 +1024,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         if (result.IsEmpty)
         {
             // Nothing visible: keep a null entry so the chunk still counts as generated
-            voxelRenderer.RemoveChunk(coord);
+            voxelRenderer.SetChunkEmpty(coord);
             chunks[coord] = null;
         }
         else

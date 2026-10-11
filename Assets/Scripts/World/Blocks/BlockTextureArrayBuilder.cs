@@ -32,9 +32,12 @@ public class BlockTextureArrayBuilder : ScriptableObject
         }
 
         int count = blockDatabase.blocks.Length;
-        var array = new Texture2DArray(textureSize, textureSize, count, TextureFormat.RGBA32, false)
+        // Mip mapped and filtered: the voxel shader keeps texels crisp up close itself and needs
+        // the mips so distant terrain does not shimmer.
+        var array = new Texture2DArray(textureSize, textureSize, count, TextureFormat.RGBA32, true)
         {
-            filterMode = FilterMode.Point,
+            filterMode = FilterMode.Trilinear,
+            anisoLevel = 8,
             wrapMode = TextureWrapMode.Repeat
         };
 
@@ -98,12 +101,12 @@ public class BlockTextureArrayBuilder : ScriptableObject
             BuildHeights(converted.GetPixels(), heightBytes);
             heights.SetPixelData(heightBytes, 0, i);
 
-            // --- Copy into array slice ---
-            Graphics.CopyTexture(converted, 0, 0, array, i, 0);
+            // --- Copy into array slice (mips are built on Apply) ---
+            array.SetPixels32(converted.GetPixels32(), i, 0);
             Object.DestroyImmediate(converted);
         }
 
-        array.Apply(false, true);
+        array.Apply(true, true);
         generatedArray = array;
         heights.Apply(false, true);
         generatedHeights = heights;

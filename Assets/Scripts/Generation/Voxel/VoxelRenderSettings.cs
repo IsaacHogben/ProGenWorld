@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering.Universal;
 
 /// <summary>
 /// Scene settings for the raymarched voxel renderer. Put one on its own GameObject
@@ -10,6 +11,7 @@ using UnityEngine;
 public class VoxelRenderSettings : MonoBehaviour
 {
     public enum TextureBlendMode { Lerp = 0, Multiply = 1 }
+    public enum AntiAliasing { Camera, None, Fxaa, Smaa, Temporal }
 
     [Header("Materials")]
     [Tooltip("Raymarching material for opaque + alpha masked blocks. Defaults to Resources/VoxelRaymarchOpaque.")]
@@ -29,6 +31,14 @@ public class VoxelRenderSettings : MonoBehaviour
 
     [Header("Surface")]
     [Range(0f, 1f)] public float smoothness = 0.1f;
+    [Tooltip("Darkens ambient light in the corners and along the edges where blocks meet (per block corner, interpolated across faces). 0 = off.")]
+    [Range(0f, 1f)] public float ambientOcclusion = 0.8f;
+
+    [Header("Anti-Aliasing")]
+    [Tooltip("Anti-aliasing set on the camera while playing. MSAA does not help raymarched voxels (only the box outlines are rasterized), so TAA is the one that smooths block edges, thin leaves and distant detail. TAA turns MSAA off on the camera, it does not work with it.")]
+    public AntiAliasing antiAliasing = AntiAliasing.Temporal;
+    [Tooltip("Camera the anti-aliasing is applied to. Empty = Camera.main.")]
+    public Camera targetCamera;
 
     [Header("Level Of Detail")]
     [Tooltip("Leaves and other alpha masked blocks render solid from this detail level on (1 = half resolution, 2 = quarter resolution). Rays stop at the first leaf instead of marching through the canopy; far away the mask holes are smaller than a pixel anyway. 0 = never.")]
@@ -100,6 +110,7 @@ public class VoxelRenderSettings : MonoBehaviour
         public static readonly int ReliefShadows = Shader.PropertyToID("_VoxelReliefShadows");
         public static readonly int ReliefLeaf = Shader.PropertyToID("_VoxelReliefLeaf");
         public static readonly int SolidLeavesFromLevel = Shader.PropertyToID("_VoxelSolidLeavesFromLevel");
+        public static readonly int AmbientOcclusion = Shader.PropertyToID("_VoxelAmbientOcclusion");
     }
 
     public Material OpaqueMaterialOrDefault => opaqueMaterial != null ? opaqueMaterial : Resources.Load<Material>("VoxelRaymarchOpaque");
@@ -143,5 +154,38 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalFloat(Ids.ReliefShadows, reliefShadows ? 1f : 0f);
         Shader.SetGlobalFloat(Ids.ReliefLeaf, relief ? leafThickness : 0f);
         Shader.SetGlobalFloat(Ids.SolidLeavesFromLevel, solidLeavesFromLod);
+        Shader.SetGlobalFloat(Ids.AmbientOcclusion, ambientOcclusion);
+        ApplyAntiAliasing();
+    }
+
+    // Only while playing, so edit mode never writes into the scene's camera.
+    void ApplyAntiAliasing()
+    {
+        if (!Application.isPlaying || antiAliasing == AntiAliasing.Camera)
+            return;
+
+        var cam = targetCamera != null ? targetCamera : Camera.main;
+        if (cam == null || !cam.TryGetComponent(out UniversalAdditionalCameraData data))
+            return;
+
+        var mode = antiAliasing switch
+        {
+            AntiAliasing.Fxaa => AntialiasingMode.FastApproximateAntialiasing,
+            AntiAliasing.Smaa => AntialiasingMode.SubpixelMorphologicalAntiAliasing,
+            AntiAliasing.Temporal => AntialiasingMode.TemporalAntiAliasing,
+            _ => AntialiasingMode.None,
+        };
+        if (data.antialiasing != mode)
+        {
+            data.antialiasing = mode;
+            data.antialiasingQuality = AntialiasingQuality.High;
+        }
+
+        // URP silently skips TAA on MSAA targets and on cameras without post processing.
+        if (mode == AntialiasingMode.TemporalAntiAliasing)
+        {
+            cam.allowMSAA = false;
+            data.renderPostProcessing = true;
+        }
     }
 }

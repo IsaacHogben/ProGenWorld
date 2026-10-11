@@ -52,6 +52,7 @@ Shader "ProGenWorld/VoxelRaymarch"
             half4 Frag(VoxelVaryings input, out float depth : VOXEL_DEPTH_SEMANTIC) : SV_Target
             {
                 depth = input.positionCS.z;
+                VoxelRayDiff rayDiff = VoxelCameraRayDiff(input.positionWS);
                 VoxelHit hit; float3 hitWS, normalWS, rayDirWS;
                 if (!VoxelTraceCamera(input, hit, hitWS, normalWS, rayDirWS))
                     discard;
@@ -59,7 +60,7 @@ Shader "ProGenWorld/VoxelRaymarch"
                 float4 positionCS = TransformWorldToHClip(hitWS);
                 depth = VoxelConservativeDepth(positionCS.z / positionCS.w, input.positionCS.z);
 
-                half4 albedo = VoxelSampleAlbedo(hit, hitWS);
+                half4 albedo = VoxelSampleAlbedo(hit, hitWS, rayDiff);
 
                 InputData inputData = (InputData)0;
                 inputData.positionWS = hitWS;
@@ -81,7 +82,8 @@ Shader "ProGenWorld/VoxelRaymarch"
                 surface.alpha = 1;
                 surface.metallic = 0;
                 surface.smoothness = _VoxelSmoothness;
-                surface.occlusion = hit.refined != 0u ? hit.occlusion : 1;
+                surface.occlusion = (hit.refined != 0u ? hit.occlusion : 1)
+                    * VoxelCornerOcclusion(_VoxelChunks[input.slot], input.level, hit, rayDirWS);
                 surface.normalTS = half3(0, 0, 1);
 
                 // Voxel-on-voxel sun shadows are traced per pixel through the chunk grid, plus

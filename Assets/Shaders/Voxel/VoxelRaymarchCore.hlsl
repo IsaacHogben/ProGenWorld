@@ -608,33 +608,177 @@ float2 VoxelWorldFaceCoords(int axis, float3 posWS)
     return axis == 0 ? posWS.zy : (axis == 1 ? posWS.xz : posWS.xy);
 }
 
+// Ray differentials of the camera ray through a pixel: how its origin and direction change one
+// pixel to the right (x) and up (y). Hardware derivatives of the hit position are useless here
+// (they jump at every voxel edge), but the camera ray itself is smooth across the screen.
+struct VoxelRayDiff
+{
+    float3 ro, rd;
+    float3 dOx, dOy;
+    float3 dDx, dDy;
+};
+
+// Call at the top of the fragment shader, before any discard or divergent loop.
+VoxelRayDiff VoxelCameraRayDiff(float3 positionWS)
+{
+    VoxelRayDiff r;
+    float tMin;
+    VoxelCameraRay(positionWS, r.ro, r.rd, tMin);
+    r.dOx = ddx(r.ro); r.dOy = ddy(r.ro);
+    r.dDx = ddx(r.rd); r.dDy = ddy(r.rd);
+    return r;
+}
+
+// Pixel footprint on a face of the given axis at posWS, in face coordinates (blocks):
+// the ray differentials transferred onto the face plane.
+void VoxelFaceFootprint(VoxelRayDiff r, int axis, float3 posWS, out float2 dx, out float2 dy)
+{
+    float t = dot(posWS - r.ro, r.rd);
+    float dn = r.rd[axis];
+    dn = abs(dn) < 1e-4 ? (dn < 0.0 ? -1e-4 : 1e-4) : dn;
+
+    float3 px = r.dOx + t * r.dDx;
+    float3 py = r.dOy + t * r.dDy;
+    px -= r.rd * (px[axis] / dn);
+    py -= r.rd * (py[axis] / dn);
+    dx = VoxelWorldFaceCoords(axis, px);
+    dy = VoxelWorldFaceCoords(axis, py);
+}
+
+// Pixel art filtering: texels stay flat inside and blend over one screen pixel at their
+// edges (no jagged texel borders up close), and fall back to plain mip mapped filtering once a
+// texel is smaller than a pixel.
+float2 VoxelSharpTexelUV(float2 uv, float2 dx, float2 dy, float size)
+{
+    float2 px = uv * size;
+    float2 fw = clamp(max(abs(dx), abs(dy)) * size, 1e-5, 1.0);   // texels per pixel
+    float2 seam = floor(px + 0.5);
+    px = seam + clamp((px - seam) / fw, -0.5, 0.5);
+    return px / size;
+}
+
+float4 VoxelSampleTiled(uint id, float2 p, float scale, float2 dx, float2 dy, float size)
+{
+    float2 uv = frac(p / scale);
+    dx /= scale; dy /= scale;
+    return SAMPLE_TEXTURE2D_ARRAY_GRAD(_Textures, sampler_Textures, VoxelSharpTexelUV(uv, dx, dy, size), id, dx, dy);
+}
+
 // Block texture with large scale variation: the same texture sampled at a small and a large
-// tiling and blended, which breaks up repetition across big areas.
-float4 VoxelSampleBlockTexture(uint id, int axis, float3 posWS)
+// tiling and blended, which breaks up repetition across big areas. dx / dy: pixel footprint in
+// face coordinates (VoxelFaceFootprint), used to pick and filter the mip levels.
+float4 VoxelSampleBlockTexture(uint id, int axis, float3 posWS, float2 dx, float2 dy)
 {
     float2 p = VoxelWorldFaceCoords(axis, posWS);
     float smallScale = max(_VoxelTexVariation.x, 0.01);
     float largeScale = max(_VoxelTexVariation.y, 0.01);
     float blend = saturate(_VoxelTexVariation.z);
 
-    float4 small = SAMPLE_TEXTURE2D_ARRAY_LOD(_Textures, sampler_Textures, frac(p / smallScale), id, 0);
+    float w = 0.0, h = 0.0, slices = 0.0;
+    _Textures.GetDimensions(w, h, slices);
+
+    float4 small = VoxelSampleTiled(id, p, smallScale, dx, dy, w);
     if (blend <= 0.0)
         return small;
-    float4 large = SAMPLE_TEXTURE2D_ARRAY_LOD(_Textures, sampler_Textures, frac(p / largeScale), id, 0);
+    float4 large = VoxelSampleTiled(id, p, largeScale, dx, dy, w);
 
     if (_VoxelTexVariation.w > 0.5)
         return float4(small.rgb * lerp(1.0, large.rgb * 2.0, blend), small.a);   // multiply (overlay-like)
     return lerp(small, large, blend);
 }
 
+float4 VoxelSampleBlockTexture(uint id, int axis, float3 posWS, VoxelRayDiff r)
+{
+    float2 dx, dy;
+    VoxelFaceFootprint(r, axis, posWS, dx, dy);
+    return VoxelSampleBlockTexture(id, axis, posWS, dx, dy);
+}
+
 #include "VoxelRelief.hlsl"
 
-float4 VoxelSampleAlbedo(VoxelHit hit, float3 hitWS)
+float4 VoxelSampleAlbedo(VoxelHit hit, float3 hitWS, VoxelRayDiff r)
 {
-    // Relief columns take the colour of their texel on the face they were carved from, walls included.
+    // Relief columns take the colour of their texel on the face they were carved from, walls
+    // included. The footprint is taken at the actual hit so the mip matches the visible size.
     if (hit.refined != 0u)
-        return VoxelSampleBlockTexture(hit.id, hit.texAxis, hit.texPosWS);
-    return VoxelSampleBlockTexture(hit.id, hit.axis, hitWS);
+    {
+        float2 dx, dy;
+        VoxelFaceFootprint(r, hit.texAxis, hitWS, dx, dy);
+        return VoxelSampleBlockTexture(hit.id, hit.texAxis, hit.texPosWS, dx, dy);
+    }
+    return VoxelSampleBlockTexture(hit.id, hit.axis, hitWS, r);
+}
+
+// --------------------------------------------------------------------------------------
+// Corner ambient occlusion
+// --------------------------------------------------------------------------------------
+
+float _VoxelAmbientOcclusion;   // strength of the per-corner voxel occlusion (0 = off)
+
+// Any voxel near the chunk, looked up through the chunk grid when it lies outside (also
+// diagonally, unlike VoxelFetchNeighbor). Air when that chunk is not loaded.
+uint VoxelFetchGrid(VoxelChunk c, uint level, int3 p)
+{
+    if (VoxelInChunk(c, level, p))
+        return VoxelFetch(c, level, p);
+
+    float3 world = c.originSize.xyz + ((float3)p + 0.5) * (c.originSize.w * VoxelLevelScale(level));
+    int slot = VoxelLookupChunk((int3)floor(world / _VoxelChunkWorldSize));
+    if (slot < 0)
+        return 0u;
+
+    VoxelChunk nc = _VoxelChunks[slot];
+    uint nLevel = min(level, VoxelLevelCount(nc) - 1u);
+    int3 q = (int3)floor((world - nc.originSize.xyz) / (nc.originSize.w * VoxelLevelScale(nLevel)));
+    return VoxelFetch(nc, nLevel, clamp(q, 0, VoxelLevelRes(nc, nLevel) - 1));
+}
+
+float VoxelOccluderAt(VoxelChunk c, uint level, int3 p)
+{
+    uint vis = VoxelBlockVisibility(VoxelFetchGrid(c, level, p));
+    return (vis == VOXEL_VIS_OPAQUE || vis == VOXEL_VIS_STACKED) ? 1.0 : 0.0;
+}
+
+// Classic voxel corner occlusion: each corner of the hit face is darkened by the blocks next to
+// it in the layer in front of the face, then interpolated across the face. 1 = unoccluded.
+float VoxelCornerOcclusion(VoxelChunk c, uint level, VoxelHit hit, float3 rayDir)
+{
+    if (_VoxelAmbientOcclusion <= 0.0 || VoxelBlockVisibility(hit.id) == VOXEL_VIS_STACKED)
+        return 1.0;
+
+    // Relief hits sit inside the block: use the exposed face they were carved from.
+    int a = hit.refined != 0u ? hit.texAxis : hit.axis;
+    bool facePositive = rayDir[a] < 0.0;
+    float3 p = hit.posVoxel;
+
+    int3 m = VoxelAxisMask(a);
+    int frontA = facePositive ? (int)ceil(p[a] - 1e-3) : (int)floor(p[a] + 1e-3) - 1;
+    int3 front = (int3)floor(p) * (1 - m) + frontA * m;
+
+    int ua = a == 0 ? 1 : 0;
+    int wa = a == 2 ? 1 : 2;
+    int3 eu = VoxelAxisMask(ua);
+    int3 ew = VoxelAxisMask(wa);
+
+    float su0 = VoxelOccluderAt(c, level, front - eu);
+    float su1 = VoxelOccluderAt(c, level, front + eu);
+    float sw0 = VoxelOccluderAt(c, level, front - ew);
+    float sw1 = VoxelOccluderAt(c, level, front + ew);
+    float c00 = VoxelOccluderAt(c, level, front - eu - ew);
+    float c10 = VoxelOccluderAt(c, level, front + eu - ew);
+    float c01 = VoxelOccluderAt(c, level, front - eu + ew);
+    float c11 = VoxelOccluderAt(c, level, front + eu + ew);
+
+    // Two blocked sides fully close the corner, whatever the diagonal is.
+    float4 sides1 = float4(su0, su1, su0, su1);
+    float4 sides2 = float4(sw0, sw0, sw1, sw1);
+    float4 corner = float4(c00, c10, c01, c11);
+    float4 ao = (3.0 - min(sides1 + sides2 + corner, 3.0) - sides1 * sides2 * (1.0 - corner)) / 3.0;
+
+    float fu = smoothstep(0.0, 1.0, saturate(p[ua] - front[ua]));
+    float fw = smoothstep(0.0, 1.0, saturate(p[wa] - front[wa]));
+    float v = lerp(lerp(ao.x, ao.y, fu), lerp(ao.z, ao.w, fu), fw);
+    return lerp(1.0, v, saturate(_VoxelAmbientOcclusion));
 }
 
 float VoxelClipDepth(float3 positionWS)

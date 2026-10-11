@@ -47,10 +47,10 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                 float  transmittance;
             };
 
-            void AddSurface(inout TranslucentState s, uint id, int axis, float3 posVoxel, float3 posWS, float3 rayDirWS)
+            void AddSurface(inout TranslucentState s, uint id, int axis, float3 posVoxel, float3 posWS, float3 rayDirWS, VoxelRayDiff rayDiff)
             {
                 float3 n = VoxelFaceNormal(axis, rayDirWS);
-                float3 albedo = VoxelSampleBlockTexture(id, axis, posWS).rgb * _VoxelTranslucentTint.rgb;
+                float3 albedo = VoxelSampleBlockTexture(id, axis, posWS, rayDiff).rgb * _VoxelTranslucentTint.rgb;
 
                 Light light = GetMainLight(TransformWorldToShadowCoord(posWS));
                 float atten = light.shadowAttenuation * light.distanceAttenuation;
@@ -75,7 +75,7 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                 s.transmittance *= tr;
             }
 
-            float4 MarchTranslucent(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3 o, float3 d, float tMin, float3 roWS, float3 rdWS)
+            float4 MarchTranslucent(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3 o, float3 d, float tMin, float3 roWS, float3 rdWS, VoxelRayDiff rayDiff)
             {
                 TranslucentState s;
                 s.color = 0;
@@ -127,7 +127,7 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                     if (id != prevId && prevOpen && curOpen && (vis == VOXEL_VIS_TRANSLUCENT || prevVis == VOXEL_VIS_TRANSLUCENT))
                     {
                         uint surfaceId = vis == VOXEL_VIS_TRANSLUCENT ? id : prevId;
-                        AddSurface(s, surfaceId, faceAxis, pos, roWS + rdWS * (cur.t * vs), rdWS);
+                        AddSurface(s, surfaceId, faceAxis, pos, roWS + rdWS * (cur.t * vs), rdWS, rayDiff);
                     }
 
                     float3 cellMin, cellMax;
@@ -145,7 +145,7 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                             uint nextId = VoxelFetchAny(c, level, cur.p);
                             uint nextVis = VoxelBlockVisibility(nextId);
                             if (nextId != id && (nextVis == VOXEL_VIS_INVISIBLE || nextVis == VOXEL_VIS_TRANSLUCENT))
-                                AddSurface(s, id, cur.axis, o + d * cur.t, roWS + rdWS * (cur.t * vs), rdWS);
+                                AddSurface(s, id, cur.axis, o + d * cur.t, roWS + rdWS * (cur.t * vs), rdWS, rayDiff);
                         }
                         break;
                     }
@@ -161,6 +161,7 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
             half4 Frag(VoxelVaryings input) : SV_Target
             {
                 VoxelChunk c = _VoxelChunks[input.slot];
+                VoxelRayDiff rayDiff = VoxelCameraRayDiff(input.positionWS);
                 float3 ro, rd; float tMinWS;
                 VoxelCameraRay(input.positionWS, ro, rd, tMinWS);
 
@@ -168,7 +169,7 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                 float3 o = (ro - c.originSize.xyz) / vs;
                 float3 bmin, bmax;
                 VoxelLevelBounds(input.cellBounds, input.level, bmin, bmax);
-                float4 result = MarchTranslucent(c, input.level, bmin, bmax, o, rd, tMinWS / vs, ro, rd);
+                float4 result = MarchTranslucent(c, input.level, bmin, bmax, o, rd, tMinWS / vs, ro, rd, rayDiff);
                 if (result.a <= 0.0)
                     discard;
 

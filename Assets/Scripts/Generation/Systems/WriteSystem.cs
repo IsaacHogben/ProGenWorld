@@ -160,6 +160,15 @@ public class WriteSystem
         }
     }
 
+    // Chunks that stored writes are waiting on but that have no block data yet.
+    public void GetTargetsAwaitingBlocks(List<int3> dst)
+    {
+        dst.Clear();
+        foreach (var target in sourcesByTarget.Keys)
+            if (!hasBlockIds(target))
+                dst.Add(target);
+    }
+
     private void DropStoredWrites(int3 source)
     {
         if (!storedBySource.Remove(source, out var byTarget))
@@ -186,18 +195,23 @@ public class WriteSystem
     // -----------------------------
     // Process a chunk's batch
     // -----------------------------
-    // Returns false when the chunk is not ready; the write system then keeps the batch,
+    // Returns false when the chunk is busy; the write system then keeps the batch,
     // so the caller must not recycle it.
     public bool ProcessBatch(int3 coord, List<PendingBlockWrite> batch)
     {
-        if (isDecorating(coord) || isMeshing(coord) || !hasBlockIds(coord))
+        if (!hasBlockIds(coord))
         {
-            if (!hasBlockIds(coord) && getDistance != null && queueFrontier != null)
-            {
-                if (getDistance(coord) < forceGenRange)
-                    queueFrontier(coord);
-            }
+            if (getDistance != null && queueFrontier != null && getDistance(coord) < forceGenRange)
+                queueFrontier(coord);
 
+            // Drop the batch: the store replays these when the chunk generates, and a sender that
+            // has since unloaded sends them again when it is next decorated. Holding them would let
+            // writes for chunks that never load pile up and be re-checked every frame.
+            return true;
+        }
+
+        if (isDecorating(coord) || isMeshing(coord))
+        {
             // Keep the whole batch, ahead of anything enqueued for this coord since it was stolen.
             if (pendingWrites.TryGetValue(coord, out var newer))
             {

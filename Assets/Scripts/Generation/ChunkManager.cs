@@ -597,7 +597,17 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             EnqueueFrontier(c);
             deferredFrontier.Remove(c);
         }
+
+        // The flood fill never reaches chunks without terrain (e.g. open sky), so generate the
+        // ones neighbouring decorations wrote into once they come into range.
+        writeSystem.GetTargetsAwaitingBlocks(tmpWriteTargets);
+        foreach (var c in tmpWriteTargets)
+        {
+            if (!chunks.ContainsKey(c) && !generatingSet.Contains(c) && IsChunkWithinRange(c, playerPos, viewDistance))
+                EnqueueFrontier(c);
+        }
     }
+    private readonly List<int3> tmpWriteTargets = new();
     private OpenFaces DetectTerrainFlowFromBlocks(NativeArray<byte> blockIds, LODLevel lod)
     {
         int sampleRes = lodConfigs[lod].sampleRes;

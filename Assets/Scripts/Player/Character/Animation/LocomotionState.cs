@@ -19,6 +19,8 @@ public struct LocomotionState
     public float RunSpeed;
     public float SprintSpeed;
     public bool Sprinting;
+    /// <summary>Sliding on the ground (crouch pressed while sprinting).</summary>
+    public bool Sliding;
     /// <summary>0 = standing, 1 = fully crouched.</summary>
     public float Crouch;
     /// <summary>Rise per metre of the ground ahead (1 = 45 degree stairs, negative = downhill).</summary>

@@ -65,6 +65,23 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     [Header("Crouch")]
     [SerializeField] private float crouchTransitionSpeed = 6f;
 
+    [Header("Slide (crouch while sprinting)")]
+    [Tooltip("Must be moving at least this fast to start a slide")]
+    [SerializeField] private float slideMinSpeed = 5f;
+    [Tooltip("Speed added when the slide starts")]
+    [SerializeField] private float slideBoost = 1.5f;
+    [Tooltip("Slowing on flat ground (m/s^2)")]
+    [SerializeField] private float slideFriction = 4f;
+    [Tooltip("How strongly slopes speed up (downhill) or slow (uphill) a slide. 1 = full gravity along the slope")]
+    [SerializeField] private float slideGravity = 0.85f;
+    [SerializeField] private float slideMaxSpeed = 16f;
+    [Tooltip("The slide ends below this speed")]
+    [SerializeField] private float slideEndSpeed = 2.5f;
+    [Tooltip("Steering while sliding (degrees per second)")]
+    [SerializeField] private float slideSteer = 50f;
+    [Tooltip("Shortest slide, even if crouch is released straight away")]
+    [SerializeField] private float slideMinTime = 0.35f;
+
     [Header("References")]
     [SerializeField] private PlayerCamera playerCamera;
     [SerializeField] private PlayerInput playerInput;
@@ -93,9 +110,15 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     private float sprintMomentum;
     private float lastGroundHeight;
     private float lastWishYaw;
+    private bool slideRequested;
+    private bool isSliding;
+    private Vector3 slideDirection;
+    private float slideSpeed;
+    private float slideTime;
 
     public VoxelCharacterMotor Motor => motor;
-    public bool IsSprinting => sprintHeld && moveInput.sqrMagnitude > 0.09f && crouch < 0.5f && (IsThirdPerson || moveInput.y > 0.3f);
+    public bool IsSprinting => !isSliding && sprintHeld && moveInput.sqrMagnitude > 0.09f && crouch < 0.5f && (IsThirdPerson || moveInput.y > 0.3f);
+    public bool IsSliding => isSliding;
     public float FacingYaw => facingYaw;
     /// <summary>0 = sprint just started .. 1 = at top sprint speed.</summary>
     public float SprintMomentum => sprintMomentum;
@@ -144,7 +167,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         ReadInput();
         UpdateWishDirection();
         UpdateFacing(Time.deltaTime);
-        crouch = Mathf.MoveTowards(crouch, crouchHeld ? 1f : 0f, crouchTransitionSpeed * Time.deltaTime);
+        crouch = Mathf.MoveTowards(crouch, crouchHeld && !isSliding ? 1f : 0f, crouchTransitionSpeed * Time.deltaTime);
     }
 
     void ReadInput()
@@ -152,6 +175,10 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         moveInput = moveAction != null ? Vector2.ClampMagnitude(moveAction.ReadValue<Vector2>(), 1f) : Vector2.zero;
         sprintHeld = sprintAction != null && sprintAction.IsPressed();
         crouchHeld = crouchAction != null && crouchAction.IsPressed();
+
+        // Crouch pressed while sprinting slides instead.
+        if (crouchAction != null && crouchAction.WasPressedThisFrame() && IsSprinting)
+            slideRequested = true;
 
         if (jumpAction != null)
         {
@@ -186,6 +213,18 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             ? Mathf.Max(0.3f, Mathf.LerpUnclamped(1f, uphillSpeedMultiplier, Mathf.Min(slope, 1.5f)))
             : Mathf.Lerp(1f, downhillSpeedMultiplier, -slope);
 
+        if (slideRequested)
+        {
+            slideRequested = false;
+            TryStartSlide(grounded);
+        }
+        if (isSliding)
+        {
+            UpdateSlide(dt, grounded);
+            HandleJump(grounded);
+            return;
+        }
+
         UpdateSprintMomentum(dt, grounded);
 
         float maxSpeed = crouch > 0.5f ? crouchSpeed
@@ -206,16 +245,69 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             accel = groundDeceleration;
 
         motor.HorizontalVelocity = Vector3.MoveTowards(current, target, accel * dt);
+        HandleJump(grounded);
+    }
 
+    void HandleJump(bool grounded)
+    {
         bool jumpBuffered = Time.time - lastJumpPressedTime <= jumpBufferTime;
         bool canJump = !isJumping && crouch < 0.5f && (grounded || Time.time - lastGroundedTime <= coyoteTime);
         if (jumpBuffered && canJump)
         {
+            isSliding = false; // jumping out of a slide keeps its speed
             motor.Jump(Mathf.Sqrt(2f * -Physics.gravity.y * jumpHeight));
             isJumping = true;
             lastJumpPressedTime = float.NegativeInfinity;
             lastGroundedTime = float.NegativeInfinity;
         }
+    }
+
+    // ----------------------------------------------------------------------------------
+    // Slide
+    // ----------------------------------------------------------------------------------
+
+    void TryStartSlide(bool grounded)
+    {
+        Vector3 v = motor.Velocity;
+        v.y = 0f;
+        if (!grounded || v.magnitude < slideMinSpeed)
+            return;
+        isSliding = true;
+        slideDirection = v.normalized;
+        slideSpeed = Mathf.Min(v.magnitude + slideBoost, slideMaxSpeed);
+        slideTime = 0f;
+    }
+
+    // Friction slows the slide; gravity along the slope speeds it up downhill and slows it uphill,
+    // so a steep surface carries the character down. Steering is gentle.
+    void UpdateSlide(float dt, bool grounded)
+    {
+        slideTime += dt;
+
+        if (motor.HitWall)
+        {
+            Vector3 kept = motor.Velocity;
+            kept.y = 0f;
+            slideSpeed = kept.magnitude;
+            if (slideSpeed > 0.1f) slideDirection = kept / slideSpeed;
+        }
+
+        if (grounded)
+        {
+            float rise = motor.MeasureSlope(slideDirection);
+            float downhill = -rise / Mathf.Sqrt(1f + rise * rise); // sine of the downhill angle
+            slideSpeed += (-Physics.gravity.y * slideGravity * downhill - slideFriction) * dt;
+        }
+        slideSpeed = Mathf.Clamp(slideSpeed, 0f, slideMaxSpeed);
+
+        if (wishDirection.sqrMagnitude > 0.01f)
+            slideDirection = Vector3.RotateTowards(slideDirection, wishDirection.normalized, slideSteer * Mathf.Deg2Rad * dt, 0f);
+
+        motor.HorizontalVelocity = slideDirection * slideSpeed;
+
+        bool released = !crouchHeld && slideTime > slideMinTime;
+        if (slideSpeed < slideEndSpeed || released)
+            isSliding = false;
     }
 
     // Holding sprint on open ground builds momentum toward top speed; stepping up or down blocks,
@@ -259,7 +351,12 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         bool moving = wishDirection.sqrMagnitude > 0.01f;
         float target = facingYaw;
 
-        if (moving)
+        if (isSliding)
+        {
+            idleTurning = false;
+            target = Mathf.Atan2(slideDirection.x, slideDirection.z) * Mathf.Rad2Deg;
+        }
+        else if (moving)
         {
             idleTurning = false;
             target = IsThirdPerson
@@ -298,6 +395,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             RunSpeed = sprintSpeed,
             SprintSpeed = Mathf.Max(sprintSpeed, topSprintSpeed),
             Sprinting = IsSprinting,
+            Sliding = isSliding,
             Crouch = crouch,
             Slope = slope,
         };

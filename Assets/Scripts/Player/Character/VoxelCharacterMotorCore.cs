@@ -199,6 +199,14 @@ public class VoxelCharacterMotorCore
         float newY = Mathf.Max(y + vy * dt, support - settings.maxSink);
         torso.Sweep(ref Position, 1, newY - y, out bool hitY);
         Velocity.y = hitY ? 0f : (Position.y - y) / dt;
+
+        // Moving down faster than the body can follow the ground (sliding down stairs at speed):
+        // fall instead of floating above it.
+        if (Position.y - support > settings.maxStepDown + 0.3f)
+        {
+            Grounded = false;
+            result.LeftGround = true;
+        }
     }
 
     void StepAirborne(float dt, ref StepResult result)

@@ -29,7 +29,7 @@ public class LocomotionLayer : CharacterAnimLayer
     [Tooltip("Fraction of the cycle a foot is on the ground at full sprint")]
     [Range(0.15f, 0.5f)] [SerializeField] private float sprintStanceFraction = 0.27f;
     [Tooltip("Furthest a planted foot travels under the body (front to back). Strides longer than the legs can cover this way are made up by time in the air")]
-    [SerializeField] private float stanceReach = 1.3f;
+    [SerializeField] private float stanceReach = 1.05f;
 
     [Header("Foot Placement")]
     [Tooltip("Extra stance width added to the model's rest pose")]
@@ -84,14 +84,14 @@ public class LocomotionLayer : CharacterAnimLayer
     [Range(0f, 1f)] [SerializeField] private float runHeelOff = 0.25f;
 
     [Header("Pelvis")]
-    [SerializeField] private float walkBob = 0.035f;
-    [SerializeField] private float runBob = 0.07f;
+    [SerializeField] private float walkBob = 0.015f;
+    [SerializeField] private float runBob = 0.03f;
     [Tooltip("Pelvis rise and fall over each bounding stride at full sprint")]
-    [SerializeField] private float sprintBob = 0.12f;
+    [SerializeField] private float sprintBob = 0.045f;
     [Tooltip("Side to side shift over the standing foot when walking")]
-    [SerializeField] private float walkSway = 0.03f;
+    [SerializeField] private float walkSway = 0.012f;
     [Tooltip("Fraction of the leg length used before the pelvis lowers to keep a foot reachable")]
-    [Range(0.8f, 1f)] [SerializeField] private float legReach = 0.96f;
+    [Range(0.8f, 1f)] [SerializeField] private float legReach = 0.99f;
     [Tooltip("Pelvis height follows the ground under the supporting feet; this blends toward the body's own (smoothed, look-ahead) height instead. 0 = feet only")]
     [Range(0f, 1f)] [SerializeField] private float bodyHeightFollow = 0.25f;
     [Tooltip("Smoothing time of the pelvis following the ground under the feet (seconds)")]
@@ -104,9 +104,9 @@ public class LocomotionLayer : CharacterAnimLayer
     [Tooltip("A standing foot lifts early once its leg is folded shorter than this fraction (the body has gone down past it)")]
     [Range(0.3f, 0.95f)] [SerializeField] private float earlyLiftFold = 0.7f;
     [Tooltip("Knee bend kept while walking / running (pelvis lowered by this much)")]
-    [SerializeField] private float walkCrouch = 0.05f;
-    [SerializeField] private float runCrouch = 0.14f;
-    [SerializeField] private float sprintCrouch = 0.18f;
+    [SerializeField] private float walkCrouch = 0.02f;
+    [SerializeField] private float runCrouch = 0.04f;
+    [SerializeField] private float sprintCrouch = 0.06f;
     [Tooltip("How far the pelvis lowers when fully crouched")]
     [SerializeField] private float crouchDepth = 0.5f;
 
@@ -149,6 +149,7 @@ public class LocomotionLayer : CharacterAnimLayer
         public Vector3 target;       // world, where the current swing lands
         public float liftPitch;
         public bool targetLocked;
+        public float landLead;       // horizontal distance from the hip to the landing spot at touchdown
     }
 
     readonly Foot[] feet = { new Foot(), new Foot() };
@@ -550,6 +551,8 @@ public class LocomotionLayer : CharacterAnimLayer
         Vector3 rest = RestTarget(f, ctx);
         Vector3 lead = Vector3.ClampMagnitude(velocity * (stanceTime * 0.5f), maxStrideLead);
         Vector3 target = rest + velocity * timeToLand + lead;
+        Vector3 restFromHip = rest - (ctx.Root + ctx.Facing * new Vector3(f.rest.x * 0.8f, 0f, 0f));
+        f.landLead = new Vector2(lead.x + restFromHip.x, lead.z + restFromHip.z).magnitude;
 
         // Never plant inside a wall: fall back toward the hip.
         target = OnGround(target, ctx, Vector3.Lerp(rest, target, 0.4f));
@@ -920,7 +923,9 @@ public class LocomotionLayer : CharacterAnimLayer
                 Vector3 hip = ctx.Root + ctx.Facing * (rig.PelvisRestPosition + offset + leg.RestUpperFromPelvis);
                 Vector3 foot = (f.swinging ? f.target : f.plant) + Vector3.up * (sole + footHeightAdjust);
                 float reach = leg.Length * legReach;
-                float horizontal = HorizontalDistance(hip, foot);
+                // A swinging foot is judged against where the hip will be when it lands (the
+                // landing lead), not against the hip now - otherwise fast strides squat the body.
+                float horizontal = f.swinging ? f.landLead : HorizontalDistance(hip, foot);
                 float vertical = hip.y - foot.y;
                 float allowed = horizontal < reach ? Mathf.Sqrt(reach * reach - horizontal * horizontal) : 0f;
                 dropTarget = Mathf.Max(dropTarget, (vertical - allowed) * support);

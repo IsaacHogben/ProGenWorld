@@ -29,9 +29,11 @@ public class CharacterRig
 
     [Header("Knees")]
     [Tooltip("How far (degrees) a knee may turn outward to stay out of terrain (high steps)")]
-    public float maxKneeSplay = 70f;
+    public float maxKneeSplay = 20f;
     [Tooltip("How far (degrees) a knee may turn inward instead, when the outside is blocked")]
-    public float maxKneeInward = 30f;
+    public float maxKneeInward = 15f;
+    [Tooltip("How much the knees follow the hips' rotation (0 = always point the way the body faces)")]
+    [Range(0f, 1f)] public float kneeFollowsHips = 0.25f;
     [Tooltip("How fast the knees turn out / back in (degrees per second)")]
     public float kneeSplaySpeed = 900f;
     public float kneeReturnSpeed = 150f;
@@ -194,7 +196,9 @@ public class CharacterRig
         if (chest != null) ApplyAdditive(chest, chestRestLocal, facing, pose.ChestRotation);
         if (head != null) ApplyAdditive(head, headRestLocal, facing, pose.HeadRotation);
 
-        Vector3 knee = facing * pose.PelvisRotation * pose.KneeDirection;
+        // Knees point the way the body faces (only a little of the hip roll/twist), so leans and
+        // stride twist don't swing them out to the side.
+        Vector3 knee = facing * Quaternion.Slerp(Quaternion.identity, pose.PelvisRotation, kneeFollowsHips) * pose.KneeDirection;
         for (int i = 0; i < 2; i++)
         {
             var leg = Legs[i];

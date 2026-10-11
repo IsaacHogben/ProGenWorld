@@ -11,15 +11,15 @@ public class BodyDynamicsLayer : CharacterAnimLayer
     [SerializeField] private float accelerationLean = 1.6f;
     [SerializeField] private float maxAccelerationLean = 14f;
     [Tooltip("Forward lean at run speed (degrees)")]
-    [SerializeField] private float runLean = 9f;
+    [SerializeField] private float runLean = 6f;
     [Tooltip("Extra forward lean at full sprint (degrees)")]
-    [SerializeField] private float sprintLean = 7f;
+    [SerializeField] private float sprintLean = 5f;
     [Tooltip("Forward lean per unit of slope going uphill, back lean downhill (degrees)")]
     [SerializeField] private float slopeLean = 7f;
     [Tooltip("Smoothing time of the lean (seconds)")]
     [SerializeField] private float leanSmoothTime = 0.12f;
     [Tooltip("Share of the lean taken by the pelvis (the chest takes the rest)")]
-    [Range(0f, 1f)] [SerializeField] private float pelvisShare = 0.45f;
+    [Range(0f, 1f)] [SerializeField] private float pelvisShare = 0.25f;
 
     [Header("Turning")]
     [Tooltip("Bank into turns per m/s^2 of sideways acceleration (degrees)")]
@@ -27,6 +27,8 @@ public class BodyDynamicsLayer : CharacterAnimLayer
     [SerializeField] private float maxBank = 12f;
 
     [Header("Stride")]
+    [Tooltip("How much of the stride twist reaches the hips (0 = hips stay square)")]
+    [Range(0f, 1f)] [SerializeField] private float pelvisTwistShare = 0.2f;
     [Tooltip("Chest twist against the legs when walking / running (degrees)")]
     [SerializeField] private float walkTwist = 4f;
     [SerializeField] private float runTwist = 9f;
@@ -80,7 +82,7 @@ public class BodyDynamicsLayer : CharacterAnimLayer
 
         float twist = Mathf.Lerp(Mathf.Lerp(walkTwist, runTwist, pose.RunBlend), sprintTwist, pose.SprintBlend) * pose.GaitWeight * Mathf.Sin(pose.GaitPhase * 2f * Mathf.PI);
 
-        Quaternion pelvis = Quaternion.Euler(pitch * pelvisShare, -twist * 0.5f, roll * pelvisShare);
+        Quaternion pelvis = Quaternion.Euler(pitch * pelvisShare, -twist * pelvisTwistShare, roll * pelvisShare);
         Quaternion chest = Quaternion.Euler(pitch * (1f - pelvisShare), twist, roll * (1f - pelvisShare));
 
         pose.PelvisRotation = Quaternion.Slerp(Quaternion.identity, pelvis, weight) * pose.PelvisRotation;

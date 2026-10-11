@@ -30,6 +30,8 @@ public class CharacterRig
     [Header("Knees")]
     [Tooltip("How far (degrees) a knee may turn outward to stay out of terrain (high steps)")]
     public float maxKneeSplay = 70f;
+    [Tooltip("How far (degrees) a knee may turn inward instead, when the outside is blocked")]
+    public float maxKneeInward = 30f;
     [Tooltip("How fast the knees turn out / back in (degrees per second)")]
     public float kneeSplaySpeed = 900f;
     public float kneeReturnSpeed = 150f;
@@ -61,7 +63,7 @@ public class CharacterRig
 
         public bool Valid => Upper != null && Lower != null && End != null;
 
-        /// <summary>Current outward turn of the bend plane (degrees), used to keep knees out of terrain.</summary>
+        /// <summary>Current turn of the bend plane (degrees, + outward / - inward), used to keep knees out of terrain.</summary>
         public float Splay;
     }
 
@@ -234,20 +236,19 @@ public class CharacterRig
     // a very high step - and lets it come back in once clear.
     void UpdateKneeSplay(Limb leg, Quaternion facing, Vector3 target, Vector3 pole, float deltaTime)
     {
+        // Smallest turn that clears: outward first, inward (less far) when the outside is blocked.
+        // Positive = outward, negative = inward.
         float wanted = 0f;
-        if (IsBlocked != null && maxKneeSplay > 0f)
+        if (IsBlocked != null && maxKneeSplay > 0f && LegBlocked(leg, facing, target, pole, 0f))
         {
             wanted = maxKneeSplay;
-            for (float s = 0f; s <= maxKneeSplay; s += 10f)
+            for (float s = 10f; s <= maxKneeSplay; s += 10f)
             {
-                if (!LegBlocked(leg, facing, target, pole, s))
-                {
-                    wanted = s;
-                    break;
-                }
+                if (!LegBlocked(leg, facing, target, pole, s)) { wanted = s; break; }
+                if (s <= maxKneeInward && !LegBlocked(leg, facing, target, pole, -s)) { wanted = -s; break; }
             }
         }
-        float speed = wanted > leg.Splay ? kneeSplaySpeed : kneeReturnSpeed;
+        float speed = Mathf.Abs(wanted) > Mathf.Abs(leg.Splay) ? kneeSplaySpeed : kneeReturnSpeed;
         leg.Splay = Mathf.MoveTowards(leg.Splay, wanted, speed * Mathf.Max(deltaTime, 0f));
     }
 
@@ -288,12 +289,12 @@ public class CharacterRig
             bend = facing * Vector3.up - Vector3.Dot(facing * Vector3.up, dir) * dir;
         bend.Normalize();
 
-        if (splay > 0.01f)
+        if (Mathf.Abs(splay) > 0.01f)
         {
             Vector3 outward = facing * (limb.RestUpperPosition.x < 0f ? Vector3.left : Vector3.right);
             Vector3 side = Vector3.Cross(dir, bend);
             if (Vector3.Dot(side, outward) < 0f) side = -side;
-            float r = splay * Mathf.Deg2Rad;
+            float r = splay * Mathf.Deg2Rad; // negative turns inward
             bend = (bend * Mathf.Cos(r) + side.normalized * Mathf.Sin(r)).normalized;
         }
 

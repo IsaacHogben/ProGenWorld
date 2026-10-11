@@ -60,6 +60,9 @@ public class LocomotionLayer : CharacterAnimLayer
     [SerializeField] private float kneeClearance = 0.3f;
     [Tooltip("Steepest climb of the swing path (rise per metre); lower = lifts earlier before edges")]
     [SerializeField] private float maxSwingSlope = 3f;
+    [Tooltip("Fastest a swinging foot moves, as a multiple of body speed (with a minimum below)")]
+    [SerializeField] private float swingSpeedLimit = 4f;
+    [SerializeField] private float minSwingSpeedLimit = 14f;
     [Tooltip("Steepest drop of the swing path once past an edge (per metre); higher = the foot drops sooner when stepping down")]
     [SerializeField] private float maxSwingDropSlope = 10f;
     [Tooltip("Toe lift in the middle of the swing (degrees)")]
@@ -94,7 +97,7 @@ public class LocomotionLayer : CharacterAnimLayer
     [Tooltip("Smoothing time of the pelvis following the ground under the feet (seconds)")]
     [SerializeField] private float groundFollowSmoothTime = 0.12f;
     [Tooltip("Smoothing time of the pelvis lowering to keep the feet reachable (seconds)")]
-    [SerializeField] private float pelvisSmoothTime = 0.09f;
+    [SerializeField] private float pelvisSmoothTime = 0.07f;
     [SerializeField] private float maxPelvisDrop = 1.1f;
     [Tooltip("A standing leg is never folded shorter than this fraction of its length: the pelvis stays up until the higher foot lifts (stepping down big steps)")]
     [Range(0.3f, 0.9f)] [SerializeField] private float minLegFold = 0.62f;
@@ -381,24 +384,42 @@ public class LocomotionLayer : CharacterAnimLayer
             {
                 // The landing spot follows the body early in the swing, then is locked so the
                 // foot can't be thrown to a new spot just before it lands.
+                // The landing spot follows the body early in the swing, then is locked. It is always
+                // a validated spot (never a blend of two choices); the foot's speed limit below
+                // keeps a change of choice from teleporting the foot.
                 float swingT = wrapped ? 1f : Mathf.InverseLerp(f.swingStart, 1f, p);
-                Vector3 target = f.targetLocked ? f.target : SwingTarget(f, feet[1 - i], ctx, velocity, wrapped ? 1f : p, cycleRate);
-                if (swingT >= 0.7f) f.targetLocked = true;
+                if (!f.targetLocked)
+                {
+                    f.target = SwingTarget(f, feet[1 - i], ctx, velocity, wrapped ? 1f : p, cycleRate);
+                    if (swingT >= 0.7f) f.targetLocked = true;
+                }
+                Vector3 target = f.target;
                 Vector3 rolledTarget = Rolled(target, s.FacingYaw, contactPitch);
+                Vector3 previous = f.pos;
                 if (wrapped)
                 {
-                    // Touchdown, on the heel (walking) or the front of the foot (running).
+                    // Touchdown, on the heel (walking) or the front of the foot (running). If the
+                    // foot is still short of its spot it eases in rather than snapping.
                     f.swinging = false;
                     f.plant = target;
                     f.plantYaw = s.FacingYaw;
                     f.pos = rolledTarget;
                     f.yaw = f.plantYaw;
                     f.pitch = contactPitch;
+                    if ((previous - rolledTarget).sqrMagnitude > 0.03f * 0.03f)
+                    {
+                        f.landFrom = previous;
+                        f.landT = 0f;
+                    }
                 }
                 else
                 {
                     UpdateSwing(f, ctx, rolledTarget, swingT, contactPitch);
                     f.target = target;
+                    KeepWithinReach(f, ctx.Rig.Legs[i]);
+                    // Relaxed near the end so the foot is on its spot by touchdown.
+                    float maxSpeed = Mathf.Max(minSwingSpeedLimit, speed * swingSpeedLimit) * (1f + Mathf.InverseLerp(0.75f, 1f, swingT));
+                    f.pos = Vector3.MoveTowards(previous, f.pos, maxSpeed * dt);
                 }
             }
             else if ((p >= duty && (moving || FootNeedsSettle(f, ctx))) || (moving && MustLiftEarly(i, p)))
@@ -425,7 +446,11 @@ public class LocomotionLayer : CharacterAnimLayer
                 if (f.landT < 1f)
                 {
                     f.landT = Mathf.Min(1f, f.landT + dt / Mathf.Max(landingFootTime, 0.01f));
-                    f.pos = Vector3.Lerp(f.landFrom, rolled, Smooth(f.landT));
+                    // Onto higher ground: up first, then across, so the toe doesn't cut the edge.
+                    float up = rolled.y > f.landFrom.y + 0.05f ? Smooth(Mathf.Min(1f, f.landT * 2f)) : Smooth(f.landT);
+                    float across = rolled.y > f.landFrom.y + 0.05f ? Smooth(Mathf.Max(0f, f.landT * 2f - 1f)) : Smooth(f.landT);
+                    Vector3 flat = Vector3.Lerp(f.landFrom, rolled, across);
+                    f.pos = new Vector3(flat.x, Mathf.Lerp(f.landFrom.y, rolled.y, up), flat.z);
                 }
                 else
                 {
@@ -441,6 +466,19 @@ public class LocomotionLayer : CharacterAnimLayer
 
             f.prevP = p;
         }
+    }
+
+    // A swinging foot reaches only as far as its leg can: reaching for lower ground it waits
+    // for the body to come down to it instead of being placed out of reach.
+    void KeepWithinReach(Foot f, CharacterRig.Limb leg)
+    {
+        if (!leg.Valid) return;
+        Vector3 hip = leg.Upper.position;
+        Vector3 ankle = f.pos + Vector3.up * sole;
+        Vector3 d = ankle - hip;
+        float max = leg.Length * 0.985f;
+        if (d.sqrMagnitude > max * max)
+            f.pos = hip + d.normalized * max - Vector3.up * sole;
     }
 
     // A standing leg the body has moved past - folded up under a lowered hip (stepping down a big
@@ -872,13 +910,15 @@ public class LocomotionLayer : CharacterAnimLayer
                 if (!leg.Valid) continue;
 
                 var f = feet[i];
+                // A foot reaching down to lower ground pulls the body down with it from early in the
+                // swing (the standing leg bends to lower it), not only once it lands.
                 float support = f.swinging
-                    ? Smooth(Mathf.InverseLerp(0.55f, 1f, Mathf.InverseLerp(f.swingStart, 1f, f.p)))
+                    ? Smooth(Mathf.InverseLerp(0.3f, 0.85f, Mathf.InverseLerp(f.swingStart, 1f, f.p)))
                     : 1f - Smooth(Mathf.InverseLerp(duty - 0.12f, duty, f.p)) * gaitWeight;
                 if (support <= 0f) continue;
 
                 Vector3 hip = ctx.Root + ctx.Facing * (rig.PelvisRestPosition + offset + leg.RestUpperFromPelvis);
-                Vector3 foot = (f.swinging ? f.pos : f.plant) + Vector3.up * (sole + footHeightAdjust);
+                Vector3 foot = (f.swinging ? f.target : f.plant) + Vector3.up * (sole + footHeightAdjust);
                 float reach = leg.Length * legReach;
                 float horizontal = HorizontalDistance(hip, foot);
                 float vertical = hip.y - foot.y;

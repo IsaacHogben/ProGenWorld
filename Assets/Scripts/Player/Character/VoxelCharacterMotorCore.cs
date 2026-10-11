@@ -84,6 +84,8 @@ public class VoxelCharacterMotorCore
         public float ImpactSpeed;
         public bool Jumped;
         public bool LeftGround;
+        /// <summary>Started swimming this step (fell or walked into deep water).</summary>
+        public bool EnteredWater;
     }
 
     const float Skin = VoxelBoxMover.Skin;
@@ -181,7 +183,7 @@ public class VoxelCharacterMotorCore
             result.Jumped = true;
         }
 
-        UpdateWater();
+        UpdateWater(ref result);
         if (Swimming)
             StepSwimming(dt, swimVertical, ref result);
         else if (Grounded)
@@ -199,7 +201,7 @@ public class VoxelCharacterMotorCore
     // Water
     // ----------------------------------------------------------------------------------
 
-    void UpdateWater()
+    void UpdateWater(ref StepResult result)
     {
         WaterDepth = 0f;
         if (IsWater == null)
@@ -227,6 +229,7 @@ public class VoxelCharacterMotorCore
             {
                 Swimming = true;
                 Grounded = false;
+                result.EnteredWater = true;
             }
             return;
         }
@@ -237,12 +240,14 @@ public class VoxelCharacterMotorCore
             Swimming = false;
             return;
         }
-        if (WaterDepth < settings.wadeDepth + 0.3f && Velocity.y <= 0.5f &&
+        if (Velocity.y <= 0.5f &&
             TryGetSupport(Position, Position.y + settings.stepClearance, Position.y - 0.25f, out float ground) &&
             ground >= Position.y - 0.2f && WaterDepth - (ground - Position.y) < settings.wadeDepth)
         {
             Swimming = false;
             Grounded = true;
+            result.Landed = true;
+            result.ImpactSpeed = Mathf.Max(0f, -Velocity.y);
             GroundHeight = ground;
             Velocity.y = 0f;
             hasTarget = false;

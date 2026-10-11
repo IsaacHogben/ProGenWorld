@@ -158,6 +158,7 @@ public class LocomotionLayer : CharacterAnimLayer
     float duty = 0.58f;
     bool inAir;
     bool jumped;
+    float groundedSince;
     float pelvisDrop;
     float pelvisDropVelocity;
     float pelvisRaise;
@@ -233,6 +234,7 @@ public class LocomotionLayer : CharacterAnimLayer
     void OnJumped()
     {
         jumped = true;
+        groundedSince = 0f;
         // Push off: a quick extension of the legs.
         compressionVelocity += 0.6f;
     }
@@ -257,6 +259,11 @@ public class LocomotionLayer : CharacterAnimLayer
         sprintBlend = Mathf.Lerp(sprintBlend, sprintTarget, Damp(6f, dt));
         gaitWeight = Mathf.Lerp(gaitWeight, Mathf.Clamp01(speed / walkSpeed), Damp(10f, dt));
 
+        // The jump flag only bridges the moment before the body leaves the ground; once in water or
+        // back on the ground for a moment (landed, waded out, teleported) the jump is over.
+        groundedSince = s.Grounded ? groundedSince + dt : 0f;
+        if (s.Swimming || groundedSince > 0.25f)
+            jumped = false;
         bool air = jumped || s.Swimming || (!s.Grounded && s.AirTime > airPoseDelay);
         if (air)
         {

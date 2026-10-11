@@ -131,6 +131,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     private float slideSpeed;
     private float slideTime;
     private bool jumpHeld;
+    private float jumpStartTime = float.NegativeInfinity;
 
     public VoxelCharacterMotor Motor => motor;
     public bool IsSprinting => !isSliding && sprintHeld && moveInput.sqrMagnitude > 0.09f && crouch < 0.5f && (IsThirdPerson || moveInput.y > 0.3f);
@@ -163,12 +164,14 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     {
         motor.Landed += OnMotorLanded;
         motor.Jumped += OnMotorJumped;
+        motor.EnteredWater += OnMotorEnteredWater;
     }
 
     void OnDisable()
     {
         motor.Landed -= OnMotorLanded;
         motor.Jumped -= OnMotorJumped;
+        motor.EnteredWater -= OnMotorEnteredWater;
     }
 
     void OnMotorLanded(float impact)
@@ -178,6 +181,9 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     }
 
     void OnMotorJumped() => Jumped?.Invoke();
+
+    // A jump that ends in water is over.
+    void OnMotorEnteredWater() => isJumping = false;
 
     void Update()
     {
@@ -245,6 +251,10 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         if (grounded)
             lastGroundedTime = Time.time;
 
+        // Back on the ground however we got there (landing, wading out, teleport): not jumping.
+        if (isJumping && grounded && motor.Velocity.y <= 0f && Time.time - jumpStartTime > 0.2f)
+            isJumping = false;
+
         // Hills: slower climbing, slightly slower descending.
         float rawSlope = wishDirection.sqrMagnitude > 0.01f ? motor.MeasureSlope(wishDirection) : 0f;
         slope = Mathf.Lerp(slope, rawSlope, 1f - Mathf.Exp(-slopeResponse * dt));
@@ -299,6 +309,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             isSliding = false; // jumping out of a slide keeps its speed
             motor.Jump(Mathf.Sqrt(2f * -Physics.gravity.y * jumpHeight));
             isJumping = true;
+            jumpStartTime = Time.time;
             lastJumpPressedTime = float.NegativeInfinity;
             lastGroundedTime = float.NegativeInfinity;
         }

@@ -43,6 +43,8 @@ public class VoxelCharacterMotor : MonoBehaviour
     /// <summary>Fired on landing with the downward impact speed.</summary>
     public event Action<float> Landed;
     public event Action Jumped;
+    /// <summary>Started swimming (fell or walked into deep water). Not a landing: no impact.</summary>
+    public event Action EnteredWater;
 
     VoxelCharacterMotorCore core;
     float pendingJump;
@@ -120,6 +122,7 @@ public class VoxelCharacterMotor : MonoBehaviour
 
         if (result.Jumped) Jumped?.Invoke();
         if (result.Landed) Landed?.Invoke(result.ImpactSpeed);
+        if (result.EnteredWater) EnteredWater?.Invoke();
     }
 
     void Update()

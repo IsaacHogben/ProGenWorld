@@ -110,14 +110,11 @@ Shader "Custom/AtmosphericFogURP"
                 // Sample depth
                 float rawDepth = SampleSceneDepth(input.texcoord);
                 
-                #if UNITY_REVERSED_Z
-                    float depth = rawDepth;
-                #else
-                    float depth = 1.0 - rawDepth;
-                #endif
-                
-                // Check if this is skybox
-                float isSkybox = depth <= 0.0001 ? 1.0 : 0.0;
+                // Skybox = nothing drawn before the far plane. Compared in linear depth: a fixed
+                // raw depth threshold (the old "depth <= 0.0001") also caught distant terrain,
+                // because reversed Z raw depth falls to ~0.0001 well before the far plane.
+                float linearDepth = LinearEyeDepth(rawDepth, _ZBufferParams);
+                float isSkybox = linearDepth >= _ProjectionParams.z * 0.9999 ? 1.0 : 0.0;
                 
                 float distance;
                 float3 worldPos;
@@ -127,12 +124,12 @@ Shader "Custom/AtmosphericFogURP"
                 {
                     // For skybox, calculate view direction from UV
                     distance = _FogEndDistance * 2.0;
-                    worldPos = GetWorldPositionFromDepth(input.texcoord, 0.0); // Use 0 depth for far plane
+                    worldPos = GetWorldPositionFromDepth(input.texcoord, UNITY_RAW_FAR_CLIP_VALUE);
                 }
                 else
                 {
                     // Regular geometry
-                    worldPos = GetWorldPositionFromDepth(input.texcoord, depth);
+                    worldPos = GetWorldPositionFromDepth(input.texcoord, rawDepth);
                     
                     // Calculate actual 3D world-space distance (not just depth)
                     distance = length(worldPos - cameraPos);

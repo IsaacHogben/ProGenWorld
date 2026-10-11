@@ -24,9 +24,6 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     public int seed = 1337;
     public float frequency = 1;
     public int chunkSize = 32;
-    public int viewDistance = 3;
-    public int unloadPastViewDistance = 1;
-    private int unloadDistance => viewDistance + unloadPastViewDistance;
 
     [SerializeField] int minMoveBeforeUpdate = 16;
     [SerializeField] RenderShape renderShape = RenderShape.Sphere;
@@ -52,16 +49,19 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     [Tooltip("Voxel rendering / shadow / texture settings. Found or created automatically when empty.")]
     [SerializeField] VoxelRenderSettings renderSettings;
 
+    [Tooltip("View distance, LOD ranges and the fog linked to them. Found or created automatically when empty.")]
+    [SerializeField] ViewDistanceSettings viewSettings;
+
 
     // ==================================================
-    // LOD Configuration
+    // View Distance / LOD (from ViewDistanceSettings)
     // ==================================================
 
-    [Header("LOD Settings")]
-    [Tooltip("Chunks closer than this (in chunks) are Near: full detail, ECS decorations.")]
-    [SerializeField] int nearRange = 4;
-    [Tooltip("Chunks closer than this (in chunks) are Mid; anything further is Far. Rendering switches to 1/2 and 1/4 resolution voxels at the same distances.")]
-    [SerializeField] int midRange = 10;
+    public int viewDistance => viewSettings.viewDistance;
+    public int unloadPastViewDistance => viewSettings.unloadPastViewDistance;
+    private int unloadDistance => viewSettings.UnloadDistance;
+    int nearRange => viewSettings.nearRange;
+    int midRange => viewSettings.midRange;
 
 
     // ==================================================
@@ -231,6 +231,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
 
     void Awake()
     {
+        if (viewSettings == null)
+            viewSettings = ViewDistanceSettings.FindOrCreate();
+
         nativeBlockDatabase = blockDatabase.ToNative(Allocator.Persistent);
         cts = new CancellationTokenSource();
         gpuFrameTimeRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Render, "GPU Frame Time");

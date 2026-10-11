@@ -4,9 +4,11 @@ using UnityEngine;
 public class AtmosphericFogController : MonoBehaviour
 {
     [Header("Fog Distance Settings")]
-    [Tooltip("Distance where fog starts")]
+    [Tooltip("View distance / LOD settings the fog distances follow while their Link Fog is on. Found automatically when empty.")]
+    public ViewDistanceSettings viewDistanceSettings;
+    [Tooltip("Distance where fog starts (unused while linked to View Distance Settings)")]
     public float fogStartDistance = 50f;
-    [Tooltip("Distance where fog reaches maximum")]
+    [Tooltip("Distance where fog reaches maximum (unused while linked to View Distance Settings)")]
     public float fogEndDistance = 500f;
     [Tooltip("Maximum fog density at far distance")]
     [Range(0f, 1f)]
@@ -52,10 +54,23 @@ public class AtmosphericFogController : MonoBehaviour
 
     private FogPresetManager presetManager;
 
+    bool LinkedToViewDistance => viewDistanceSettings != null && viewDistanceSettings.linkFog;
+
+    /// <summary>Fog start the shader uses: from View Distance Settings when linked, otherwise fogStartDistance.</summary>
+    public float EffectiveFogStartDistance => LinkedToViewDistance ? viewDistanceSettings.FogStartDistance : fogStartDistance;
+
+    /// <summary>Fog end the shader uses: from View Distance Settings when linked, otherwise fogEndDistance.</summary>
+    public float EffectiveFogEndDistance => LinkedToViewDistance ? viewDistanceSettings.FogEndDistance : fogEndDistance;
+
     void OnEnable()
     {
         // Try to find preset manager
         presetManager = GetComponent<FogPresetManager>();
+
+        if (viewDistanceSettings == null)
+            viewDistanceSettings = GetComponent<ViewDistanceSettings>();
+        if (viewDistanceSettings == null)
+            viewDistanceSettings = FindFirstObjectByType<ViewDistanceSettings>();
 
         // Auto-find sun if not set
         if (sunLight == null)

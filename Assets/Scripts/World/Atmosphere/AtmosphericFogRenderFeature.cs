@@ -135,8 +135,8 @@ public class AtmosphericFogRenderFeature : ScriptableRendererFeature
 
         private void UpdateShaderProperties(Material material, AtmosphericFogController controller)
         {
-            material.SetFloat(FogStartDistanceID, controller.fogStartDistance);
-            material.SetFloat(FogEndDistanceID, controller.fogEndDistance);
+            material.SetFloat(FogStartDistanceID, controller.EffectiveFogStartDistance);
+            material.SetFloat(FogEndDistanceID, controller.EffectiveFogEndDistance);
             material.SetFloat(MaxFogDensityID, controller.maxFogDensity);
             material.SetFloat(FogBaseHeightID, controller.fogBaseHeight);
             material.SetFloat(FogFalloffID, controller.fogFalloff);

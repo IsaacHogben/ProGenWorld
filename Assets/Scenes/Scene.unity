@@ -719,7 +719,6 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
-  - {fileID: 1746699435}
   - {fileID: 1331461169}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -995,8 +994,6 @@ MonoBehaviour:
   seed: 12422
   frequency: 1.2
   chunkSize: 64
-  viewDistance: 20
-  unloadPastViewDistance: 1
   minMoveBeforeUpdate: 9
   renderShape: 1
   unloadAtMaxChunks: 0
@@ -1008,8 +1005,7 @@ MonoBehaviour:
   blockDatabase: {fileID: 11400000, guid: f9b2a5fcc2fa09d4caac36b7d550818c, type: 2}
   textureArrayBuilder: {fileID: 11400000, guid: 3f71b64aadbc3bf498224a3efb12f316, type: 2}
   renderSettings: {fileID: 900000003}
-  nearRange: 7
-  midRange: 14
+  viewSettings: {fileID: 1746699438}
   maxConcurrentSchedualTasks: 4
   minConcurrentNoiseTasks: 12
   maxMeshUploadsPerFrame: 2
@@ -1776,8 +1772,8 @@ MonoBehaviour:
   reliefOcclusion: 0.121
   reliefShadows: 0
   sunShadowDistance: 256
-  shadowDetailDistance: 124.8
-  shadowMaxDistance: 512
+  shadowDetailDistance: 300
+  shadowMaxDistance: 600
   shadowIgnoreDistance: 0
   castIntoShadowMap: 0
   shadowMapDistance: 64
@@ -2308,10 +2304,11 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1746699435}
+  - component: {fileID: 1746699438}
   - component: {fileID: 1746699437}
   - component: {fileID: 1746699436}
   m_Layer: 0
-  m_Name: AtmosManager
+  m_Name: View Distance & Fog
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2330,7 +2327,7 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
-  m_Father: {fileID: 444542669}
+  m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &1746699436
 MonoBehaviour:
@@ -2405,6 +2402,29 @@ MonoBehaviour:
   currentPresetIndex: 0
   smoothTransition: 1
   transitionDuration: 5
+--- !u!114 &1746699438
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1746699434}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: be7e13c94c9c40e8b3d276c64bb3beca, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ViewDistanceSettings
+  viewDistance: 20
+  unloadPastViewDistance: 1
+  nearRange: 7
+  midRange: 14
+  linkFog: 1
+  fogStart: 1
+  fogEndInset: 16
+  driveCameraFarClip: 1
+  farClipMargin: 64
+  targetCamera: {fileID: 0}
+  chunkManager: {fileID: 695623964}
 --- !u!114 &1746699437
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2417,6 +2437,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 84e863f9c8b4db344805e7f9625323c3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::AtmosphericFogController
+  viewDistanceSettings: {fileID: 1746699438}
   fogStartDistance: 150
   fogEndDistance: 800
   maxFogDensity: 1
@@ -2899,3 +2920,4 @@ SceneRoots:
   - {fileID: 1148720673}
   - {fileID: 695623963}
   - {fileID: 900000002}
+  - {fileID: 1746699435}

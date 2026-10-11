@@ -34,14 +34,16 @@ public sealed class BiomeSystem : MonoBehaviour
     public float biomeBlendWidth = 1.0f;
     int seed = 1337;
 
-    // Reusable noise generators
-    FastNoiseLite terrainNoise;
-    FastNoiseLite humidityNoise;
-    FastNoiseLite temperatureNoise;
+    // Noise settings, sampled in BiomeNoiseJob
+    FbmSimplexNoise2D terrainNoise;
+    FbmSimplexNoise2D humidityNoise;
+    FbmSimplexNoise2D temperatureNoise;
 
     // Task throttleing
+    [Header("Throttling")]
+    [Tooltip("Biome jobs scheduled per frame. Each costs a few small allocations and two job schedules on the main thread.")]
+    [Min(1)] public int maxRequestsPerFrame = 8;
     private int biomeRequestsThisFrame = 0;
-    private const int MAX_BIOME_REQUESTS_PER_FRAME = 2;
     private Queue<(int3 coord, int chunkSize)> deferredBiomeRequests = new Queue<(int3, int)>();
 
     public void SetSeed(int value)
@@ -57,32 +59,16 @@ public sealed class BiomeSystem : MonoBehaviour
 
     void InitializeNoiseGenerators()
     {
+        // OpenSimplex2, FBm, 3 octaves, lacunarity 2, gain 0.5
+
         // Terrain noise - higher frequency for more variation
-        terrainNoise = new FastNoiseLite(seed);
-        terrainNoise.SetFrequency(baseFrequency * terrainFrequencyMultiplier);
-        terrainNoise.SetNoiseType(FastNoiseLite.NoiseType.OpenSimplex2);
-        terrainNoise.SetFractalType(FastNoiseLite.FractalType.FBm);
-        terrainNoise.SetFractalOctaves(3);
-        terrainNoise.SetFractalLacunarity(2.0f);
-        terrainNoise.SetFractalGain(0.5f);
+        terrainNoise = FbmSimplexNoise2D.Create(seed, baseFrequency * terrainFrequencyMultiplier);
 
         // Humidity noise - lower frequency for broader climate zones
-        humidityNoise = new FastNoiseLite(seed + 1000);
-        humidityNoise.SetFrequency(baseFrequency * climateFrequencyMultiplier);
-        humidityNoise.SetNoiseType(FastNoiseLite.NoiseType.OpenSimplex2);
-        humidityNoise.SetFractalType(FastNoiseLite.FractalType.FBm);
-        humidityNoise.SetFractalOctaves(3);
-        humidityNoise.SetFractalLacunarity(2.0f);
-        humidityNoise.SetFractalGain(0.5f);
+        humidityNoise = FbmSimplexNoise2D.Create(seed + 1000, baseFrequency * climateFrequencyMultiplier);
 
         // Temperature noise - lower frequency for broader climate zones
-        temperatureNoise = new FastNoiseLite(seed + 5000);
-        temperatureNoise.SetFrequency(baseFrequency * climateFrequencyMultiplier);
-        temperatureNoise.SetNoiseType(FastNoiseLite.NoiseType.OpenSimplex2);
-        temperatureNoise.SetFractalType(FastNoiseLite.FractalType.FBm);
-        temperatureNoise.SetFractalOctaves(3);
-        temperatureNoise.SetFractalLacunarity(2.0f);
-        temperatureNoise.SetFractalGain(0.5f);
+        temperatureNoise = FbmSimplexNoise2D.Create(seed + 5000, baseFrequency * climateFrequencyMultiplier);
     }
 
     struct PendingBiome
@@ -103,7 +89,7 @@ public sealed class BiomeSystem : MonoBehaviour
             return;
 
         // Throttle: defer if we've hit the limit this frame
-        if (biomeRequestsThisFrame >= MAX_BIOME_REQUESTS_PER_FRAME)
+        if (biomeRequestsThisFrame >= maxRequestsPerFrame)
         {
             if (!deferredBiomeRequests.Contains((chunkCoord, chunkSize)))
                 deferredBiomeRequests.Enqueue((chunkCoord, chunkSize));
@@ -136,29 +122,23 @@ public sealed class BiomeSystem : MonoBehaviour
         int side = biomeResolution + 1;
         int count = side * side;
 
-        // Pre-compute noise values on main thread using FastNoiseLite
-        var terrainNoiseGrid = new NativeArray<float>(count, Allocator.Persistent);
-        var humidityNoiseGrid = new NativeArray<float>(count, Allocator.Persistent);
-        var temperatureNoiseGrid = new NativeArray<float>(count, Allocator.Persistent);
+        // Noise grids [0,1], sampled on worker threads before BiomeJob reads them
+        var terrainNoiseGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+        var humidityNoiseGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+        var temperatureNoiseGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
 
-        for (int z = 0; z < side; z++)
+        var noiseJob = new BiomeNoiseJob
         {
-            for (int x = 0; x < side; x++)
-            {
-                int index = z * side + x;
-
-                float fx = (float)x / biomeResolution;
-                float fz = (float)z / biomeResolution;
-                float worldX = chunkCoord.x * chunkSize + fx * chunkSize;
-                float worldZ = chunkCoord.z * chunkSize + fz * chunkSize;
-
-                // Frequency is already set in the noise generators
-                // FastNoise returns [-1,1], convert to [0,1]
-                terrainNoiseGrid[index] = terrainNoise.GetNoise(worldX, worldZ) * 0.5f + 0.5f;
-                humidityNoiseGrid[index] = humidityNoise.GetNoise(worldX, worldZ) * 0.5f + 0.5f;
-                temperatureNoiseGrid[index] = temperatureNoise.GetNoise(worldX, worldZ) * 0.5f + 0.5f;
-            }
-        }
+            chunkCoord = chunkCoord,
+            chunkSize = chunkSize,
+            resolution = biomeResolution,
+            terrainNoise = terrainNoise,
+            humidityNoise = humidityNoise,
+            temperatureNoise = temperatureNoise,
+            terrainNoiseGrid = terrainNoiseGrid,
+            humidityNoiseGrid = humidityNoiseGrid,
+            temperatureNoiseGrid = temperatureNoiseGrid
+        };
 
         var grid = new NativeArray<BiomeHint>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
 
@@ -196,7 +176,8 @@ public sealed class BiomeSystem : MonoBehaviour
         };
 
         Profiler.StartBiome();
-        JobHandle handle = job.Schedule(count, 64);
+        JobHandle noiseHandle = noiseJob.Schedule(count, 64);
+        JobHandle handle = job.Schedule(count, 64, noiseHandle);
 
         pending.Add(chunkCoord, new PendingBiome
         {
@@ -231,7 +212,7 @@ public sealed class BiomeSystem : MonoBehaviour
         biomeRequestsThisFrame = 0;
 
         // Process deferred requests from previous frames
-        while (deferredBiomeRequests.Count > 0 && biomeRequestsThisFrame < MAX_BIOME_REQUESTS_PER_FRAME)
+        while (deferredBiomeRequests.Count > 0 && biomeRequestsThisFrame < maxRequestsPerFrame)
         {
             var (coord, size) = deferredBiomeRequests.Dequeue();
             RequestBiomeInternal(coord, size);

@@ -30,6 +30,10 @@ public class VoxelRenderSettings : MonoBehaviour
     [Header("Surface")]
     [Range(0f, 1f)] public float smoothness = 0.1f;
 
+    [Header("Level Of Detail")]
+    [Tooltip("Leaves and other alpha masked blocks render solid from this detail level on (1 = half resolution, 2 = quarter resolution). Rays stop at the first leaf instead of marching through the canopy; far away the mask holes are smaller than a pixel anyway. 0 = never.")]
+    [Range(0, 2)] public int solidLeavesFromLod = 1;
+
     [Header("Texel Relief")]
     [Tooltip("Carve nearby block faces into small columns, one per texture texel: dark texels sink, bright texels stay at the surface. Follows the Small Scale texel grid.")]
     public bool relief = true;
@@ -95,6 +99,7 @@ public class VoxelRenderSettings : MonoBehaviour
         public static readonly int Relief = Shader.PropertyToID("_VoxelRelief");
         public static readonly int ReliefShadows = Shader.PropertyToID("_VoxelReliefShadows");
         public static readonly int ReliefLeaf = Shader.PropertyToID("_VoxelReliefLeaf");
+        public static readonly int SolidLeavesFromLevel = Shader.PropertyToID("_VoxelSolidLeavesFromLevel");
     }
 
     public Material OpaqueMaterialOrDefault => opaqueMaterial != null ? opaqueMaterial : Resources.Load<Material>("VoxelRaymarchOpaque");
@@ -137,5 +142,6 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalVector(Ids.Relief, new Vector4(relief ? reliefDepth : 0f, reliefDistance, reliefFade, reliefOcclusion));
         Shader.SetGlobalFloat(Ids.ReliefShadows, reliefShadows ? 1f : 0f);
         Shader.SetGlobalFloat(Ids.ReliefLeaf, relief ? leafThickness : 0f);
+        Shader.SetGlobalFloat(Ids.SolidLeavesFromLevel, solidLeavesFromLod);
     }
 }

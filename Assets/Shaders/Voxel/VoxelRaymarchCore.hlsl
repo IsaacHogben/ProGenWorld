@@ -64,6 +64,7 @@ float  _VoxelSpecular;
 float4 _VoxelTexVariation;          // x: small scale, y: large scale (blocks per tile), z: large blend, w: mode (0 lerp, 1 multiply)
 float  _VoxelShadowIgnoreDistance;  // occluders closer than this along a shadow ray are ignored (blocks)
 float  _VoxelShadowMapBias;         // minimum push of voxel casters away from the light in URP shadow maps (blocks)
+float  _VoxelSolidLeavesFromLevel;  // detail level from which masked blocks (leaves) render solid; 0 = never
 
 // Shaders with their own material cbuffer (e.g. the voxel shadow receiver) define this.
 #ifndef VOXEL_NO_MATERIAL_CBUFFER
@@ -307,6 +308,10 @@ bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
 
     bool skipping = skipStartSolid && cur.axis < 0;
 
+    // Far away the alpha mask holes are smaller than a pixel: treat masked blocks as solid so
+    // rays stop at the first leaf instead of marching through the canopy.
+    bool solidMasked = _VoxelSolidLeavesFromLevel > 0.5 && level >= (uint)_VoxelSolidLeavesFromLevel;
+
     int3 stepDir = int3(d.x > 0 ? 1 : -1, d.y > 0 ? 1 : -1, d.z > 0 ? 1 : -1);
     int majorAxis = VoxelMajorAxis(d);
     uint prevId = 0u;
@@ -319,6 +324,8 @@ bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
         bool isUniform = (entry & VOXEL_BRICK_UNIFORM) != 0u;
         uint id = isUniform ? (entry & 0xFFu) : VoxelFetchInBrick(entry, cur.p & 7);
         uint vis = VoxelBlockVisibility(id);
+        if (solidMasked && vis == VOXEL_VIS_STACKED)
+            vis = VOXEL_VIS_OPAQUE;
 
         int faceAxis = cur.axis >= 0 ? cur.axis : majorAxis;
         float3 pos = o + d * cur.t;

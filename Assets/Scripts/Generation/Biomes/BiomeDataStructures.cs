@@ -124,6 +124,8 @@ public struct DecorationData
     public float spawnChance;       // 0-1 (converted from per ten thousand)
     public int spawnBlockStartIndex;  // Index into spawn blocks array
     public int spawnBlockCount;       // Number of valid spawn blocks
+    public float minScale;            // L-system trees: random size per spawn (0 = 1)
+    public float maxScale;
 }
 
 // ============================================================================
@@ -198,6 +200,10 @@ public struct BiomeHint
 public class LSystemDecoration
 {
     public LSystemScriptableObject LSystemData;
+
+    [Tooltip("Size range for this entry; each tree picks a random scale in it. Add the same tree again with a different range and spawn chance for rare giants.")]
+    [Min(0.05f)] public float minScale = 1f;
+    [Min(0.05f)] public float maxScale = 1f;
 
     [Tooltip("Spawn chance per ten thousand blocks (4.5 = 0.45%)")]
     [Range(0f, 10000f)]

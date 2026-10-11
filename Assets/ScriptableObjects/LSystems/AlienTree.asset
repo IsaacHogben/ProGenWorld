@@ -13,13 +13,13 @@ MonoBehaviour:
   m_Name: AlienTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: F!!!A
-  Rule0:
-    Symbol: 65
+  Rules:
+  - Symbol: 65
     Replacement: '[^F&BFA]+[!^F&BFA]+[!!^F&BFA]'
-  Rule1:
-    Symbol: 66
+    Weight: 1
+  - Symbol: 66
     Replacement: '[!!^F&FA]'
-  RuleCount: 2
+    Weight: 1
   Iterations: 2
   StepLength: 7
   MinStepLength: 4
@@ -27,9 +27,10 @@ MonoBehaviour:
   PitchAngle: 90
   YawAngle: 120
   RollAngle: 0
-  GravityFactor: 0
+  Gravity: 0
   AngleVariance: 15
   TaperCurve: 3
+  TaperBy: 0
   TrunkWidthAtBase: 5
   MinWidth: 0
   Foliage: 4

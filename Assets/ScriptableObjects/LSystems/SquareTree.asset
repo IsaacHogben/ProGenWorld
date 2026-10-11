@@ -13,13 +13,10 @@ MonoBehaviour:
   m_Name: SquareTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: FAT
-  Rule0:
-    Symbol: 65
+  Rules:
+  - Symbol: 65
     Replacement: '!+[&FA]F+[&FA]+[&FA]FA'
-  Rule1:
-    Symbol: 0
-    Replacement: 
-  RuleCount: 1
+    Weight: 1
   Iterations: 3
   StepLength: 4
   StepLengthVariance: 0
@@ -29,7 +26,7 @@ MonoBehaviour:
   CurvatureAngle: 0
   AngleVariance: 12
   StepLengthScalar: 0.96
-  GravityFactor: 0
+  Gravity: 0
   TrunkWidthAtBase: 2
   Foliage: 3
   BodyBlock: 15

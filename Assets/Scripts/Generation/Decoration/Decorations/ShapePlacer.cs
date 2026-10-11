@@ -1,4 +1,5 @@
 using Unity.Burst;
+using Unity.Collections;
 using Unity.Mathematics;
 
 // ----------------------------------------------------------------------------
@@ -16,6 +17,8 @@ public enum ShapeStyle : byte
     Cluster = 6,
     PalmCrown = 7,
     LineDown = 8,
+    Cloud = 9,
+    CloudFlat = 10,
 }
 
 // ----------------------------------------------------------------------------
@@ -32,10 +35,8 @@ public static class ShapePlacer
         BlockType block,
         int size,
         int3 pos,
-        int branchDepth,
-        int maxDepth,
         ref Unity.Mathematics.Random rng,
-        ref BlockWriter applyBlock)
+        ref TreeBlockWriter applyBlock)
     {
         switch (style)
         {
@@ -47,13 +48,15 @@ public static class ShapePlacer
             case ShapeStyle.SquareFlat: PlaceSquareFlat(pos, size, block, ref applyBlock); break;
             case ShapeStyle.CircleFlat: PlaceCircleFlat(pos, size, block, ref applyBlock); break;
             case ShapeStyle.LineDown: PlaceLineDown(pos, size, block, ref applyBlock); break;
+            case ShapeStyle.Cloud: PlaceCloud(pos, size, 0.7f, block, ref rng, ref applyBlock); break;
+            case ShapeStyle.CloudFlat: PlaceCloud(pos, size, 0.4f, block, ref rng, ref applyBlock); break;
         }
     }
 
     // Hemisphere of blocks above the tip, with randomised downward-hanging strands.
     // size = diameter of the hemisphere's equator. R = size/2 reproduces the
     // original fixed-R3 look at size=7 (R = 7/2 = 3, integer division).
-    private static void PlaceHangingHemisphere(int3 p, int size, BlockType block, ref Unity.Mathematics.Random rng, ref BlockWriter ab)
+    private static void PlaceHangingHemisphere(int3 p, int size, BlockType block, ref Unity.Mathematics.Random rng, ref TreeBlockWriter ab)
     {
         int x = p.x, y = p.y, z = p.z;
         int R = math.max(1, size / 2);
@@ -86,7 +89,7 @@ public static class ShapePlacer
     // Sparse wispy cluster — a small filled core plus radiating fingers.
     // size = diameter of the overall cluster including arms.
     // outerRadius = size/2; core is a fraction of that, arms fill the rest.
-    private static void PlaceCluster(int3 p, int size, BlockType block, ref Unity.Mathematics.Random rng, ref BlockWriter ab)
+    private static void PlaceCluster(int3 p, int size, BlockType block, ref Unity.Mathematics.Random rng, ref TreeBlockWriter ab)
     {
         int x = p.x, y = p.y, z = p.z;
 
@@ -131,7 +134,7 @@ public static class ShapePlacer
 
     // size = diameter of the crown (fronds radiate out to roughly size/2 + droop).
     private static void PlacePalmCrown(int size, int3 p, BlockType block,
-        ref Unity.Mathematics.Random rng, ref BlockWriter ab)
+        ref Unity.Mathematics.Random rng, ref TreeBlockWriter ab)
     {
         int x = p.x, y = p.y, z = p.z;
         int crownRadius = math.max(1, size / 2);
@@ -198,8 +201,49 @@ public static class ShapePlacer
         }
     }
 
+    // Soft, lumpy blossom/leaf cloud: a flattened union of 3-5 overlapping lobes with a ragged
+    // edge. size = overall diameter, flatten = height / width (CloudFlat makes layered plates).
+    // Filled in one pass over its bounds, so no block is written twice.
+    private static void PlaceCloud(int3 p, int size, float flatten, BlockType block, ref Unity.Mathematics.Random rng, ref TreeBlockWriter ab)
+    {
+        float R = math.max(1f, size * 0.5f);
+
+        var lobes = new FixedList128Bytes<float4>(); // xyz = centre offset, w = radius
+        lobes.Add(new float4(0f, 0f, 0f, R * 0.75f));
+        int extra = rng.NextInt(2, 5);
+        for (int i = 0; i < extra; i++)
+        {
+            float angle = rng.NextFloat() * math.PI * 2f;
+            float dist = R * (0.25f + rng.NextFloat() * 0.3f);
+            lobes.Add(new float4(math.cos(angle) * dist, (rng.NextFloat() - 0.35f) * R * 0.4f, math.sin(angle) * dist,
+                R * (0.45f + rng.NextFloat() * 0.25f)));
+        }
+
+        int ext = (int)math.ceil(R);
+        int extY = (int)math.ceil(R * flatten);
+        int seed = (int)rng.NextUInt();
+        for (int dx = -ext; dx <= ext; dx++)
+            for (int dy = -extY; dy <= extY; dy++)
+                for (int dz = -ext; dz <= ext; dz++)
+                {
+                    float3 q = new float3(dx, dy / flatten, dz);
+                    float inside = float.MaxValue; // distance outside the nearest lobe's surface (negative = inside)
+                    for (int l = 0; l < lobes.Length; l++)
+                    {
+                        float4 lobe = lobes[l];
+                        inside = math.min(inside, math.distance(q, new float3(lobe.x, lobe.y / flatten, lobe.z)) - lobe.w);
+                    }
+                    if (inside > 0.5f)
+                        continue;
+                    // Thin the outer shell for a fluffy edge.
+                    if (inside > -0.75f && (math.hash(new int4(dx, dy, dz, seed)) & 0xFF) < 90)
+                        continue;
+                    ab.ApplyBlock(p.x + dx, p.y + dy, p.z + dz, block);
+                }
+    }
+
     // Filled sphere. size = diameter, centered on p.
-    private static void PlaceSphere(int3 p, int size, BlockType block, ref BlockWriter ab)
+    private static void PlaceSphere(int3 p, int size, BlockType block, ref TreeBlockWriter ab)
     {
         int x = p.x, y = p.y, z = p.z;
         float r = size * 0.5f;
@@ -219,7 +263,7 @@ public static class ShapePlacer
 
     // Filled cube. size = side length, centered on p (odd sizes center exactly
     // on a block; even sizes bias one extra layer toward +axis).
-    private static void PlaceCube(int3 p, int size, BlockType block, ref BlockWriter ab)
+    private static void PlaceCube(int3 p, int size, BlockType block, ref TreeBlockWriter ab)
     {
         int x = p.x, y = p.y, z = p.z;
         int half = math.max(1, size) / 2;
@@ -234,7 +278,7 @@ public static class ShapePlacer
 
     // Flat filled square, one block thick, lying in the horizontal (XZ) plane.
     // size = side length, centered on p.
-    private static void PlaceSquareFlat(int3 p, int size, BlockType block, ref BlockWriter ab)
+    private static void PlaceSquareFlat(int3 p, int size, BlockType block, ref TreeBlockWriter ab)
     {
         int x = p.x, y = p.y + 1, z = p.z;  // Ensure shape appears above branch with a +1 on y
         int half = math.max(1, size) / 2;
@@ -248,7 +292,7 @@ public static class ShapePlacer
 
     // Flat filled circle, one block thick, lying in the horizontal (XZ) plane.
     // size = diameter, centered on p.
-    private static void PlaceCircleFlat(int3 p, int size, BlockType block, ref BlockWriter ab)
+    private static void PlaceCircleFlat(int3 p, int size, BlockType block, ref TreeBlockWriter ab)
     {
         int x = p.x, y = p.y + 1, z = p.z;  // Ensure shape appears above branch with a +1 on y
         float r = size * 0.5f;
@@ -263,7 +307,7 @@ public static class ShapePlacer
 
     // Straight line of blocks descending from p. size = number of blocks placed,
     // starting at p itself and going downward (size = 1 places just p).
-    private static void PlaceLineDown(int3 p, int size, BlockType block, ref BlockWriter ab)
+    private static void PlaceLineDown(int3 p, int size, BlockType block, ref TreeBlockWriter ab)
     {
         int count = math.max(1, size);
         for (int i = 0; i < count; i++)

@@ -346,7 +346,9 @@ public class BiomeDataManager : MonoBehaviour
                     typeID = (byte)treeIndex,
                     spawnChance = lsysDeco.spawnChance / 10000f,
                     spawnBlockStartIndex = spawnBlockStart,
-                    spawnBlockCount = lsysDeco.spawnOnBlocks.Length
+                    spawnBlockCount = lsysDeco.spawnOnBlocks.Length,
+                    minScale = Mathf.Min(lsysDeco.minScale, lsysDeco.maxScale),
+                    maxScale = Mathf.Max(lsysDeco.minScale, lsysDeco.maxScale),
                 };
             }
 

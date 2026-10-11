@@ -13,13 +13,10 @@ MonoBehaviour:
   m_Name: Fractal
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: '[F!\\\F////FF////FF////F]'
-  Rule0:
-    Symbol: 70
+  Rules:
+  - Symbol: 70
     Replacement: F\\F////F\\F
-  Rule1:
-    Symbol: 0
-    Replacement: 
-  RuleCount: 1
+    Weight: 1
   Iterations: 2
   StepLength: 5
   MinStepLength: 5
@@ -27,9 +24,10 @@ MonoBehaviour:
   PitchAngle: 0
   YawAngle: 120
   RollAngle: 30
-  GravityFactor: 0
+  Gravity: 0
   AngleVariance: 0
   TaperCurve: 2
+  TaperBy: 0
   TrunkWidthAtBase: 5
   MinWidth: 0
   Foliage: 0

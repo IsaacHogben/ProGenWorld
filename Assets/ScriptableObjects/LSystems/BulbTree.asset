@@ -13,13 +13,10 @@ MonoBehaviour:
   m_Name: BulbTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: ^^^^A
-  Rule0:
-    Symbol: 65
+  Rules:
+  - Symbol: 65
     Replacement: '[F&F&F&F&F&F&F]!+A'
-  Rule1:
-    Symbol: 0
-    Replacement: 
-  RuleCount: 1
+    Weight: 1
   Iterations: 3
   StepLength: 7
   MinStepLength: 3
@@ -27,9 +24,10 @@ MonoBehaviour:
   PitchAngle: 20
   YawAngle: 30
   RollAngle: 0
-  GravityFactor: 0
+  Gravity: 0
   AngleVariance: 0
   TaperCurve: 0
+  TaperBy: 0
   TrunkWidthAtBase: 3
   MinWidth: 1
   Foliage: 5

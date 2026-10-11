@@ -13,13 +13,10 @@ MonoBehaviour:
   m_Name: CurlyTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: ^F!!/F!\-F\F\-F\F\F\-F\F!F\F/-&A
-  Rule0:
-    Symbol: 65
+  Rules:
+  - Symbol: 65
     Replacement: '![\FFFA]F[\FA][/FA]!F+++A'
-  Rule1:
-    Symbol: 0
-    Replacement: 
-  RuleCount: 1
+    Weight: 1
   Iterations: 3
   StepLength: 6
   MinStepLength: 3
@@ -27,9 +24,10 @@ MonoBehaviour:
   PitchAngle: 22
   YawAngle: 35
   RollAngle: 60
-  GravityFactor: 0
+  Gravity: 0
   AngleVariance: 5
   TaperCurve: 3
+  TaperBy: 0
   TrunkWidthAtBase: 6
   MinWidth: 0
   Foliage: 6

@@ -41,7 +41,11 @@ public enum BlockType : byte
     City_Overgrowth,
 
     Wallpaper,
-    Carpet
+    Carpet,
+
+    CherryBlossom,
+    CherryBlossomPale,
+    CherryBark
 
 }
 

@@ -13,24 +13,23 @@ MonoBehaviour:
   m_Name: Twister
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: FA!FA!FA!FA!FA!FA!FA
-  Rule0:
-    Symbol: 65
+  Rules:
+  - Symbol: 65
     Replacement: '++++[&!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA]'
-  Rule1:
-    Symbol: 0
-    Replacement: 
-  RuleCount: 1
+    Weight: 1
   Iterations: 1
   StepLength: 8
+  MinStepLength: 1
   StepLengthVariance: 0
   PitchAngle: 30
   YawAngle: 30
   RollAngle: 30
-  CurvatureAngle: 0
+  Gravity: 0
   AngleVariance: 1
-  StepLengthScalar: 0.96
-  GravityFactor: 0
+  TaperCurve: 0
+  TaperBy: 0
   TrunkWidthAtBase: 4
+  MinWidth: 1
   Foliage: 0
   BodyBlock: 25
   FoliageBlock: 16

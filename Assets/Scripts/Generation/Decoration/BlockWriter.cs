@@ -12,38 +12,89 @@ public struct BlockWriter
     public NativeList<PendingBlockWrite> pendingWrites;
 
     public void ApplyBlock(int x, int y, int z, BlockType block)
+        => ApplyBlock(x, y, z, block, PendingWriteMode.ReplaceAir);
+
+    // x, y, z are relative to this chunk and may fall outside it.
+    public void ApplyBlock(int x, int y, int z, BlockType block, PendingWriteMode mode)
     {
         byte blockId = (byte)block;
-        int3 localPos = new int3(x, y, z);
-        int3 worldPos = chunkCoord * chunkSize + localPos;
+        int3 worldPos = chunkCoord * chunkSize + new int3(x, y, z);
+        int3 targetChunk = FloorDiv(worldPos, chunkSize);
+        int3 targetLocal = worldPos - targetChunk * chunkSize;
 
-        int3 targetChunk = new int3(
-            (int)math.floor(worldPos.x / (float)chunkSize),
-            (int)math.floor(worldPos.y / (float)chunkSize),
-            (int)math.floor(worldPos.z / (float)chunkSize)
-        );
-
-        int3 targetLocal = new int3(
-            worldPos.x - targetChunk.x * chunkSize,
-            worldPos.y - targetChunk.y * chunkSize,
-            worldPos.z - targetChunk.z * chunkSize
-        );
-
-        if (targetLocal.Equals(chunkCoord) && x != 0 && y != 0 && z != 0)
+        // Blocks inside this chunk are written straight into its array. Local 0 is excluded
+        // because WriteSystem mirrors those into the neighbouring chunk's overlap layer.
+        if (mode == PendingWriteMode.ReplaceAir && targetChunk.Equals(chunkCoord) &&
+            targetLocal.x != 0 && targetLocal.y != 0 && targetLocal.z != 0)
         {
-            int index = x + y * indexSize + z * indexSize * indexSize;
-            blockIds[index] = blockId;
+            int index = targetLocal.x + targetLocal.y * indexSize + targetLocal.z * indexSize * indexSize;
+            if (blockIds[index] == (byte)BlockType.Air)
+                blockIds[index] = blockId;
+            return;
         }
-        else
+
+        // Drops inside this chunk can settle right here, since its blocks are available.
+        if (mode == PendingWriteMode.DropToSurface && targetChunk.Equals(chunkCoord))
         {
-            pendingWrites.Add(new PendingBlockWrite
+            if (!TryFindSurface(blockIds, indexSize, chunkSize, ref targetLocal))
+                return; // WriteSystem would search the same column and fail too
+            if (targetLocal.x != 0 && targetLocal.y != 0 && targetLocal.z != 0)
             {
-                targetChunk = targetChunk,
-                localPos = targetLocal,
-                blockId = blockId,
-                mode = PendingWriteMode.ReplaceAir,
-                isMirror = false,
-            });
+                int index = targetLocal.x + targetLocal.y * indexSize + targetLocal.z * indexSize * indexSize;
+                blockIds[index] = blockId; // TryFindSurface only returns air positions
+                return;
+            }
+            mode = PendingWriteMode.ReplaceAir; // on the shared face: let WriteSystem write and mirror it
         }
+
+        pendingWrites.Add(new PendingBlockWrite
+        {
+            targetChunk = targetChunk,
+            localPos = targetLocal,
+            blockId = blockId,
+            mode = mode,
+            isMirror = false,
+        });
+    }
+
+    // Moves p to the first air block resting on a non-air block in its column: downwards if p is in
+    // air, upwards if it starts inside terrain. Searches only this chunk's own layers (y < chunkSize).
+    // Shared with WriteSystem so both sides settle blocks identically.
+    public static bool TryFindSurface(NativeArray<byte> blockIds, int indexSize, int chunkSize, ref int3 p)
+    {
+        const int maxSearch = 16;
+        int column = p.x + p.z * indexSize * indexSize;
+        int top = chunkSize - 1;
+        if (p.y > top)
+            return false;
+
+        if (blockIds[column + p.y * indexSize] == 0)
+        {
+            for (int y = p.y, n = 0; y >= 1 && n < maxSearch; y--, n++)
+            {
+                if (blockIds[column + (y - 1) * indexSize] != 0)
+                {
+                    p.y = y;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        for (int y = p.y + 1, n = 0; y <= top && n < maxSearch; y++, n++)
+        {
+            if (blockIds[column + y * indexSize] == 0)
+            {
+                p.y = y;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static int3 FloorDiv(int3 a, int b)
+    {
+        int3 q = a / b;
+        return q - math.select(int3.zero, new int3(1), (a % b != 0) & (a < 0));
     }
 }

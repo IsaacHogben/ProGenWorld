@@ -13,13 +13,13 @@ MonoBehaviour:
   m_Name: GiantOakTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: F!F![Q!!//a++++a++++a]F!F!a+++++++aF!b++++a++++a
-  Rule0:
-    Symbol: 97
+  Rules:
+  - Symbol: 97
     Replacement: '[^F+++b]'
-  Rule1:
-    Symbol: 98
+    Weight: 1
+  - Symbol: 98
     Replacement: '[^Fa][&Fa]'
-  RuleCount: 2
+    Weight: 1
   Iterations: 11
   StepLength: 11
   MinStepLength: 7
@@ -27,9 +27,10 @@ MonoBehaviour:
   PitchAngle: 35
   YawAngle: 30
   RollAngle: 90
-  GravityFactor: 0.1
+  Gravity: 0.05
   AngleVariance: 9
   TaperCurve: 0
+  TaperBy: 0
   TrunkWidthAtBase: 23
   MinWidth: 0
   Foliage: 7

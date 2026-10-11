@@ -13,13 +13,10 @@ MonoBehaviour:
   m_Name: OsifiedTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: 'F!F![^FA]+[^FA]+[^FA]'
-  Rule0:
-    Symbol: 65
+  Rules:
+  - Symbol: 65
     Replacement: '^[\\F/A][//F\A]'
-  Rule1:
-    Symbol: 84
-    Replacement: 
-  RuleCount: 1
+    Weight: 1
   Iterations: 5
   StepLength: 8
   MinStepLength: 8
@@ -27,9 +24,10 @@ MonoBehaviour:
   PitchAngle: 35
   YawAngle: 120
   RollAngle: 18
-  GravityFactor: 0.2
+  Gravity: 0.1
   AngleVariance: 9
   TaperCurve: 2
+  TaperBy: 0
   TrunkWidthAtBase: 5
   MinWidth: 1
   Foliage: 8

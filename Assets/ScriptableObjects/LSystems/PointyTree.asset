@@ -13,13 +13,10 @@ MonoBehaviour:
   m_Name: PointyTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: FA
-  Rule0:
-    Symbol: 65
+  Rules:
+  - Symbol: 65
     Replacement: /+[&!FA]+[&!FA]+[&!FA]F!AT
-  Rule1:
-    Symbol: 0
-    Replacement: 
-  RuleCount: 1
+    Weight: 1
   Iterations: 3
   StepLength: 14
   MinStepLength: 2
@@ -27,9 +24,10 @@ MonoBehaviour:
   PitchAngle: 35
   YawAngle: 120
   RollAngle: 0
-  GravityFactor: 0
+  Gravity: 0
   AngleVariance: 3
   TaperCurve: 3
+  TaperBy: 0
   TrunkWidthAtBase: 2
   MinWidth: 0
   Foliage: 1

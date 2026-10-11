@@ -136,7 +136,7 @@ public struct DecorationJob : IJob
                 break;
 
             case DecorationCategory.LSystemTree:
-                PlaceLSystemTree(decoration.typeID, x, y, z);
+                PlaceLSystemTree(decoration, x, y, z);
                 break;
         }
     }
@@ -144,10 +144,17 @@ public struct DecorationJob : IJob
     // ========================================================================
     // LSYSTEM PLACEMENT
     // ========================================================================
-    private void PlaceLSystemTree(byte treeIndex, int x, int y, int z)
+    private void PlaceLSystemTree(DecorationData decoration, int x, int y, int z)
     {
+        byte treeIndex = decoration.typeID;
         if (treeIndex >= lsystemTrees.Length)
             return;
+
+        float scale = decoration.maxScale > decoration.minScale
+            ? rng.NextFloat(decoration.minScale, decoration.maxScale)
+            : decoration.minScale;
+        if (scale <= 0f)
+            scale = 1f;
 
         var writer = new BlockWriter
         {
@@ -159,7 +166,7 @@ public struct DecorationJob : IJob
         };
 
         LSystemTreeData tree = lsystemTrees[treeIndex];
-        LSystemInterpreter.Interpret(in tree, x, y, z, ref rng, ref writer);
+        LSystemInterpreter.Interpret(in tree, x, y, z, scale, ref rng, ref writer);
     }
 
     // ========================================================================

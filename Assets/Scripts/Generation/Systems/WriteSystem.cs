@@ -57,8 +57,18 @@ public class WriteSystem
     // -----------------------------
     // Enqueue
     // -----------------------------
+    // Decoration output arrives in spatially coherent runs, so most writes hit the same list as the last one.
+    private int3 lastEnqueueCoord;
+    private List<PendingBlockWrite> lastEnqueueList;
+
     public void EnqueueWrite(PendingBlockWrite w)
     {
+        if (lastEnqueueList != null && lastEnqueueCoord.Equals(w.targetChunk))
+        {
+            lastEnqueueList.Add(w);
+            return;
+        }
+
         if (!pendingWrites.TryGetValue(w.targetChunk, out var list))
         {
             list = (listPool.Count > 0)
@@ -70,6 +80,42 @@ public class WriteSystem
         }
 
         list.Add(w);
+        lastEnqueueCoord = w.targetChunk;
+        lastEnqueueList = list;
+    }
+
+    // -----------------------------
+    // Process a chunk's batch
+    // -----------------------------
+    // Returns false when the chunk is not ready; the write system then keeps the batch,
+    // so the caller must not recycle it.
+    public bool ProcessBatch(int3 coord, List<PendingBlockWrite> batch)
+    {
+        if (isDecorating(coord) || isMeshing(coord) || !hasBlockIds(coord))
+        {
+            if (!hasBlockIds(coord) && getDistance != null && queueFrontier != null)
+            {
+                if (getDistance(coord) < forceGenRange)
+                    queueFrontier(coord);
+            }
+
+            // Keep the whole batch, ahead of anything enqueued for this coord since it was stolen.
+            if (pendingWrites.TryGetValue(coord, out var newer))
+            {
+                batch.AddRange(newer);
+                newer.Clear();
+                listPool.Push(newer);
+            }
+            pendingWrites[coord] = batch;
+            InvalidateEnqueueCache();
+            return false;
+        }
+
+        var blockIds = getBlockIds(coord);
+        for (int i = 0; i < batch.Count; i++)
+            ApplyWriteDirect(coord, blockIds, batch[i]);
+        markForRemesh(coord);
+        return true;
     }
 
     // -----------------------------
@@ -102,6 +148,14 @@ public class WriteSystem
 
         if ((uint)p.x >= s || (uint)p.y >= s || (uint)p.z >= s)
             return;
+
+        if (w.mode == PendingWriteMode.DropToSurface)
+        {
+            if (!BlockWriter.TryFindSurface(blockIds, s, chunkSize, ref p))
+                return;
+            w.localPos = p;
+            w.mode = PendingWriteMode.ReplaceAir;
+        }
 
         int index = p.x + p.y * s + p.z * s * s;
         byte current = blockIds[index];
@@ -167,6 +221,7 @@ public class WriteSystem
 
         // Detach from dictionary so any new writes go into a NEW list
         pendingWrites.Remove(coord);
+        InvalidateEnqueueCache();
         return list;
     }
 
@@ -179,7 +234,7 @@ public class WriteSystem
         listPool.Push(list);
     }
 
-    // Fills caller-provided list with keys – NO allocation
+    // Fills caller-provided list with keys ï¿½ NO allocation
     public void GetKeySnapshot(List<int3> dst)
     {
         dst.Clear();
@@ -193,6 +248,7 @@ public class WriteSystem
             return;
 
         pendingWrites.Remove(coord);
+        InvalidateEnqueueCache();
         list.Clear();
         listPool.Push(list);
     }
@@ -208,5 +264,8 @@ public class WriteSystem
 
         pendingWrites.Clear();
         mirrorSeen.Clear();
+        InvalidateEnqueueCache();
     }
+
+    private void InvalidateEnqueueCache() => lastEnqueueList = null;
 }

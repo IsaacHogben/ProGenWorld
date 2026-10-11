@@ -1293,13 +1293,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             }
 
             // Process this snapshot only – re-enqueued writes go to a NEW list
-            for (int w = 0; w < batch.Count; w++)
-            {
-                writeSystem.ProcessWrite(coord, batch[w]);
-            }
-
-            // Return this list to the pool
-            writeSystem.RecycleList(batch);
+            // A chunk that isn't ready keeps its batch; otherwise return the list to the pool
+            if (writeSystem.ProcessBatch(coord, batch))
+                writeSystem.RecycleList(batch);
         }
     }
     LODLevel GetLODForCoord(int3 coord, Vector3 playerChunk, LODLevel current)

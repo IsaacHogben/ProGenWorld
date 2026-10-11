@@ -13,13 +13,7 @@ MonoBehaviour:
   m_Name: TallowTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: 'F[+^FF][-^FFF][++^FFFF]'
-  Rule0:
-    Symbol: 65
-    Replacement: 
-  Rule1:
-    Symbol: 0
-    Replacement: 
-  RuleCount: 0
+  Rules: []
   Iterations: 0
   StepLength: 1
   MinStepLength: 5
@@ -27,9 +21,10 @@ MonoBehaviour:
   PitchAngle: 15
   YawAngle: 90
   RollAngle: 0
-  GravityFactor: 0.333
+  Gravity: 0.1665
   AngleVariance: 10
   TaperCurve: 0
+  TaperBy: 0
   TrunkWidthAtBase: 2
   MinWidth: 1
   Foliage: 5

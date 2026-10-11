@@ -237,3 +237,24 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+  - type: 32
+    name: CherryBlossom
+    texture: {fileID: 2800000, guid: c810ea8a5a474c59b968303dd3573e26, type: 3}
+    isSolid: 1
+    hasCollision: 1
+    visibility: 3
+    alphaMaskIndex: 1
+  - type: 33
+    name: CherryBlossomPale
+    texture: {fileID: 2800000, guid: 37ddfafce9ea47efb0fe46d57a7f7955, type: 3}
+    isSolid: 1
+    hasCollision: 1
+    visibility: 3
+    alphaMaskIndex: 2
+  - type: 34
+    name: CherryBark
+    texture: {fileID: 2800000, guid: bdc047d773904e0bbbdbdc51aa594314, type: 3}
+    isSolid: 1
+    hasCollision: 1
+    visibility: 0
+    alphaMaskIndex: 0

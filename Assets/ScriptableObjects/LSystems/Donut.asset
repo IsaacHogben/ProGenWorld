@@ -13,13 +13,7 @@ MonoBehaviour:
   m_Name: Donut
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: \&&&F^F^F^F^F^F^F^F^F^F^F^F^F^F^F^F^F^F^F
-  Rule0:
-    Symbol: 65
-    Replacement: 
-  Rule1:
-    Symbol: 0
-    Replacement: 
-  RuleCount: 0
+  Rules: []
   Iterations: 0
   StepLength: 14
   MinStepLength: 1
@@ -27,9 +21,10 @@ MonoBehaviour:
   PitchAngle: 20
   YawAngle: 0
   RollAngle: 14
-  GravityFactor: 0
+  Gravity: 0
   AngleVariance: 0
   TaperCurve: 4
+  TaperBy: 0
   TrunkWidthAtBase: 13
   MinWidth: 1
   Foliage: 1

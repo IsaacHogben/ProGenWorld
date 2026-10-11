@@ -13,13 +13,10 @@ MonoBehaviour:
   m_Name: Double Helix Palm Tree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: F[&!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA]!F[++++++&!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA+\!FA]!!F!!F!!F!!F!!F!!F!!F!!F!!F!!FT
-  Rule0:
-    Symbol: 65
+  Rules:
+  - Symbol: 65
     Replacement: '[!!!!!//F!!!//F]'
-  Rule1:
-    Symbol: 0
-    Replacement: 
-  RuleCount: 1
+    Weight: 1
   Iterations: 1
   StepLength: 12
   StepLengthVariance: 0
@@ -29,7 +26,7 @@ MonoBehaviour:
   CurvatureAngle: 0
   AngleVariance: 1
   StepLengthScalar: 0.99
-  GravityFactor: 0
+  Gravity: 0
   TrunkWidthAtBase: 7
   Foliage: 3
   BodyBlock: 15

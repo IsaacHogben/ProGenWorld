@@ -13,23 +13,24 @@ MonoBehaviour:
   m_Name: GumTree
   m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
   Axiom: BFFA
-  Rule0:
-    Symbol: 65
+  Rules:
+  - Symbol: 65
     Replacement: '!--F[\FA][/FA]'
-  Rule1:
-    Symbol: 66
+    Weight: 1
+  - Symbol: 66
     Replacement: '[!!^&-F-BFFA]'
-  RuleCount: 2
+    Weight: 1
   Iterations: 6
   StepLength: 6
-  MinStepLength: 2
+  MinStepLength: 1
   StepLengthVariance: 3
   PitchAngle: 0
   YawAngle: 45
   RollAngle: 15
-  GravityFactor: -0.1
+  Gravity: 0.015
   AngleVariance: 20
   TaperCurve: 2
+  TaperBy: 0
   TrunkWidthAtBase: 3
   MinWidth: 0
   Foliage: 6

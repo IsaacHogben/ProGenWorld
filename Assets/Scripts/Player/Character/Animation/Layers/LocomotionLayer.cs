@@ -257,7 +257,7 @@ public class LocomotionLayer : CharacterAnimLayer
         sprintBlend = Mathf.Lerp(sprintBlend, sprintTarget, Damp(6f, dt));
         gaitWeight = Mathf.Lerp(gaitWeight, Mathf.Clamp01(speed / walkSpeed), Damp(10f, dt));
 
-        bool air = jumped || (!s.Grounded && s.AirTime > airPoseDelay);
+        bool air = jumped || s.Swimming || (!s.Grounded && s.AirTime > airPoseDelay);
         if (air)
         {
             if (!inAir) EnterAir(ctx);

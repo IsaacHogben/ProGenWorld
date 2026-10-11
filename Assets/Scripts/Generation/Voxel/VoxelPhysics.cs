@@ -78,6 +78,12 @@ public static class VoxelPhysics
         return id < db.Length && db[id].hasCollision;
     }
 
+    /// <summary>True if the voxel is water.</summary>
+    public static bool IsWater(int3 voxel)
+    {
+        return TryGetBlock(voxel, out byte id) && id == (byte)BlockType.Water;
+    }
+
     /// <summary>True if any solid voxel intersects the box.</summary>
     public static bool OverlapBox(Vector3 min, Vector3 max, bool unloadedIsSolid = false)
     {

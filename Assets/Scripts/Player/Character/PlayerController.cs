@@ -82,6 +82,21 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     [Tooltip("Shortest slide, even if crouch is released straight away")]
     [SerializeField] private float slideMinTime = 0.35f;
 
+    [Header("Water")]
+    [SerializeField] private float swimSpeed = 2.5f;
+    [SerializeField] private float swimSprintSpeed = 4.5f;
+    [SerializeField] private float waterAcceleration = 6f;
+    [Tooltip("Speed multiplier wading in water up to swimming depth")]
+    [SerializeField] private float wadeSpeedMultiplier = 0.55f;
+    [Tooltip("Jumping from the surface (to climb out) works while the water is no deeper than this above the feet")]
+    [SerializeField] private float surfaceJumpDepth = 2.4f;
+
+    [Header("Dev: Noclip")]
+    [Tooltip("Fly through everything (editor and development builds only)")]
+    [SerializeField] private Key noclipKey = Key.N;
+    [SerializeField] private float flySpeed = 15f;
+    [SerializeField] private float flyFastMultiplier = 4f;
+
     [Header("References")]
     [SerializeField] private PlayerCamera playerCamera;
     [SerializeField] private PlayerInput playerInput;
@@ -115,10 +130,12 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     private Vector3 slideDirection;
     private float slideSpeed;
     private float slideTime;
+    private bool jumpHeld;
 
     public VoxelCharacterMotor Motor => motor;
     public bool IsSprinting => !isSliding && sprintHeld && moveInput.sqrMagnitude > 0.09f && crouch < 0.5f && (IsThirdPerson || moveInput.y > 0.3f);
     public bool IsSliding => isSliding;
+    public bool IsNoClip => motor != null && motor.NoClip;
     public float FacingYaw => facingYaw;
     /// <summary>0 = sprint just started .. 1 = at top sprint speed.</summary>
     public float SprintMomentum => sprintMomentum;
@@ -167,7 +184,15 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         ReadInput();
         UpdateWishDirection();
         UpdateFacing(Time.deltaTime);
-        crouch = Mathf.MoveTowards(crouch, crouchHeld && !isSliding ? 1f : 0f, crouchTransitionSpeed * Time.deltaTime);
+        bool crouchPose = crouchHeld && !isSliding && !motor.IsSwimming && !motor.NoClip;
+        crouch = Mathf.MoveTowards(crouch, crouchPose ? 1f : 0f, crouchTransitionSpeed * Time.deltaTime);
+
+        if ((Application.isEditor || Debug.isDebugBuild) && Keyboard.current != null && Keyboard.current[noclipKey].wasPressedThisFrame)
+        {
+            motor.NoClip = !motor.NoClip;
+            motor.FlyVelocity = Vector3.zero;
+            isSliding = false;
+        }
     }
 
     void ReadInput()
@@ -175,6 +200,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         moveInput = moveAction != null ? Vector2.ClampMagnitude(moveAction.ReadValue<Vector2>(), 1f) : Vector2.zero;
         sprintHeld = sprintAction != null && sprintAction.IsPressed();
         crouchHeld = crouchAction != null && crouchAction.IsPressed();
+        jumpHeld = jumpAction != null && jumpAction.IsPressed();
 
         // Crouch pressed while sprinting slides instead.
         if (crouchAction != null && crouchAction.WasPressedThisFrame() && IsSprinting)
@@ -201,6 +227,19 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     {
         float dt = Time.fixedDeltaTime;
         UpdateWishDirection();
+
+        if (motor.NoClip)
+        {
+            UpdateNoClip();
+            return;
+        }
+        if (motor.IsSwimming)
+        {
+            isSliding = false;
+            UpdateSwimming(dt);
+            return;
+        }
+        motor.SwimVertical = 0f;
 
         bool grounded = motor.IsGrounded;
         if (grounded)
@@ -230,6 +269,9 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         float maxSpeed = crouch > 0.5f ? crouchSpeed
             : IsSprinting ? Mathf.Lerp(sprintSpeed, Mathf.Max(sprintSpeed, topSprintSpeed), sprintMomentum)
             : walkSpeed;
+        // Wading: slower the deeper the water.
+        if (grounded && motor.WaterDepth > 0f)
+            maxSpeed *= Mathf.Lerp(1f, wadeSpeedMultiplier, Mathf.Clamp01(motor.WaterDepth / motor.Settings.swimDepth));
         Vector3 target = wishDirection * (maxSpeed * slopeMultiplier);
 
         // Start from what the body actually did, so walls don't store phantom speed.
@@ -260,6 +302,40 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             lastJumpPressedTime = float.NegativeInfinity;
             lastGroundedTime = float.NegativeInfinity;
         }
+    }
+
+    // ----------------------------------------------------------------------------------
+    // Water and noclip
+    // ----------------------------------------------------------------------------------
+
+    // Swim at the surface; Jump swims up (or, at the surface, jumps out), Crouch dives.
+    void UpdateSwimming(float dt)
+    {
+        float speed = sprintHeld ? swimSprintSpeed : swimSpeed;
+        Vector3 current = motor.Velocity;
+        current.y = 0f;
+        motor.HorizontalVelocity = Vector3.MoveTowards(current, wishDirection * speed, waterAcceleration * dt);
+        motor.SwimVertical = (jumpHeld ? 1f : 0f) - (crouchHeld ? 1f : 0f);
+
+        bool jumpBuffered = Time.time - lastJumpPressedTime <= jumpBufferTime;
+        if (jumpBuffered && motor.WaterDepth <= surfaceJumpDepth)
+        {
+            // Always full height (releasing the button doesn't cut it), so a tap climbs out.
+            motor.Jump(Mathf.Sqrt(2f * -Physics.gravity.y * jumpHeight));
+            isJumping = false;
+            lastJumpPressedTime = float.NegativeInfinity;
+        }
+        sprintMomentum = 0f;
+    }
+
+    // Fly where the camera looks; Jump / Crouch go straight up / down; Sprint is fast.
+    void UpdateNoClip()
+    {
+        Quaternion look = playerCamera != null ? Quaternion.Euler(playerCamera.Pitch, playerCamera.Yaw, 0f) : Quaternion.Euler(0f, CameraYaw, 0f);
+        Vector3 move = look * new Vector3(moveInput.x, 0f, moveInput.y) + Vector3.up * ((jumpHeld ? 1f : 0f) - (crouchHeld ? 1f : 0f));
+        motor.FlyVelocity = Vector3.ClampMagnitude(move, 1f) * flySpeed * (sprintHeld ? flyFastMultiplier : 1f);
+        lastJumpPressedTime = float.NegativeInfinity;
+        isJumping = false;
     }
 
     // ----------------------------------------------------------------------------------
@@ -356,6 +432,11 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             idleTurning = false;
             target = Mathf.Atan2(slideDirection.x, slideDirection.z) * Mathf.Rad2Deg;
         }
+        else if (motor.NoClip)
+        {
+            idleTurning = false;
+            target = cameraYaw;
+        }
         else if (moving)
         {
             idleTurning = false;
@@ -396,6 +477,8 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             SprintSpeed = Mathf.Max(sprintSpeed, topSprintSpeed),
             Sprinting = IsSprinting,
             Sliding = isSliding,
+            Swimming = motor.IsSwimming,
+            WaterDepth = motor.WaterDepth,
             Crouch = crouch,
             Slope = slope,
         };

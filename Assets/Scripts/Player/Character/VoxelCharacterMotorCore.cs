@@ -42,6 +42,18 @@ public class VoxelCharacterMotorCore
         public float gravity;
         public float terminalVelocity;
 
+        [Header("Water")]
+        [Tooltip("Upward push when fully under water, as a multiple of gravity. Floats with 1/buoyancy of the body under water (1.5 = two thirds, water at the chest)")]
+        public float buoyancy;
+        [Tooltip("Vertical drag in water (1/s): damps bobbing and slows falls into water")]
+        public float waterDrag;
+        [Tooltip("Water deeper than this (above the feet) and the body swims instead of walking")]
+        public float swimDepth;
+        [Tooltip("Swimming into water shallower than this over ground, the body stands up and wades")]
+        public float wadeDepth;
+        [Tooltip("Vertical swimming acceleration (swim up / dive)")]
+        public float swimVerticalAcceleration;
+
         public static Settings Default => new Settings
         {
             radius = 0.35f,
@@ -58,6 +70,11 @@ public class VoxelCharacterMotorCore
             maxSink = 0.75f,
             gravity = -9.81f,
             terminalVelocity = 40f,
+            buoyancy = 1.5f,
+            waterDrag = 2.5f,
+            swimDepth = 2.0f,
+            wadeDepth = 1.7f,
+            swimVerticalAcceleration = 10f,
         };
     }
 
@@ -82,6 +99,13 @@ public class VoxelCharacterMotorCore
     public float GroundHeight;
     public float AirTime;
     public bool HitWall;
+    /// <summary>In water deep enough to float.</summary>
+    public bool Swimming;
+    /// <summary>Height of the water surface above the feet (0 or less when out of water).</summary>
+    public float WaterDepth;
+
+    /// <summary>Optional: true where a voxel is water.</summary>
+    public Func<int3, bool> IsWater;
 
     readonly Func<int3, bool> isSolid;
     readonly VoxelBoxMover torso;
@@ -102,6 +126,7 @@ public class VoxelCharacterMotorCore
         Position = position;
         Velocity = Vector3.zero;
         Grounded = false;
+        Swimming = false;
         AirTime = 0f;
         GroundHeight = position.y;
     }
@@ -119,7 +144,7 @@ public class VoxelCharacterMotorCore
     /// Advances the body one fixed step. <paramref name="jumpSpeed"/> > 0 starts a jump (the caller
     /// decides whether jumping is allowed).
     /// </summary>
-    public StepResult Step(Vector3 horizontalVelocity, float jumpSpeed, float dt)
+    public StepResult Step(Vector3 horizontalVelocity, float jumpSpeed, float dt, float swimVertical = 0f)
     {
         var result = new StepResult();
         ConfigureTorso();
@@ -152,18 +177,101 @@ public class VoxelCharacterMotorCore
             jumpLock = JumpLockTime;
             if (Grounded) result.LeftGround = true;
             Grounded = false;
+            Swimming = false; // jumping out of the water
             result.Jumped = true;
         }
 
-        if (Grounded)
+        UpdateWater();
+        if (Swimming)
+            StepSwimming(dt, swimVertical, ref result);
+        else if (Grounded)
             StepGrounded(hv, dt, ref result);
         else
             StepAirborne(dt, ref result);
 
-        if (Grounded) AirTime = 0f;
+        if (Grounded || Swimming) AirTime = 0f;
         else AirTime += dt;
 
         return result;
+    }
+
+    // ----------------------------------------------------------------------------------
+    // Water
+    // ----------------------------------------------------------------------------------
+
+    void UpdateWater()
+    {
+        WaterDepth = 0f;
+        if (IsWater == null)
+        {
+            Swimming = false;
+            return;
+        }
+
+        // Water surface in the body's column: the top of the highest water voxel overlapping it.
+        int x = Mathf.FloorToInt(Position.x), z = Mathf.FloorToInt(Position.z);
+        int top = Mathf.FloorToInt(Position.y + settings.height + 1f);
+        int bottom = Mathf.FloorToInt(Position.y - 0.5f);
+        for (int y = top; y >= bottom; y--)
+        {
+            if (IsWater(new int3(x, y, z)))
+            {
+                WaterDepth = y + 1 - Position.y;
+                break;
+            }
+        }
+
+        if (!Swimming)
+        {
+            if (WaterDepth > settings.swimDepth && jumpLock <= 0f)
+            {
+                Swimming = true;
+                Grounded = false;
+            }
+            return;
+        }
+
+        // Left the water (jumped out, drained) or reached ground shallow enough to stand in.
+        if (WaterDepth < 0.3f)
+        {
+            Swimming = false;
+            return;
+        }
+        if (WaterDepth < settings.wadeDepth + 0.3f && Velocity.y <= 0.5f &&
+            TryGetSupport(Position, Position.y + settings.stepClearance, Position.y - 0.25f, out float ground) &&
+            ground >= Position.y - 0.2f && WaterDepth - (ground - Position.y) < settings.wadeDepth)
+        {
+            Swimming = false;
+            Grounded = true;
+            GroundHeight = ground;
+            Velocity.y = 0f;
+            hasTarget = false;
+            targetRate = 0f;
+        }
+    }
+
+    // Buoyancy grows with how much of the body is under water; drag damps the bobbing.
+    void StepSwimming(float dt, float swimVertical, ref StepResult result)
+    {
+        if (jumpLock > 0f) jumpLock -= dt;
+
+        float submerged = Mathf.Clamp01(WaterDepth / settings.height);
+        float g = -settings.gravity;
+        float vy = Velocity.y + (g * (settings.buoyancy * submerged - 1f) + swimVertical * settings.swimVerticalAcceleration) * dt;
+        vy *= Mathf.Exp(-settings.waterDrag * dt);
+
+        float y = Position.y;
+        torso.Sweep(ref Position, 1, vy * dt, out bool hitY);
+        Velocity.y = hitY ? 0f : vy;
+
+        // Don't sink into the bottom: rest on it.
+        if (TryGetSupport(Position, Position.y + settings.stepClearance, Mathf.Min(y, Position.y) - 0.05f, out float floor) && floor > Position.y)
+        {
+            Position.y = floor;
+            if (Velocity.y < 0f) Velocity.y = 0f;
+            GroundHeight = floor;
+        }
+        AirTime = 0f;
     }
 
     void StepGrounded(Vector3 hv, float dt, ref StepResult result)

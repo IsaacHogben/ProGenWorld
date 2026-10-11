@@ -20,12 +20,20 @@ public class VoxelCharacterMotor : MonoBehaviour
 
     /// <summary>Desired horizontal velocity for the next fixed step (y ignored).</summary>
     public Vector3 HorizontalVelocity { get; set; }
+    /// <summary>While swimming: +1 swims up, -1 dives.</summary>
+    public float SwimVertical { get; set; }
+    /// <summary>Dev fly mode: no collision or gravity, moves with <see cref="FlyVelocity"/>.</summary>
+    public bool NoClip { get; set; }
+    public Vector3 FlyVelocity { get; set; }
 
     public Vector3 Velocity => core.Velocity;
     public bool IsGrounded => core.Grounded;
     public float GroundHeight => core.GroundHeight;
     public float AirTime => core.AirTime;
     public bool HitWall => core.HitWall;
+    public bool IsSwimming => core.Swimming;
+    /// <summary>Height of the water surface above the feet (0 or less out of water).</summary>
+    public float WaterDepth => core.WaterDepth;
     /// <summary>False while the chunk around the body has no block data yet (body is frozen).</summary>
     public bool IsSimulating { get; private set; }
     /// <summary>Simulated position (the transform holds the interpolated one during rendering).</summary>
@@ -43,7 +51,7 @@ public class VoxelCharacterMotor : MonoBehaviour
 
     void Awake()
     {
-        core = new VoxelCharacterMotorCore(v => VoxelPhysics.IsSolid(v, unloadedIsSolid));
+        core = new VoxelCharacterMotorCore(v => VoxelPhysics.IsSolid(v, unloadedIsSolid)) { IsWater = VoxelPhysics.IsWater };
         core.Teleport(transform.position);
         prevPosition = lastWrittenPosition = transform.position;
 
@@ -83,6 +91,18 @@ public class VoxelCharacterMotor : MonoBehaviour
         SyncFromTransform();
         prevPosition = core.Position;
 
+        if (NoClip)
+        {
+            IsSimulating = true;
+            core.Position += FlyVelocity * Time.fixedDeltaTime;
+            core.Velocity = FlyVelocity;
+            core.Grounded = false;
+            core.Swimming = false;
+            core.AirTime = 0f;
+            WriteTransform(core.Position);
+            return;
+        }
+
         IsSimulating = VoxelPhysics.IsReady && VoxelPhysics.IsChunkLoaded(core.Position + Vector3.up);
         if (!IsSimulating)
         {
@@ -93,7 +113,7 @@ public class VoxelCharacterMotor : MonoBehaviour
         core.settings = settings;
         core.settings.gravity = Physics.gravity.y * gravityScale;
 
-        var result = core.Step(HorizontalVelocity, pendingJump, Time.fixedDeltaTime);
+        var result = core.Step(HorizontalVelocity, pendingJump, Time.fixedDeltaTime, SwimVertical);
         pendingJump = 0f;
 
         WriteTransform(core.Position);

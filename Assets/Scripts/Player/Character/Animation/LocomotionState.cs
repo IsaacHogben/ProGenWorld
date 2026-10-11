@@ -21,6 +21,10 @@ public struct LocomotionState
     public bool Sprinting;
     /// <summary>Sliding on the ground (crouch pressed while sprinting).</summary>
     public bool Sliding;
+    /// <summary>Floating in deep water.</summary>
+    public bool Swimming;
+    /// <summary>Height of the water surface above the feet (0 or less out of water).</summary>
+    public float WaterDepth;
     /// <summary>0 = standing, 1 = fully crouched.</summary>
     public float Crouch;
     /// <summary>Rise per metre of the ground ahead (1 = 45 degree stairs, negative = downhill).</summary>

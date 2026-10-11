@@ -69,7 +69,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     // ==================================================
 
     [Header("Performance Tuning")]
-    public int maxConcurrentSchedualTasks = 4;   // How many noise tasks to allow concurrently - Increase until CPU saturates or frame drops.
+    public int maxConcurrentSchedualTasks = 4;   // How many chunks to start per scheduling pass (adjusted at runtime) - noise concurrency is noiseThreads
     public int minConcurrentNoiseTasks = 2;
 
     public int maxMeshUploadsPerFrame = 2;    // How many mesh uploads per frame - Increase until GPU upload hitching appears.
@@ -78,6 +78,12 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
 
     public float scheduleInterval = 1f;       // Seconds between scheduling passes - Lower until chunk popping delay is acceptable.
     public int meshDebounceFrames = 2;         // Minimum number of frames between mesh jobs for any given chunk
+    [Tooltip("Most chunks generating at once. The frontier beyond this waits, sorted nearest first, so fast movement does not fill the pipeline with chunks the player has already passed.")]
+    [Min(1)] public int maxChunksInFlight = 64;
+    [Tooltip("Chunks generating terrain noise at the same time (the most expensive generation step, on worker threads). Fixed at start. 0 = half the logical cores.")]
+    [Min(0)] public int noiseThreads = 0;
+
+    public int NoiseThreadCount => noiseThreads > 0 ? noiseThreads : Math.Max(2, SystemInfo.processorCount / 2);
 
     ProfilerRecorder gpuFrameTimeRecorder;
 
@@ -157,11 +163,17 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     // Flood-Fill System
     // ==================================================
 
-    readonly Queue<int3> frontierQueue = new();      // chunks waiting to be expanded
+    readonly List<int3> frontier = new();            // chunks waiting to be expanded, nearest to the player last
     readonly HashSet<int3> frontierSet = new();      // hash set for duplication checks
+    float[] frontierSortKeys = new float[512];
+    int3[] frontierSortItems = new int3[512];
 
     readonly HashSet<int3> deferredFrontier = new(); // neighbors to expand later (out of range)
     private bool firstFloodTriggered = false;
+
+    readonly HashSet<int3> surfaceChunks = new();    // loaded chunks with an open face - the flood fill grows from these
+    int terrainMinY = int.MaxValue;                  // chunk y range in which surface chunks have been found
+    int terrainMaxY = int.MinValue;
 
     public HashSet<int3> GetDeferredFrontier() => deferredFrontier;
 
@@ -308,7 +320,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         {
             lastScheduleTime = Time.time;
 
-            if (frontierQueue.Count > 0 || lodUpdateQueue.Count > 0)
+            if (frontier.Count > 0 || lodUpdateQueue.Count > 0)
                 InjectChunkRequestIntoPipeline(currentPlayerPos);
         }
         UnityEngine.Profiling.Profiler.EndSample();
@@ -340,6 +352,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 // Dispose density immediately
                 if (data.density.IsCreated)
                     ReturnDensityArray(data.lod, data.density);
+                AbandonGeneration(data.coord);
                 continue;
             }
             blockGenSystem.GenerateBlocks(data.coord, data.lod, data.density, biomeDataByChunk[data.coord]);
@@ -417,6 +430,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             case 0:
                 CleanupDeferred(playerPos);
                 PromoteDeferredToFrontier(playerPos);
+                ReseedFloodNearPlayer(playerPos);
                 Profiler.EndMovePhase0();
                 break;
             case 1:
@@ -509,11 +523,18 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         UnityEngine.Profiling.Profiler.EndSample();
 
         UnityEngine.Profiling.Profiler.BeginSample("InjectChunk: Frontier Queue");
-        if (frontierQueue.Count != 0)
+        // Stages downstream are first come first served: only hand over what they can work through
+        // soon, so the rest of the frontier can still be re-prioritised as the player moves.
+        int frontierCap = Math.Min(cap, spawnedThisTick + maxChunksInFlight - generatingSet.Count);
+        if (frontier.Count != 0 && spawnedThisTick < frontierCap)
         {
+            UnityEngine.Profiling.Profiler.BeginSample("Frontier: Sort By Distance");
+            SortFrontierByDistance(playerPos);
+            UnityEngine.Profiling.Profiler.EndSample();
+
             UnityEngine.Profiling.Profiler.BeginSample("Frontier: Dequeue Loop");
             int frontierIterations = 0;
-            while (spawnedThisTick < cap && TryDequeueFrontier(out var coord))
+            while (spawnedThisTick < frontierCap && TryDequeueFrontier(out var coord))
             {
                 frontierIterations++;
 
@@ -608,6 +629,40 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         }
     }
     private readonly List<int3> tmpWriteTargets = new();
+
+    // The flood fill only grows from chunks it has generated, into neighbours within view distance.
+    // A player moving faster than generation leaves the wavefront behind; once it is more than a
+    // view distance away nothing can grow, the deferred frontier is cleaned up and the world never
+    // comes back. Restart the flood under the player when no surface chunk or pending work is there.
+    void ReseedFloodNearPlayer(Vector3 playerPos)
+    {
+        if (terrainMaxY < terrainMinY)
+            return; // no terrain found yet - the initial seed is still filling
+
+        int3 center = WorldToChunkCoord(playerPos);
+        int minY = terrainMinY - 1;
+        int maxY = terrainMaxY + 2;
+
+        for (int x = -1; x <= 1; x++)
+            for (int z = -1; z <= 1; z++)
+                for (int y = minY; y <= maxY; y++)
+                {
+                    int3 c = new int3(center.x + x, y, center.z + z);
+                    if (surfaceChunks.Contains(c) || generatingSet.Contains(c) || frontierSet.Contains(c))
+                        return; // the flood already reaches the player
+                }
+
+        // Seed the column under the player over the heights where terrain has been found
+        for (int y = minY; y <= maxY; y++)
+        {
+            int3 c = new int3(center.x, y, center.z);
+            if (chunks.ContainsKey(c) || generatingSet.Contains(c) || !IsChunkWithinRange(c, playerPos, viewDistance))
+                continue;
+
+            deferredFrontier.Remove(c);
+            EnqueueFrontier(c);
+        }
+    }
     private OpenFaces DetectTerrainFlowFromBlocks(NativeArray<byte> blockIds, LODLevel lod)
     {
         int sampleRes = lodConfigs[lod].sampleRes;
@@ -710,7 +765,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             meshDebounceFrames = 0;
 
             bool worldDone =
-                frontierQueue.Count == 0 &&
+                frontier.Count == 0 &&
                 activeNoise == 0 &&
                 activeMesh == 0 &&
                 activeDeco == 0;
@@ -742,8 +797,10 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         // ------------------------------------------------------------
         // 4. Backpressure (queue overload)
         // ------------------------------------------------------------
+        // Work committed to the pipeline. The frontier itself is not counted: it waits there on
+        // purpose (maxChunksInFlight), and slowing scheduling would only make it grow.
         int backlog =
-            frontierQueue.Count +
+            generatingSet.Count +
             chunksNeedingRemesh.Count +
             lodUpdateQueue.Count;
 
@@ -931,7 +988,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 seed = seed,
                 frequency = frequency,
                 chunkSize = chunkSize,
-                maxConcurrentNoiseTasks =  maxConcurrentSchedualTasks,
+                maxConcurrentNoiseTasks = NoiseThreadCount,
                 biomeDataManager = biomeDataManager
             },
             lod => RentDensityArray(lod),
@@ -999,9 +1056,19 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     // =============================
     // ====== System Handles =======
     // =============================
-    private void CompleteGeneration(int3 coord)
+    // Generation dropped because the player moved out of range. The coord goes back to the
+    // wavefront memory, like an unloaded chunk, so the flood fill can reach it again later.
+    private void AbandonGeneration(int3 coord)
     {
         generatingSet.Remove(coord);
+        deferredFrontier.Add(coord);
+
+        if (biomeDataByChunk.TryGetValue(coord, out var biome))
+        {
+            if (biome.grid.IsCreated)
+                biome.grid.Dispose();
+            biomeDataByChunk.Remove(coord);
+        }
     }
     private void HandleBiomeCompleted(int3 coord, BiomeData biome)
     {
@@ -1094,6 +1161,12 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         MarkChunkForRemesh(coord);
 
         var faces = DetectTerrainFlowFromBlocks(blockIds, LODLevel.Near);
+        if (faces != OpenFaces.None)
+        {
+            surfaceChunks.Add(coord);
+            terrainMinY = Math.Min(terrainMinY, coord.y);
+            terrainMaxY = Math.Max(terrainMaxY, coord.y);
+        }
         ExpandFrontierFromFaces(coord, player.transform.position, faces);
     }
     private void HandleDecorationStarted(int3 coord)
@@ -1343,21 +1416,53 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     {
         if (frontierSet.Add(c))
         {
-            frontierQueue.Enqueue(c);
+            frontier.Add(c);
         }
     }
-    bool TryDequeueFrontier(out int3 c)
+    bool TryDequeueFrontier(out int3 c) // nearest to the player as of the last SortFrontierByDistance
     {
-        while (frontierQueue.Count > 0)
+        if (frontier.Count > 0)
         {
-            c = frontierQueue.Dequeue();
-            if (frontierSet.Remove(c))
-            {
-                return true;
-            }
+            c = frontier[frontier.Count - 1];
+            frontier.RemoveAt(frontier.Count - 1);
+            frontierSet.Remove(c);
+            return true;
         }
         c = default;
         return false;
+    }
+    // Orders the frontier so the chunks nearest the player are generated first. Entries the player
+    // has moved out of range of go back to the deferred frontier (wavefront memory).
+    void SortFrontierByDistance(Vector3 playerPos)
+    {
+        if (frontierSortKeys.Length < frontier.Count)
+        {
+            int size = Mathf.NextPowerOfTwo(frontier.Count);
+            frontierSortKeys = new float[size];
+            frontierSortItems = new int3[size];
+        }
+
+        int n = 0;
+        for (int i = 0; i < frontier.Count; i++)
+        {
+            int3 c = frontier[i];
+            float dist = GetDistanceAtChunkScaleWithRenderShape(c, playerPos);
+            if (dist > viewDistance)
+            {
+                frontierSet.Remove(c);
+                deferredFrontier.Add(c);
+                continue;
+            }
+            frontierSortKeys[n] = -dist; // nearest last
+            frontierSortItems[n] = c;
+            n++;
+        }
+
+        Array.Sort(frontierSortKeys, frontierSortItems, 0, n);
+
+        frontier.Clear();
+        for (int i = 0; i < n; i++)
+            frontier.Add(frontierSortItems[i]);
     }
     void EnqueueLodUpdate(int3 c, LODLevel l) // Currently does not do any extra sorting
     {
@@ -1378,12 +1483,13 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             center,
             viewDistance + 1, // small buffer
             coord => GetDistanceAtChunkScaleWithRenderShape(coord, center),
-            coord => CompleteGeneration(coord)
+            coord => AbandonGeneration(coord)
         );
     }
     void ReleaseChunk(int3 coord)
     {
         deferredFrontier.Add(coord); // If a chunk is removed it must then become a new frontier for terrain generation
+        surfaceChunks.Remove(coord);
 
         //ECS Cleanup
         ECSSpawnSystem.DestroyChunk(new int3(coord.x, coord.y, coord.z));

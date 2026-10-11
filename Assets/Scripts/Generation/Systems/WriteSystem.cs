@@ -28,7 +28,17 @@ public class WriteSystem
     private float forceGenRange;             // usually midRange
     private Action<int3> queueFrontier;      // request chunk generation
 
-    private HashSet<(int3, int3, byte)> mirrorSeen = new(); // suppress duplicate mirror writes
+    // Suppresses duplicate mirror writes, keyed by the chunk receiving the mirror so an unloaded
+    // chunk's entries can be dropped and it receives mirrors again when it regenerates.
+    private readonly Dictionary<int3, HashSet<(int3, byte)>> mirrorSeen = new();
+
+    // Cross-chunk decoration writes, kept after they are applied so a chunk that unloads and
+    // regenerates gets its neighbours' blocks back. Keyed by the chunk that emitted them and
+    // dropped when that chunk unloads, since it emits them again when it is next decorated.
+    private readonly Dictionary<int3, Dictionary<int3, List<PendingBlockWrite>>> storedBySource = new();
+    private readonly Dictionary<int3, HashSet<int3>> sourcesByTarget = new();
+    private readonly Stack<Dictionary<int3, List<PendingBlockWrite>>> targetMapPool = new();
+    private readonly Stack<HashSet<int3>> sourceSetPool = new();
 
     public void Initialize(
         int chunkSize,
@@ -71,17 +81,106 @@ public class WriteSystem
 
         if (!pendingWrites.TryGetValue(w.targetChunk, out var list))
         {
-            list = (listPool.Count > 0)
-                ? listPool.Pop()
-                : new List<PendingBlockWrite>(16);
-
-            list.Clear();
+            list = RentList();
             pendingWrites[w.targetChunk] = list;
         }
 
         list.Add(w);
         lastEnqueueCoord = w.targetChunk;
         lastEnqueueList = list;
+    }
+
+    // -----------------------------
+    // Decoration output
+    // -----------------------------
+    // Enqueues a chunk's decoration writes and stores the ones that land in other chunks.
+    public void EnqueueDecorationWrites(int3 source, NativeList<PendingBlockWrite> writes)
+    {
+        DropStoredWrites(source); // a re-decorated chunk replaces what it sent before
+
+        Dictionary<int3, List<PendingBlockWrite>> byTarget = null;
+        int3 lastTarget = default;
+        List<PendingBlockWrite> lastList = null;
+
+        for (int i = 0; i < writes.Length; i++)
+        {
+            var w = writes[i];
+            EnqueueWrite(w);
+
+            // Writes into the source chunk itself are regenerated along with it
+            if (w.targetChunk.Equals(source))
+                continue;
+
+            if (lastList == null || !lastTarget.Equals(w.targetChunk))
+            {
+                byTarget ??= targetMapPool.Count > 0 ? targetMapPool.Pop() : new Dictionary<int3, List<PendingBlockWrite>>();
+                if (!byTarget.TryGetValue(w.targetChunk, out lastList))
+                {
+                    lastList = RentList();
+                    byTarget[w.targetChunk] = lastList;
+
+                    if (!sourcesByTarget.TryGetValue(w.targetChunk, out var sources))
+                    {
+                        sources = sourceSetPool.Count > 0 ? sourceSetPool.Pop() : new HashSet<int3>();
+                        sourcesByTarget[w.targetChunk] = sources;
+                    }
+                    sources.Add(source);
+                }
+                lastTarget = w.targetChunk;
+            }
+            lastList.Add(w);
+        }
+
+        if (byTarget != null)
+            storedBySource[source] = byTarget;
+    }
+
+    // Called when a chunk gets fresh block data: re-enqueues every stored write its loaded
+    // neighbours sent it. Queued writes from those neighbours are replaced rather than doubled.
+    public void ReplayStoredWrites(int3 target)
+    {
+        if (!sourcesByTarget.TryGetValue(target, out var sources))
+            return;
+
+        if (pendingWrites.TryGetValue(target, out var queued))
+        {
+            // Keep mirrors (not stored); everything else is about to be re-enqueued from the store
+            int kept = 0;
+            for (int i = 0; i < queued.Count; i++)
+                if (queued[i].isMirror)
+                    queued[kept++] = queued[i];
+            queued.RemoveRange(kept, queued.Count - kept);
+        }
+
+        foreach (var source in sources)
+        {
+            var stored = storedBySource[source][target];
+            for (int i = 0; i < stored.Count; i++)
+                EnqueueWrite(stored[i]);
+        }
+    }
+
+    private void DropStoredWrites(int3 source)
+    {
+        if (!storedBySource.Remove(source, out var byTarget))
+            return;
+
+        foreach (var kvp in byTarget)
+        {
+            if (sourcesByTarget.TryGetValue(kvp.Key, out var sources))
+            {
+                sources.Remove(source);
+                if (sources.Count == 0)
+                {
+                    sourcesByTarget.Remove(kvp.Key);
+                    sourceSetPool.Push(sources);
+                }
+            }
+            RecycleList(kvp.Value);
+        }
+
+        byTarget.Clear();
+        targetMapPool.Push(byTarget);
     }
 
     // -----------------------------
@@ -184,8 +283,12 @@ public class WriteSystem
 
         void Mirror(int3 neighborChunk, int3 pos)
         {
-            var key = (neighborChunk, pos, source.blockId);
-            if (!mirrorSeen.Add(key))
+            if (!mirrorSeen.TryGetValue(neighborChunk, out var seen))
+            {
+                seen = new HashSet<(int3, byte)>();
+                mirrorSeen[neighborChunk] = seen;
+            }
+            if (!seen.Add((pos, source.blockId)))
                 return;
 
             var m = new PendingBlockWrite
@@ -225,6 +328,9 @@ public class WriteSystem
         return list;
     }
 
+    private List<PendingBlockWrite> RentList()
+        => listPool.Count > 0 ? listPool.Pop() : new List<PendingBlockWrite>(16);
+
     public void RecycleList(List<PendingBlockWrite> list)
     {
         if (list == null)
@@ -242,30 +348,36 @@ public class WriteSystem
             dst.Add(kvp.Key);
     }
 
-    public void Clear(int3 coord)
+    // Called when a chunk unloads. Writes waiting for it are dropped (its neighbours' are replayed
+    // from the store when it regenerates), as are the writes it sent (it sends them again).
+    public void OnChunkUnloaded(int3 coord)
     {
-        if (!pendingWrites.TryGetValue(coord, out var list))
-            return;
+        if (pendingWrites.Remove(coord, out var list))
+        {
+            InvalidateEnqueueCache();
+            RecycleList(list);
+        }
 
-        pendingWrites.Remove(coord);
-        InvalidateEnqueueCache();
-        list.Clear();
-        listPool.Push(list);
+        DropStoredWrites(coord);
+        mirrorSeen.Remove(coord);
     }
 
     public void ClearAll()
     {
         foreach (var kvp in pendingWrites)
-        {
-            var list = kvp.Value;
-            list.Clear();
-            listPool.Push(list);
-        }
-
+            RecycleList(kvp.Value);
         pendingWrites.Clear();
+
+        tmpSources.Clear();
+        tmpSources.AddRange(storedBySource.Keys);
+        foreach (var source in tmpSources)
+            DropStoredWrites(source);
+
         mirrorSeen.Clear();
         InvalidateEnqueueCache();
     }
+
+    private readonly List<int3> tmpSources = new();
 
     private void InvalidateEnqueueCache() => lastEnqueueList = null;
 }

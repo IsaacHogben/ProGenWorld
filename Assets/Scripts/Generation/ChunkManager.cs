@@ -1054,8 +1054,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         {
             Debug.LogError($"[Decoration] Completed for {coord} but no fullResBlocksByChunk exists."); // This error never occurs
 
-            for (int i = 0; i < writes.Length; i++)
-                writeSystem.EnqueueWrite(writes[i]);
+            writeSystem.EnqueueDecorationWrites(coord, writes);
 
             // we still own the native list: dispose it
             if (writes.IsCreated)
@@ -1065,8 +1064,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         }
 
         // Enqueue all writes to WriteSystem
-        for (int i = 0; i < writes.Length; i++)
-            writeSystem.EnqueueWrite(writes[i]);
+        writeSystem.EnqueueDecorationWrites(coord, writes);
 
         // Done with native container
         if (writes.IsCreated)
@@ -1111,6 +1109,10 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
 
             // Normal case: first time full-res is generated for this chunk
             fullResBlocksByChunk[coord] = blockIds;
+
+            // A chunk regenerating after an unload gets back the blocks its loaded neighbours'
+            // decorations put in it; they wait until its own decoration has run.
+            writeSystem.ReplayStoredWrites(coord);
 
             // Pass BiomeData to decoration system
             if (!biomeDataByChunk.TryGetValue(coord, out var biomeData))
@@ -1397,8 +1399,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             fullResBlocksByChunk.Remove(coord);
         }
 
-        // Also clear any “future” writes never applied
-        writeSystem.Clear(coord);
+        // Drop writes waiting for this chunk and the cross-chunk writes it sent
+        writeSystem.OnChunkUnloaded(coord);
         lodByCoord.Remove(coord);
         chunksNeedingRemesh.Remove(coord);
 

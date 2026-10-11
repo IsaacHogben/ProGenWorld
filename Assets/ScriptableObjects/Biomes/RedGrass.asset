@@ -29,6 +29,9 @@ MonoBehaviour:
   - LSystemData: {fileID: 11400000, guid: 949de836d8f88fe4783401321066e1c6, type: 2}
     spawnChance: 0.1
     spawnOnBlocks: 0d
+  - LSystemData: {fileID: 11400000, guid: b82d699b3c35482ead4a29e101303b7a, type: 2}
+    spawnChance: 0.1
+    spawnOnBlocks: 0d
   trees:
   - treeType: 3
     spawnChance: 1

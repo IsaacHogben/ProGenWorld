@@ -23,8 +23,15 @@ MonoBehaviour:
   gradientThreshold1: 0.005
   gradientThreshold2: 0.002
   LSystemDecorations:
-  - LSystemData: {fileID: 11400000, guid: 12a670d7ac967994e824dea2711f7de2, type: 2}
-    spawnChance: 0.03
+  - LSystemData: {fileID: 11400000, guid: b82d699b3c35482ead4a29e101303b7a, type: 2}
+    minScale: 0.5
+    maxScale: 1.1
+    spawnChance: 0.7
+    spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: b82d699b3c35482ead4a29e101303b7a, type: 2}
+    minScale: 1.4
+    maxScale: 2
+    spawnChance: 0.01
     spawnOnBlocks: 0b
   trees:
   - treeType: 0

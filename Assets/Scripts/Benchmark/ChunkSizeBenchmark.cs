@@ -94,6 +94,8 @@ public class ChunkSizeBenchmark : MonoBehaviour
         if (int.TryParse(Arg("-benchBiomePerFrame"), out int biomePerFrame))
             chunkManager.biomeSystem.maxRequestsPerFrame = biomePerFrame;
         Log($"biome requests per frame {chunkManager.biomeSystem.maxRequestsPerFrame}");
+        chunkManager.decorationBudgetMs = ArgFloat("-benchDecoBudget", chunkManager.decorationBudgetMs);
+        Log($"decoration budget {chunkManager.decorationBudgetMs} ms");
 
         Log($"chunkSize {refSize} -> {chunkSize}  view {refView}->{view.viewDistance}  near {refNear}->{view.nearRange}  mid {refMid}->{view.midRange}  unloadPast {refUnload}->{view.unloadPastViewDistance}");
         Log($"world: view {view.viewDistance * chunkSize}u near {view.nearRange * chunkSize}u mid {view.midRange * chunkSize}u");

@@ -13,6 +13,7 @@ public class DecorationSystem
         public int indexSize;
         public int seed;
         public Func<bool> GetBootstrapMode;
+        public Func<float> GetCompleteBudgetMs;   // main-thread time per frame for completing jobs (at least one completes)
         public BiomeDataManager biomeDataManager;
     }
 
@@ -77,17 +78,19 @@ public class DecorationSystem
         if (jobHandles.Count == 0)
             return;
 
-        int maxCompletesPerFrame = 1;
-        if (config.GetBootstrapMode())
-            maxCompletesPerFrame = 999;
+        // Completing hands the chunk to ChunkManager (writes, open faces, frontier) on the main
+        // thread, so outside bootstrap it is limited to a time budget per frame.
+        bool unlimited = config.GetBootstrapMode();
+        long budgetTicks = (long)(config.GetCompleteBudgetMs() * System.Diagnostics.Stopwatch.Frequency / 1000.0);
+        long start = System.Diagnostics.Stopwatch.GetTimestamp();
 
         int completes = 0;
 
         PrepareKeyBuffer();
 
-        for (int i = 0; i < keyCount && completes < maxCompletesPerFrame; i++)
-        {     
-            if (completes >= maxCompletesPerFrame)
+        for (int i = 0; i < keyCount; i++)
+        {
+            if (!unlimited && completes > 0 && System.Diagnostics.Stopwatch.GetTimestamp() - start >= budgetTicks)
                 break;
 
             int3 coord = keyBuffer[i];

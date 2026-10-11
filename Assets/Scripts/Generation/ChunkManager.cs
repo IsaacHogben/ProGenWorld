@@ -83,6 +83,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     [Tooltip("Chunks generating terrain noise at the same time (the most expensive generation step, on worker threads). Fixed at start. 0 = half the logical cores.")]
     [Min(0)] public int noiseThreads = 0;
 
+    [Tooltip("Main-thread milliseconds per frame for finishing decorated chunks (writes, open faces, flood fill). At least one finishes each frame; unlimited during initial loading.")]
+    [Min(0)] public float decorationBudgetMs = 1f;
+
     public int NoiseThreadCount => noiseThreads > 0 ? noiseThreads : Math.Max(2, SystemInfo.processorCount / 2);
 
     ProfilerRecorder gpuFrameTimeRecorder;
@@ -1019,6 +1022,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             indexSize = chunkSize + 1,
             seed = seed,
             GetBootstrapMode = () => bootstrapMode,
+            GetCompleteBudgetMs = () => decorationBudgetMs,
             biomeDataManager = biomeDataManager
         });
         decorationSystem.OnDecorationStarted += HandleDecorationStarted;

@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 
 /// <summary>
@@ -12,6 +13,8 @@ public class VoxelRenderSettings : MonoBehaviour
 {
     public enum TextureBlendMode { Lerp = 0, Multiply = 1 }
     public enum AntiAliasing { Camera, None, Fxaa, Smaa, Temporal }
+    public enum ShadowResolution { Full = 1, Half = 2, Quarter = 4 }
+    public enum FarShadowDetail { Half = 1, Quarter = 2, Bricks = 3 }
 
     [Header("Materials")]
     [Tooltip("Raymarching material for opaque + alpha masked blocks. Defaults to Resources/VoxelRaymarchOpaque.")]
@@ -34,11 +37,17 @@ public class VoxelRenderSettings : MonoBehaviour
     [Tooltip("Darkens ambient light in the corners and along the edges where blocks meet (per block corner, interpolated across faces). 0 = off.")]
     [Range(0f, 1f)] public float ambientOcclusion = 0.8f;
 
-    [Header("Anti-Aliasing")]
-    [Tooltip("Anti-aliasing set on the camera while playing. MSAA does not help raymarched voxels (only the box outlines are rasterized), so TAA is the one that smooths block edges, thin leaves and distant detail. TAA turns MSAA off on the camera, it does not work with it.")]
+    [Header("Anti-Aliasing & Resolution")]
+    [Tooltip("Anti-aliasing set on the camera while playing. MSAA does not help raymarched voxels (only the box outlines are rasterized), so TAA is the one that smooths block edges, thin leaves and distant detail. TAA turns MSAA off on the camera, it does not work with it. Camera = leave the camera and the render scale as they are.")]
     public AntiAliasing antiAliasing = AntiAliasing.Temporal;
+    [Tooltip("Resolution the scene renders at, relative to the screen (raymarching cost scales with the pixel count). Upscaled with STP when Anti-Aliasing is Temporal, bilinear otherwise. Applied to the URP asset while playing and restored afterwards.")]
+    [Range(0.5f, 1f)] public float renderScale = 0.75f;
     [Tooltip("Camera the anti-aliasing is applied to. Empty = Camera.main.")]
     public Camera targetCamera;
+
+    [Header("Performance")]
+    [Tooltip("Shade from URP's depth + normals prepass, which already marched every voxel pixel, instead of marching each ray a second time in the forward pass.")]
+    public bool reusePrepass = true;
 
     [Header("Level Of Detail")]
     [Tooltip("Leaves and other alpha masked blocks render solid from this detail level on (1 = half resolution, 2 = quarter resolution). Rays stop at the first leaf instead of marching through the canopy; far away the mask holes are smaller than a pixel anyway. 0 = never.")]
@@ -61,20 +70,20 @@ public class VoxelRenderSettings : MonoBehaviour
     public bool reliefShadows = true;
 
     [Header("Shadows")]
+    [Tooltip("Screen resolution the voxel sun shadow rays are traced at. Half traces a quarter of the rays; the result is upsampled along depth (and texel edges with Pixelated Shadows).")]
+    public ShadowResolution shadowResolution = ShadowResolution.Half;
+    [Tooltip("Snap sun shadows to the block texture's texels, so shadow edges are pixelated like the textures (follows Small Scale).")]
+    public bool pixelatedShadows = true;
     [Tooltip("Length of the per-pixel shadow rays voxels cast on each other (world units).")]
     [Min(0f)] public float sunShadowDistance = 256f;
-    [Tooltip("Surfaces closer to the camera than this trace full resolution shadow rays; farther ones only test 8x8x8 bricks.")]
+    [Tooltip("Surfaces closer to the camera than this trace full resolution shadow rays; farther ones use Far Shadow Detail.")]
     [Min(0f)] public float shadowDetailDistance = 96f;
+    [Tooltip("Shadow ray resolution for surfaces beyond Shadow Detail Distance: the half or quarter resolution voxel data (fewer, bigger steps; small shadows within a coarse voxel of the surface disappear) or only 8x8x8 bricks.")]
+    public FarShadowDetail farShadowDetail = FarShadowDetail.Half;
     [Tooltip("Surfaces farther from the camera than this get no voxel shadows.")]
-    [Min(0f)] public float shadowMaxDistance = 512f;
+    [Min(0f)] public float shadowMaxDistance = 300f;
     [Tooltip("Occluders closer than this (in blocks) along a shadow ray are ignored. Removes the striping that each 1-block step of a slope casts on the next one when the sun is low. 0 = exact voxel shadows.")]
     [Range(0f, 8f)] public float shadowIgnoreDistance = 0f;
-    [Tooltip("Render voxels near the camera into the URP shadow map. Normally off: the terrain shadows itself with block data rays, and meshes using the 'ProGenWorld/Lit (Voxel Shadows)' shader receive terrain shadows the same way. Only needed for materials that can't use that shader.")]
-    public bool castIntoShadowMap = false;
-    [Tooltip("Distance for the option above. Raymarching shadow maps is expensive - keep this small.")]
-    [Min(0f)] public float shadowMapDistance = 32f;
-    [Tooltip("Minimum distance (blocks) voxel casters are pushed away from the light in the URP shadow map. Removes shadow acne (diagonal lines on the ground). The push is never less than Shadow Ignore Distance. Larger values make terrain shadows on the player start a little further from the caster.")]
-    [Range(0.5f, 4f)] public float shadowMapBias = 1f;
 
     [Header("Water / Translucent")]
     public Color surfaceTint = new(0.55f, 0.8f, 1f, 1f);
@@ -103,14 +112,15 @@ public class VoxelRenderSettings : MonoBehaviour
         public static readonly int Specular = Shader.PropertyToID("_VoxelSpecular");
         public static readonly int SunShadowDistance = Shader.PropertyToID("_VoxelSunShadowDistance");
         public static readonly int ShadowDetailDistance = Shader.PropertyToID("_VoxelShadowDetailDistance");
+        public static readonly int FarShadowDetail = Shader.PropertyToID("_VoxelFarShadowDetail");
         public static readonly int ShadowMaxDistance = Shader.PropertyToID("_VoxelShadowMaxDistance");
         public static readonly int ShadowIgnoreDistance = Shader.PropertyToID("_VoxelShadowIgnoreDistance");
-        public static readonly int ShadowMapBias = Shader.PropertyToID("_VoxelShadowMapBias");
         public static readonly int Relief = Shader.PropertyToID("_VoxelRelief");
         public static readonly int ReliefShadows = Shader.PropertyToID("_VoxelReliefShadows");
         public static readonly int ReliefLeaf = Shader.PropertyToID("_VoxelReliefLeaf");
         public static readonly int SolidLeavesFromLevel = Shader.PropertyToID("_VoxelSolidLeavesFromLevel");
         public static readonly int AmbientOcclusion = Shader.PropertyToID("_VoxelAmbientOcclusion");
+        public static readonly int ShadowPixelated = Shader.PropertyToID("_VoxelShadowPixelated");
     }
 
     public Material OpaqueMaterialOrDefault => opaqueMaterial != null ? opaqueMaterial : Resources.Load<Material>("VoxelRaymarchOpaque");
@@ -128,6 +138,7 @@ public class VoxelRenderSettings : MonoBehaviour
     }
 
     void OnEnable() => Apply();
+    void OnDisable() => RestorePipeline();
     void OnValidate() => Apply();
 
     void Update()
@@ -147,14 +158,15 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalFloat(Ids.Specular, specular);
         Shader.SetGlobalFloat(Ids.SunShadowDistance, sunShadowDistance);
         Shader.SetGlobalFloat(Ids.ShadowDetailDistance, shadowDetailDistance);
+        Shader.SetGlobalFloat(Ids.FarShadowDetail, (float)farShadowDetail);
         Shader.SetGlobalFloat(Ids.ShadowMaxDistance, shadowMaxDistance);
         Shader.SetGlobalFloat(Ids.ShadowIgnoreDistance, shadowIgnoreDistance);
-        Shader.SetGlobalFloat(Ids.ShadowMapBias, shadowMapBias);
         Shader.SetGlobalVector(Ids.Relief, new Vector4(relief ? reliefDepth : 0f, reliefDistance, reliefFade, reliefOcclusion));
         Shader.SetGlobalFloat(Ids.ReliefShadows, reliefShadows ? 1f : 0f);
         Shader.SetGlobalFloat(Ids.ReliefLeaf, relief ? leafThickness : 0f);
         Shader.SetGlobalFloat(Ids.SolidLeavesFromLevel, solidLeavesFromLod);
         Shader.SetGlobalFloat(Ids.AmbientOcclusion, ambientOcclusion);
+        Shader.SetGlobalFloat(Ids.ShadowPixelated, pixelatedShadows ? 1f : 0f);
         ApplyAntiAliasing();
     }
 
@@ -167,6 +179,8 @@ public class VoxelRenderSettings : MonoBehaviour
         var cam = targetCamera != null ? targetCamera : Camera.main;
         if (cam == null || !cam.TryGetComponent(out UniversalAdditionalCameraData data))
             return;
+
+        ApplyRenderScale();
 
         var mode = antiAliasing switch
         {
@@ -187,5 +201,38 @@ public class VoxelRenderSettings : MonoBehaviour
             cam.allowMSAA = false;
             data.renderPostProcessing = true;
         }
+    }
+
+    UniversalRenderPipelineAsset pipeline;
+    float originalScale;
+    UpscalingFilterSelection originalFilter;
+
+    // URP forces TAA whenever the asset asks for STP upscaling, so the upscaler has to follow the
+    // anti-aliasing choice. The asset's own values come back when play mode ends.
+    void ApplyRenderScale()
+    {
+        var urp = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
+        if (urp == null)
+            return;
+        if (pipeline != urp)
+        {
+            RestorePipeline();
+            pipeline = urp;
+            originalScale = urp.renderScale;
+            originalFilter = urp.upscalingFilter;
+        }
+
+        var filter = antiAliasing == AntiAliasing.Temporal ? UpscalingFilterSelection.STP : UpscalingFilterSelection.Linear;
+        if (urp.upscalingFilter != filter) urp.upscalingFilter = filter;
+        if (!Mathf.Approximately(urp.renderScale, renderScale)) urp.renderScale = renderScale;
+    }
+
+    void RestorePipeline()
+    {
+        if (pipeline == null)
+            return;
+        pipeline.renderScale = originalScale;
+        pipeline.upscalingFilter = originalFilter;
+        pipeline = null;
     }
 }

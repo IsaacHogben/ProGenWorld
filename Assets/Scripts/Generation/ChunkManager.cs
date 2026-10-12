@@ -1265,8 +1265,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             return;
 
         // Live settings
-        voxelRenderer.castShadows = renderSettings.castIntoShadowMap;
-        voxelRenderer.shadowMapDistance = renderSettings.shadowMapDistance;
+        voxelRenderer.shadowDownsample = (int)renderSettings.shadowResolution;
+        voxelRenderer.reusePrepass = renderSettings.reusePrepass;
         voxelRenderer.SetLodDistances(nearRange * chunkSize, midRange * chunkSize);
         voxelRenderer.FlushUploads();
     }

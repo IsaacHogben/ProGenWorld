@@ -95,6 +95,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         public static readonly int LodDistances = Shader.PropertyToID("_VoxelLodDistances");
         public static readonly int Heights = Shader.PropertyToID("_VoxelHeights");
         public static readonly int TextureSize = Shader.PropertyToID("_VoxelTextureSize");
+        public static readonly int TexelCount = Shader.PropertyToID("_VoxelTexelCount");
     }
 
     readonly Settings settings;
@@ -140,8 +141,8 @@ public sealed class VoxelWorldRenderer : IDisposable
     readonly Dictionary<Camera, CameraDraws> cameraDraws = new();
     readonly Plane[] frustumPlanes = new Plane[6];
     NativeArray<float4> planes;
-    NativeList<SortItem> sortOpaque, sortTranslucent, sortShadow;
-    NativeList<uint> listOpaqueOut, listOpaqueIn, listTranslucentOut, listTranslucentIn, listShadow;
+    NativeList<SortItem> sortOpaque, sortTranslucent;
+    NativeList<uint> listOpaqueOut, listOpaqueIn, listTranslucentOut, listTranslucentIn;
 
     public int LoadedChunks => slotByCoord.Count;
     public int UsedPages => pageCapacity - freePages.Count;
@@ -176,11 +177,15 @@ public sealed class VoxelWorldRenderer : IDisposable
     /// <summary>Toggle voxel drawing (debugging / profiling).</summary>
     public bool drawEnabled = true;
 
-    /// <summary>Render nearby voxels into the URP shadow maps (for non-voxel receivers).</summary>
-    public bool castShadows = true;
+    /// <summary>Voxel sun shadow texture size divisor (1 = full, 2 = half, 4 = quarter resolution).</summary>
+    public int shadowDownsample = 2;
 
-    /// <summary>Cells closer than this to the camera cast into the URP shadow maps.</summary>
-    public float shadowMapDistance = 32f;
+    /// <summary>Shade from the depth + normals prepass instead of marching each pixel twice.</summary>
+    public bool reusePrepass = true;
+
+    Material screenMaterial;
+    VoxelScreenPass screenPass;
+    VoxelScreenShadowsRestorePass screenRestorePass;
 
     public VoxelWorldRenderer(Settings s)
     {
@@ -261,16 +266,25 @@ public sealed class VoxelWorldRenderer : IDisposable
         if (hasHeights)
             Shader.SetGlobalTexture(Ids.Heights, s.blockHeights);
         Shader.SetGlobalFloat(Ids.TextureSize, hasHeights ? s.blockTextures.width : 0f);
+        Shader.SetGlobalFloat(Ids.TexelCount, s.blockTextures != null ? s.blockTextures.width : 16f);
+
+        var screenShadows = Resources.Load<Shader>("VoxelScreenShadows");
+        if (screenShadows != null)
+        {
+            screenMaterial = new Material(screenShadows) { name = "VoxelScreenShadows" };
+            screenPass = new VoxelScreenPass(screenMaterial);
+            screenRestorePass = new VoxelScreenShadowsRestorePass();
+        }
+        else
+            Debug.LogError("[VoxelWorldRenderer] Resources/VoxelScreenShadows shader is missing.");
 
         planes = new NativeArray<float4>(6, Allocator.Persistent);
         sortOpaque = new NativeList<SortItem>(4096, Allocator.Persistent);
         sortTranslucent = new NativeList<SortItem>(256, Allocator.Persistent);
-        sortShadow = new NativeList<SortItem>(1024, Allocator.Persistent);
         listOpaqueOut = new NativeList<uint>(4096, Allocator.Persistent);
         listOpaqueIn = new NativeList<uint>(16, Allocator.Persistent);
         listTranslucentOut = new NativeList<uint>(256, Allocator.Persistent);
         listTranslucentIn = new NativeList<uint>(16, Allocator.Persistent);
-        listShadow = new NativeList<uint>(1024, Allocator.Persistent);
 
         RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
     }
@@ -739,10 +753,10 @@ public sealed class VoxelWorldRenderer : IDisposable
 
     sealed class CameraDraws : IDisposable
     {
-        public readonly DrawList opaqueOut = new(), opaqueIn = new(), translucentOut = new(), translucentIn = new(), shadow = new();
+        public readonly DrawList opaqueOut = new(), opaqueIn = new(), translucentOut = new(), translucentIn = new();
         public void Dispose()
         {
-            opaqueOut.Dispose(); opaqueIn.Dispose(); translucentOut.Dispose(); translucentIn.Dispose(); shadow.Dispose();
+            opaqueOut.Dispose(); opaqueIn.Dispose(); translucentOut.Dispose(); translucentIn.Dispose();
         }
     }
 
@@ -754,17 +768,15 @@ public sealed class VoxelWorldRenderer : IDisposable
         public int count;
         public float3 cameraPos;
         public float insideMargin;
-        public float3 lightDir;        // direction the main light travels
-        public float shadowDistance;
         public bool skipBuried;
 
-        public NativeList<SortItem> sortOpaque, sortTranslucent, sortShadow;
-        public NativeList<uint> opaqueOut, opaqueIn, translucentOut, translucentIn, shadow;
+        public NativeList<SortItem> sortOpaque, sortTranslucent;
+        public NativeList<uint> opaqueOut, opaqueIn, translucentOut, translucentIn;
 
         public void Execute()
         {
-            sortOpaque.Clear(); sortTranslucent.Clear(); sortShadow.Clear();
-            opaqueOut.Clear(); opaqueIn.Clear(); translucentOut.Clear(); translucentIn.Clear(); shadow.Clear();
+            sortOpaque.Clear(); sortTranslucent.Clear();
+            opaqueOut.Clear(); opaqueIn.Clear(); translucentOut.Clear(); translucentIn.Clear();
 
             for (int i = 0; i < count; i++)
             {
@@ -775,11 +787,6 @@ public sealed class VoxelWorldRenderer : IDisposable
                 bool opaque = (c.flags & VoxelGpuFormat.FlagHasOpaque) != 0;
                 bool translucent = (c.flags & VoxelGpuFormat.FlagHasTranslucent) != 0;
                 float dist = math.distance(cameraPos, math.clamp(cameraPos, c.min, c.max));
-
-                // Shadow casters can be outside the view frustum. Sorted front to back from the
-                // light so early depth testing rejects casters hidden behind closer ones.
-                if (opaque && dist <= shadowDistance)
-                    sortShadow.Add(new SortItem { key = math.dot((c.min + c.max) * 0.5f, lightDir), id = (uint)i });
 
                 bool inside = math.all(cameraPos >= c.min - insideMargin) && math.all(cameraPos <= c.max + insideMargin);
                 if (!inside && !InFrustum(c.min, c.max))
@@ -799,10 +806,8 @@ public sealed class VoxelWorldRenderer : IDisposable
 
             sortOpaque.Sort();       // front to back: early depth rejection
             sortTranslucent.Sort();  // back to front: correct blending
-            sortShadow.Sort();
             for (int i = 0; i < sortOpaque.Length; i++) opaqueOut.Add(sortOpaque[i].id);
             for (int i = 0; i < sortTranslucent.Length; i++) translucentOut.Add(sortTranslucent[i].id);
-            for (int i = 0; i < sortShadow.Length; i++) shadow.Add(sortShadow[i].id);
         }
 
         bool InFrustum(float3 min, float3 max)
@@ -822,6 +827,7 @@ public sealed class VoxelWorldRenderer : IDisposable
 
     void OnBeginCameraRendering(ScriptableRenderContext context, Camera cam)
     {
+        VoxelScreenPass.ResetGlobals();
         if (cam.cameraType != CameraType.Game && cam.cameraType != CameraType.SceneView)
             return;
         if (!drawEnabled || slotByCoord.Count == 0)
@@ -840,17 +846,13 @@ public sealed class VoxelWorldRenderer : IDisposable
             count = (highestSlot + 1) * maxCellsPerChunk,
             cameraPos = cam.transform.position,
             insideMargin = insideMargin + cam.nearClipPlane * 2f,
-            lightDir = MainLightDirection(),
-            shadowDistance = Mathf.Min(shadowMapDistance, ShadowDistance(cam)),
             skipBuried = skipBuriedCells,
             sortOpaque = sortOpaque,
             sortTranslucent = sortTranslucent,
-            sortShadow = sortShadow,
             opaqueOut = listOpaqueOut,
             opaqueIn = listOpaqueIn,
             translucentOut = listTranslucentOut,
-            translucentIn = listTranslucentIn,
-            shadow = listShadow
+            translucentIn = listTranslucentIn
         };
         job.Run();
 
@@ -864,42 +866,23 @@ public sealed class VoxelWorldRenderer : IDisposable
         draws.opaqueIn.Upload(listOpaqueIn);
         draws.translucentOut.Upload(listTranslucentOut);
         draws.translucentIn.Upload(listTranslucentIn);
-        draws.shadow.Upload(listShadow);
         LastDrawnCells = listOpaqueOut.Length + listOpaqueIn.Length + listTranslucentOut.Length + listTranslucentIn.Length;
 
         var bounds = new Bounds(cam.transform.position, Vector3.one * 100000f);
 
         Draw(cam, bounds, opaqueOutside, draws.opaqueOut, ShadowCastingMode.Off);
         Draw(cam, bounds, opaqueInside, draws.opaqueIn, ShadowCastingMode.Off);
-        if (castShadows)
-            Draw(cam, bounds, opaqueOutside, draws.shadow, ShadowCastingMode.ShadowsOnly);
         Draw(cam, bounds, translucentOutside, draws.translucentOut, ShadowCastingMode.Off);
         Draw(cam, bounds, translucentInside, draws.translucentIn, ShadowCastingMode.Off);
-    }
 
-    Light cachedSun;
-
-    float3 MainLightDirection()
-    {
-        var sun = RenderSettings.sun;
-        if (sun == null)
+        if (screenPass != null)
         {
-            if (cachedSun == null || !cachedSun.isActiveAndEnabled)
-            {
-                cachedSun = null;
-                foreach (var l in UnityEngine.Object.FindObjectsByType<Light>(FindObjectsSortMode.None))
-                    if (l.type == LightType.Directional && l.isActiveAndEnabled) { cachedSun = l; break; }
-            }
-            sun = cachedSun;
+            screenPass.downsample = shadowDownsample;
+            screenPass.reusePrepass = reusePrepass;
+            var renderer = cam.GetUniversalAdditionalCameraData().scriptableRenderer;
+            renderer.EnqueuePass(screenPass);
+            renderer.EnqueuePass(screenRestorePass);
         }
-        return sun != null ? (float3)sun.transform.forward : new float3(0, -1, 0);
-    }
-
-    static float ShadowDistance(Camera cam)
-    {
-        var urp = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
-        float d = urp != null ? urp.shadowDistance : QualitySettings.shadowDistance;
-        return Mathf.Min(d, cam.farClipPlane);
     }
 
     void Draw(Camera cam, Bounds bounds, Material material, DrawList list, ShadowCastingMode shadows)
@@ -947,16 +930,15 @@ public sealed class VoxelWorldRenderer : IDisposable
         if (planes.IsCreated) planes.Dispose();
         if (sortOpaque.IsCreated) sortOpaque.Dispose();
         if (sortTranslucent.IsCreated) sortTranslucent.Dispose();
-        if (sortShadow.IsCreated) sortShadow.Dispose();
         if (listOpaqueOut.IsCreated) listOpaqueOut.Dispose();
         if (listOpaqueIn.IsCreated) listOpaqueIn.Dispose();
         if (listTranslucentOut.IsCreated) listTranslucentOut.Dispose();
         if (listTranslucentIn.IsCreated) listTranslucentIn.Dispose();
-        if (listShadow.IsCreated) listShadow.Dispose();
 
         UnityEngine.Object.Destroy(opaqueOutside);
         UnityEngine.Object.Destroy(opaqueInside);
         UnityEngine.Object.Destroy(translucentOutside);
         UnityEngine.Object.Destroy(translucentInside);
+        if (screenMaterial != null) UnityEngine.Object.Destroy(screenMaterial);
     }
 }

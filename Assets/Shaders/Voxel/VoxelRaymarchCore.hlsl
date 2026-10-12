@@ -50,6 +50,7 @@ float4 _VoxelLodDistances;      // x: camera distance where cells switch to leve
 float  _VoxelSunShadowDistance; // max length of voxel shadow rays (world units)
 float  _VoxelShadowDetailDistance; // receivers closer than this trace full resolution shadow rays
 float  _VoxelShadowMaxDistance;    // receivers farther than this get no voxel shadow rays
+float  _VoxelFarShadowDetail;      // ray detail past _VoxelShadowDetailDistance: 1 half, 2 quarter resolution, 3 bricks
 
 TEXTURE2D_ARRAY(_Textures);   SAMPLER(sampler_Textures);
 TEXTURE2D_ARRAY(_AlphaMasks); SAMPLER(sampler_AlphaMasks);
@@ -63,7 +64,6 @@ float  _VoxelAbsorption;
 float  _VoxelSpecular;
 float4 _VoxelTexVariation;          // x: small scale, y: large scale (blocks per tile), z: large blend, w: mode (0 lerp, 1 multiply)
 float  _VoxelShadowIgnoreDistance;  // occluders closer than this along a shadow ray are ignored (blocks)
-float  _VoxelShadowMapBias;         // minimum push of voxel casters away from the light in URP shadow maps (blocks)
 float  _VoxelSolidLeavesFromLevel;  // detail level from which masked blocks (leaves) render solid; 0 = never
 
 // Shaders with their own material cbuffer (e.g. the voxel shadow receiver) define this.
@@ -330,7 +330,7 @@ bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
         int faceAxis = cur.axis >= 0 ? cur.axis : majorAxis;
         float3 pos = o + d * cur.t;
 
-        if (skipping && (vis == VOXEL_VIS_OPAQUE || vis == VOXEL_VIS_STACKED))
+        if (skipping && vis == VOXEL_VIS_OPAQUE)
         {
             float3 sMin, sMax;
             VoxelStepBounds(cur.p, isUniform, bmin, bmax, sMin, sMax);
@@ -339,6 +339,10 @@ bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
                 return false;
             continue;
         }
+        // A shadow ray starting inside a masked block (a surface under or inside leaves) does not
+        // skip it, or it would ignore the whole canopy above. It has no entry face to test
+        // either, so only the block's far face (and everything behind it) can block the ray.
+        bool startsInMasked = skipping && vis == VOXEL_VIS_STACKED && cur.axis < 0;
         skipping = false;
 
         if (vis == VOXEL_VIS_STACKED && cur.t < stopAtMaskedBefore)
@@ -347,7 +351,7 @@ bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
             return true;
         }
 
-        if (vis == VOXEL_VIS_OPAQUE || (vis == VOXEL_VIS_STACKED && VoxelMaskPass(id, faceAxis, pos)))
+        if (vis == VOXEL_VIS_OPAQUE || (vis == VOXEL_VIS_STACKED && !startsInMasked && VoxelMaskPass(id, faceAxis, pos)))
         {
             hit.t = cur.t; hit.id = id; hit.axis = faceAxis; hit.posVoxel = pos;
             return true;
@@ -445,9 +449,12 @@ int VoxelLookupChunk(int3 coord)
     return (e.x >= 0 && all(e.yzw == coord)) ? e.x : -1;
 }
 
+#define VOXEL_SHADOW_BRICKS 3   // VoxelSunShadowRay detail: bricks only
+
 // 1 when nothing blocks the ray from posWS along dirWS (towards the sun), 0 otherwise.
-// Walks the chunk grid and marches every loaded chunk it crosses. 'coarse' only tests bricks.
-float VoxelSunShadowRay(float3 posWS, float3 dirWS, bool coarse, float ignoreDistance)
+// Walks the chunk grid and marches every loaded chunk it crosses. detail: voxel level to march
+// (0 = full resolution, 1 = half, 2 = quarter) or VOXEL_SHADOW_BRICKS (8x8x8 bricks only).
+float VoxelSunShadowRay(float3 posWS, float3 dirWS, int detail, float ignoreDistance)
 {
     float cs = _VoxelChunkWorldSize;
     if (cs <= 0.0)
@@ -469,22 +476,31 @@ float VoxelSunShadowRay(float3 posWS, float3 dirWS, bool coarse, float ignoreDis
         if (slot >= 0)
         {
             VoxelChunk c = _VoxelChunks[slot];
-            float3 o = (posWS - c.originSize.xyz) / c.originSize.w;
             // Occluders right next to the receiver are ignored: on gentle voxel slopes every
             // 1-block step would otherwise shadow the next one and draw stripes.
-            float ignore = max(ignoreDistance, 0.0) / c.originSize.w;
-            if (coarse)
+            float ignore = max(ignoreDistance, 0.0);
+            if (detail >= VOXEL_SHADOW_BRICKS)
             {
                 // Also skip the receiver's own brick so a surface does not shadow itself.
-                if (VoxelMarchCoarse(c, o, d, max(8.0, ignore)))
+                float3 o = (posWS - c.originSize.xyz) / c.originSize.w;
+                if (VoxelMarchCoarse(c, o, d, max(8.0, ignore / c.originSize.w)))
                     return 0.0;
             }
             else
             {
+                // Coarser levels march fewer, bigger voxels. They also skip the first coarse
+                // voxel: it can bulge above the full resolution surface it starts from.
+                uint level = min((uint)detail, VoxelLevelCount(c) - 1u);
+                float scale = VoxelLevelScale(level);
+                float vs = c.originSize.w * scale;
+                float3 o = (posWS - c.originSize.xyz) / vs;
                 float3 bmin, bmax;
                 VoxelChunkBounds(c, bmin, bmax);
+                bmin = floor(bmin / scale);
+                bmax = ceil(bmax / scale);
                 VoxelHit hit;
-                if (VoxelMarchOpaque(c, 0u, bmin, bmax, o, d, ignore, hit, true) && hit.t * c.originSize.w < _VoxelSunShadowDistance)
+                if (VoxelMarchOpaque(c, level, bmin, bmax, o, d, max(ignore / vs, level > 0u ? 1.0 : 0.0), hit, true)
+                    && hit.t * vs < _VoxelSunShadowDistance)
                     return 0.0;
             }
         }
@@ -497,8 +513,14 @@ float VoxelSunShadowRay(float3 posWS, float3 dirWS, bool coarse, float ignoreDis
     return 1.0;
 }
 
-// Sun shadow with distance based detail: full resolution near the camera, brick resolution
-// further out, none beyond _VoxelShadowMaxDistance.
+// Shadow ray detail for a receiver at a camera distance: full resolution near the camera,
+// _VoxelFarShadowDetail further out.
+int VoxelShadowDetail(float dist)
+{
+    return dist > _VoxelShadowDetailDistance ? (int)_VoxelFarShadowDetail : 0;
+}
+
+// Sun shadow with distance based detail (VoxelShadowDetail), none beyond _VoxelShadowMaxDistance.
 float VoxelSunShadow(float3 posWS, float3 normalWS, float3 sunDirWS)
 {
     if (dot(normalWS, sunDirWS) <= 0.0)
@@ -508,7 +530,7 @@ float VoxelSunShadow(float3 posWS, float3 normalWS, float3 sunDirWS)
     if (dist > _VoxelShadowMaxDistance)
         return 1.0;
 
-    return VoxelSunShadowRay(posWS + normalWS * 0.01, sunDirWS, dist > _VoxelShadowDetailDistance, _VoxelShadowIgnoreDistance);
+    return VoxelSunShadowRay(posWS + normalWS * 0.01, sunDirWS, VoxelShadowDetail(dist), _VoxelShadowIgnoreDistance);
 }
 
 // Voxel shadow for non-voxel surfaces (player, decorations): no ignore distance, so walls and
@@ -522,7 +544,7 @@ float VoxelSunShadowForObject(float3 posWS, float3 normalWS, float3 sunDirWS)
     if (dist > _VoxelShadowMaxDistance)
         return 1.0;
 
-    return VoxelSunShadowRay(posWS + normalWS * 0.02, sunDirWS, dist > _VoxelShadowDetailDistance, 0.0);
+    return VoxelSunShadowRay(posWS + normalWS * 0.02, sunDirWS, VoxelShadowDetail(dist), 0.0);
 }
 
 // --------------------------------------------------------------------------------------

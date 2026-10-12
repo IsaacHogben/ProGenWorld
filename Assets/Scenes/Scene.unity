@@ -1013,6 +1013,9 @@ MonoBehaviour:
   currentMeshUploadsPerFrame: 999
   scheduleInterval: 0.05
   meshDebounceFrames: 3
+  maxChunksInFlight: 64
+  noiseThreads: 0
+  decorationBudgetMs: 1
   maxDensityPoolPerLod: 32
   prewarmDensityPerLod: 24
   adaptiveInterval: 0.25
@@ -1764,6 +1767,12 @@ MonoBehaviour:
   largeBlend: 0.5
   blendMode: 0
   smoothness: 0.17
+  ambientOcclusion: 0.8
+  antiAliasing: 4
+  renderScale: 0.75
+  targetCamera: {fileID: 0}
+  reusePrepass: 1
+  solidLeavesFromLod: 1
   relief: 0
   reliefDepth: 0.071
   leafThickness: 0.125
@@ -1771,13 +1780,13 @@ MonoBehaviour:
   reliefFade: 54
   reliefOcclusion: 0.121
   reliefShadows: 0
+  shadowResolution: 2
+  pixelatedShadows: 1
   sunShadowDistance: 256
-  shadowDetailDistance: 300
-  shadowMaxDistance: 600
+  shadowDetailDistance: 96
+  farShadowDetail: 1
+  shadowMaxDistance: 300
   shadowIgnoreDistance: 0
-  castIntoShadowMap: 0
-  shadowMapDistance: 64
-  shadowMapBias: 1
   surfaceTint: {r: 0.55, g: 0.8, b: 1, a: 1}
   surfaceOpacity: 0.25
   deepColor: {r: 0.02, g: 0.18, b: 0.28, a: 1}
@@ -1964,6 +1973,7 @@ MonoBehaviour:
   climateFrequencyMultiplier: 0.82
   terrainBlendWidth: 0.238
   biomeBlendWidth: 0.578
+  maxRequestsPerFrame: 8
 --- !u!4 &1148720673
 Transform:
   m_ObjectHideFlags: 0
@@ -2402,6 +2412,35 @@ MonoBehaviour:
   currentPresetIndex: 0
   smoothTransition: 1
   transitionDuration: 5
+--- !u!114 &1746699437
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1746699434}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 84e863f9c8b4db344805e7f9625323c3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::AtmosphericFogController
+  viewDistanceSettings: {fileID: 1746699438}
+  fogStartDistance: 150
+  fogEndDistance: 800
+  maxFogDensity: 0.95
+  enableHeightFog: 0
+  fogBaseHeight: 0
+  fogFalloff: 0.05
+  heightFogDensity: 1
+  enableRayleighScattering: 0
+  rayleighIntensity: 1
+  scatteringCoefficients: {x: 5.8, y: 13.5, z: 33.1}
+  fogColor: {r: 0.6, g: 0.7, b: 0.8, a: 1}
+  skyColor: {r: 0.38412246, g: 0.74492085, b: 0.9811321, a: 1}
+  sunColor: {r: 1, g: 0.9490197, b: 0.85098046, a: 1}
+  horizonHeight: 0
+  sunLight: {fileID: 410087040}
+  useSunLightColor: 1
 --- !u!114 &1746699438
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2419,41 +2458,12 @@ MonoBehaviour:
   nearRange: 7
   midRange: 14
   linkFog: 1
-  fogStart: 1
+  fogStart: 0
   fogEndInset: 16
   driveCameraFarClip: 1
   farClipMargin: 64
   targetCamera: {fileID: 0}
   chunkManager: {fileID: 695623964}
---- !u!114 &1746699437
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1746699434}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 84e863f9c8b4db344805e7f9625323c3, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::AtmosphericFogController
-  viewDistanceSettings: {fileID: 1746699438}
-  fogStartDistance: 150
-  fogEndDistance: 800
-  maxFogDensity: 1
-  enableHeightFog: 0
-  fogBaseHeight: 0
-  fogFalloff: 0.05
-  heightFogDensity: 1
-  enableRayleighScattering: 0
-  rayleighIntensity: 1
-  scatteringCoefficients: {x: 5.8, y: 13.5, z: 33.1}
-  fogColor: {r: 0.6, g: 0.7, b: 0.8, a: 1}
-  skyColor: {r: 0.38412246, g: 0.74492085, b: 0.9811321, a: 1}
-  sunColor: {r: 1, g: 0.9490197, b: 0.85098046, a: 1}
-  horizonHeight: 0
-  sunLight: {fileID: 410087040}
-  useSunLightColor: 1
 --- !u!1 &1836949852
 GameObject:
   m_ObjectHideFlags: 0

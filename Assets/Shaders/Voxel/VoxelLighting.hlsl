@@ -1,5 +1,7 @@
 // VoxelLighting.hlsl
-// URP PBR lighting with an extra voxel shadow factor on the main light.
+// URP PBR lighting with the main light shadow supplied by the caller (voxelShadow): URP's own
+// main light shadow sampling is skipped. The voxel terrain passes the resolved screen space
+// shadows (voxel rays x object shadow map), the voxel receiver shader its own combination.
 // Include after Lighting.hlsl.
 
 #ifndef PROGENWORLD_VOXEL_LIGHTING_INCLUDED
@@ -15,8 +17,12 @@ half4 VoxelFragmentPBR(InputData inputData, SurfaceData surfaceData, half voxelS
     half4 shadowMask = CalculateShadowMask(inputData);
     AmbientOcclusionFactor aoFactor = CreateAmbientOcclusionFactor(inputData, surfaceData);
     uint meshRenderingLayers = GetMeshRenderingLayer();
-    Light mainLight = GetMainLight(inputData, shadowMask, aoFactor);
-    mainLight.shadowAttenuation *= voxelShadow;
+    Light mainLight = GetMainLight();
+    #if defined(_SCREEN_SPACE_OCCLUSION) && !defined(_SURFACE_TYPE_TRANSPARENT)
+    if (IsLightingFeatureEnabled(DEBUGLIGHTINGFEATUREFLAGS_AMBIENT_OCCLUSION))
+        mainLight.color *= aoFactor.directAmbientOcclusion;
+    #endif
+    mainLight.shadowAttenuation = voxelShadow;
 
     MixRealtimeAndBakedGI(mainLight, inputData.normalWS, inputData.bakedGI);
     LightingData lightingData = CreateLightingData(inputData, surfaceData);

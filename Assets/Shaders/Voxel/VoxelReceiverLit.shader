@@ -105,7 +105,12 @@ Shader "ProGenWorld/Lit (Voxel Shadows)"
                 inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.positionCS);
                 inputData.shadowMask = half4(1, 1, 1, 1);
 
-                half voxelShadow = VoxelSunShadowForObject(input.positionWS, normalWS, _MainLightPosition.xyz);
+                // Main light shadow: the object shadow map (only objects render into it), times the
+                // voxel shadow ray. In screen space shadow mode the screen texture already holds both.
+                half voxelShadow = MainLightShadow(inputData.shadowCoord, input.positionWS, inputData.shadowMask, _MainLightOcclusionProbes);
+                #if !defined(_MAIN_LIGHT_SHADOWS_SCREEN)
+                    voxelShadow *= VoxelSunShadowForObject(input.positionWS, normalWS, _MainLightPosition.xyz);
+                #endif
 
                 half4 color = VoxelFragmentPBR(inputData, surface, voxelShadow);
                 color.rgb = MixFog(color.rgb, inputData.fogCoord);

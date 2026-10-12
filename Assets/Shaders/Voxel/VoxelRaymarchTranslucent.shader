@@ -33,6 +33,7 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
             #pragma vertex VoxelVert
             #pragma fragment Frag
 
+            // Voxel sun shadows come from the rays; the URP shadow map holds objects only.
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
             #pragma multi_compile_fog

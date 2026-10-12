@@ -1,6 +1,7 @@
 // ChunkSizeBenchmarkBuild.cs
-// Builds a Windows player for the chunk size benchmark from a copy of the main scene with a
-// ChunkSizeBenchmark object added. The main scene and project settings are left unchanged.
+// Builds a Windows player for the chunk size and render benchmarks from a copy of the main scene
+// with ChunkSizeBenchmark and RenderBenchmark objects added (each idle unless its flag is passed).
+// The main scene and project settings are left unchanged.
 //
 // Unity.exe -batchmode -quit -projectPath <proj> -executeMethod ChunkSizeBenchmarkBuild.Build -benchBuildPath <dir>/ProGenWorld.exe
 
@@ -30,6 +31,7 @@ public static class ChunkSizeBenchmarkBuild
             AssetDatabase.CopyAsset(SourceScene, BenchScene);
             var scene = EditorSceneManager.OpenScene(BenchScene, OpenSceneMode.Single);
             new GameObject("Chunk Size Benchmark").AddComponent<ChunkSizeBenchmark>();
+            new GameObject("Render Benchmark").AddComponent<RenderBenchmark>();
             EditorSceneManager.SaveScene(scene);
 
             PlayerSettings.enableFrameTimingStats = true; // GPU frame times in the player

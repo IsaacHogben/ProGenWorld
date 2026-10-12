@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: Pebbles
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: d4c1a57a4d8c8b7499c223cd615be613, type: 3}
+  colours:
+  - {r: 0.58686566, g: 0.32379118, b: 0.72246313, a: 1}
+  - {r: 0.40077838, g: 0.57857114, b: 0.31906736, a: 1}
+  - {r: 0.5892521, g: 0.38675135, b: 0.35729137, a: 1}
+  shadeDark: 0.36058307
+  shadeLight: 1.4285316
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: 20bce9949b288254a95ca0e992584540, type: 3}
+  alphaMask: {fileID: 0}

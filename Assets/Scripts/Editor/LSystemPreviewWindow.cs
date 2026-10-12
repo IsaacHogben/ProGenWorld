@@ -785,8 +785,8 @@ public class LSystemPreviewWindow : EditorWindow
 
         int size = 16;
         foreach (var entry in db.blocks)
-            if (entry.texture != null)
-                size = Mathf.Max(size, Mathf.Min(entry.texture.width, 128));
+            if (BlockTexture(entry) is Texture2D t)
+                size = Mathf.Max(size, Mathf.Min(t.width, 128));
 
         blockTextures = new Texture2DArray(size, size, db.blocks.Length, TextureFormat.RGBA32, false, false)
         {
@@ -800,19 +800,25 @@ public class LSystemPreviewWindow : EditorWindow
         for (int i = 0; i < db.blocks.Length; i++)
         {
             var entry = db.blocks[i];
-            if (entry.texture == null)
+            var texture = BlockTexture(entry);
+            if (texture == null)
             {
                 blockTextures.SetPixels(blank, i);
                 continue;
             }
 
-            var pixels = ReadPixels(entry.texture, size);
+            var pixels = ReadPixels(texture, size);
+            if (entry.surface != null)
+                pixels = entry.surface.ColourTile(pixels);
             blockTextures.SetPixels(pixels, i);
             slices.TryAdd(entry.type, i);
             palette.TryAdd(entry.type, Average(pixels));
         }
         blockTextures.Apply(false, true);
     }
+
+    static Texture2D BlockTexture(BlockDatabase.BlockEntry entry)
+        => entry.surface != null ? entry.surface.greyTexture : entry.texture;
 
     // Reads through a RenderTexture so it works whether or not the texture is CPU-readable.
     // The sRGB round trip keeps the values gamma-encoded, matching the sRGB texture array.

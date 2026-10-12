@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: CrackedDirt
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: f8db2c4dad39387479827b20b4664a87, type: 3}
+  colours:
+  - {r: 0.89304984, g: 0.56740594, b: 0.37538508, a: 1}
+  - {r: 0.72657704, g: 0.59167445, b: 0.51592684, a: 1}
+  shadeDark: 0.1888641
+  shadeLight: 1.3008955
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: 078cff6b4b56a4045b317d2cc90004b3, type: 3}
+  alphaMask: {fileID: 0}

@@ -33,6 +33,9 @@ public sealed class VoxelWorldRenderer : IDisposable
         public Material translucentMaterial;
         public Texture blockTextures;
         public Texture blockHeights;       // relief heights, same size / slices as blockTextures (optional)
+        public Texture alphaMasks;         // alpha mask array (optional, the materials' own otherwise)
+        public Texture surfaceLut;         // surface colour lookup, BlockTextureArrayBuilder.generatedSurfaceLut (optional)
+        public Vector4[] surfaceParams;    // patch settings per block id, BlockTextureArrayBuilder.generatedSurfaceParams
         public NativeArray<BlockDatabase.BlockInfoUnmanaged> blockDb;
         public int layer;
         public int3 gridDims;              // chunk lookup grid size (must cover the loaded area)
@@ -81,6 +84,10 @@ public sealed class VoxelWorldRenderer : IDisposable
         public static readonly int Bricks = Shader.PropertyToID("_VoxelBricks");
         public static readonly int Pages = Shader.PropertyToID("_VoxelPages");
         public static readonly int BlockInfo = Shader.PropertyToID("_VoxelBlockInfo");
+        public static readonly int SurfaceLut = Shader.PropertyToID("_VoxelSurfaceLut");
+        public static readonly int SurfaceLutSize = Shader.PropertyToID("_VoxelSurfaceLutSize");
+        public static readonly int SurfaceParams = Shader.PropertyToID("_VoxelSurfaceParams");
+        public static readonly int AlphaMasks = Shader.PropertyToID("_AlphaMasks");
         public static readonly int DrawList = Shader.PropertyToID("_VoxelDrawList");
         public static readonly int Textures = Shader.PropertyToID("_Textures");
         public static readonly int Cull = Shader.PropertyToID("_Cull");
@@ -108,6 +115,8 @@ public sealed class VoxelWorldRenderer : IDisposable
     GraphicsBuffer brickBuffer;
     GraphicsBuffer pageBuffer;
     GraphicsBuffer blockInfoBuffer;
+    GraphicsBuffer surfaceParamsBuffer;
+    bool hasSurfaceLut;
     GraphicsBuffer gridBuffer;
     ComputeShader copyShader;
     int copyKernel;
@@ -215,17 +224,10 @@ public sealed class VoxelWorldRenderer : IDisposable
         for (int i = chunkCapacity - 1; i >= 0; i--) freeSlots.Push(i);
         for (int i = pageCapacity - 1; i >= 0; i--) freePages.Push(i);
 
-        // Block info: visibility | alpha mask index << 8 | surface decoration << 16.
-        // VoxelGpuFormat.GrassMarker (the air above a grass block) keeps the invisible default.
         blockInfoBuffer = CreateBuffer(256, 4);
-        var info = new NativeArray<uint>(256, Allocator.Temp);
-        for (int i = 0; i < 256; i++)
-            info[i] = (uint)BlockVisibility.Invisible;
-        for (int i = 0; i < s.blockDb.Length && i < VoxelGpuFormat.GrassMarker; i++)
-            info[i] = (uint)s.blockDb[i].visibility | ((uint)s.blockDb[i].alphaMaskIndex << 8)
-                | ((uint)s.blockDb[i].surfaceDecoration << 16);
-        blockInfoBuffer.SetData(info);
-        info.Dispose();
+        surfaceParamsBuffer = CreateBuffer(256, 16);
+        SetSurfaceLut(s.surfaceLut, s.surfaceParams);
+        SetBlockInfo(s.blockDb);
 
         // Chunk lookup grid (toroidal, indexed by chunk coordinate) for rays that cross chunks.
         // Power of two sizes so the shader can wrap coordinates with a bitmask.
@@ -257,18 +259,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         translucentInside.SetFloat(Ids.ZTest, (float)CompareFunction.Always);
         translucentInside.renderQueue = translucentOutside.renderQueue + 1;
 
-        if (s.blockTextures != null)
-        {
-            foreach (var m in new[] { opaqueOutside, opaqueInside, translucentOutside, translucentInside })
-                m.SetTexture(Ids.Textures, s.blockTextures);
-        }
-
-        // Texel relief: the shader skips it while the texture size is 0.
-        bool hasHeights = s.blockTextures != null && s.blockHeights != null && s.blockHeights.width == s.blockTextures.width;
-        if (hasHeights)
-            Shader.SetGlobalTexture(Ids.Heights, s.blockHeights);
-        Shader.SetGlobalFloat(Ids.TextureSize, hasHeights ? s.blockTextures.width : 0f);
-        Shader.SetGlobalFloat(Ids.TexelCount, s.blockTextures != null ? s.blockTextures.width : 16f);
+        SetBlockTextures(s.blockTextures, s.blockHeights, s.alphaMasks);
 
         var screenShadows = Resources.Load<Shader>("VoxelScreenShadows");
         if (screenShadows != null)
@@ -615,6 +606,63 @@ public sealed class VoxelWorldRenderer : IDisposable
         }
     }
 
+    // ==================================================================================
+    // Block visuals (also swapped live by the Block Studio while playing)
+    // ==================================================================================
+
+    /// <summary>
+    /// Block info: visibility | alpha mask index << 8 | surface decoration << 16 | palette surface << 24
+    /// (only with a surface lookup texture).
+    /// </summary>
+    public void SetBlockInfo(NativeArray<BlockDatabase.BlockInfoUnmanaged> blockDb)
+    {
+        // VoxelGpuFormat.GrassMarker (the air above a grass block) keeps the invisible default.
+        var info = new NativeArray<uint>(256, Allocator.Temp);
+        for (int i = 0; i < 256; i++)
+            info[i] = (uint)BlockVisibility.Invisible;
+        for (int i = 0; i < blockDb.Length && i < VoxelGpuFormat.GrassMarker; i++)
+            info[i] = (uint)blockDb[i].visibility | ((uint)blockDb[i].alphaMaskIndex << 8)
+                | ((uint)blockDb[i].surfaceDecoration << 16)
+                | (hasSurfaceLut && blockDb[i].hasSurface ? 1u << 24 : 0u);
+        blockInfoBuffer.SetData(info);
+        info.Dispose();
+    }
+
+    /// <summary>
+    /// Surface colour lookup and patch settings (BlockTextureArrayBuilder.generatedSurfaceLut /
+    /// generatedSurfaceParams). Null: every block uses its texture's own colours. Call
+    /// SetBlockInfo afterwards to update the palette flags.
+    /// </summary>
+    public void SetSurfaceLut(Texture lut, Vector4[] patchParams)
+    {
+        hasSurfaceLut = lut != null && patchParams != null;
+        if (!hasSurfaceLut)
+            return;
+        Shader.SetGlobalTexture(Ids.SurfaceLut, lut);
+        Shader.SetGlobalFloat(Ids.SurfaceLutSize, lut.width);
+        var data = new Vector4[256];
+        System.Array.Copy(patchParams, data, Mathf.Min(patchParams.Length, data.Length));
+        surfaceParamsBuffer.SetData(data);
+    }
+
+    public void SetBlockTextures(Texture textures, Texture heights, Texture alphaMasks)
+    {
+        foreach (var m in new[] { opaqueOutside, opaqueInside, translucentOutside, translucentInside })
+        {
+            if (textures != null)
+                m.SetTexture(Ids.Textures, textures);
+            if (alphaMasks != null)
+                m.SetTexture(Ids.AlphaMasks, alphaMasks);
+        }
+
+        // Texel relief: the shader skips it while the texture size is 0.
+        bool hasHeights = textures != null && heights != null && heights.width == textures.width;
+        if (hasHeights)
+            Shader.SetGlobalTexture(Ids.Heights, heights);
+        Shader.SetGlobalFloat(Ids.TextureSize, hasHeights ? textures.width : 0f);
+        Shader.SetGlobalFloat(Ids.TexelCount, textures != null ? textures.width : 16f);
+    }
+
     void ReleasePages(List<int> pages)
     {
         // Push in reverse so later allocations come out in ascending (contiguous) order.
@@ -640,6 +688,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         Shader.SetGlobalBuffer(Ids.Bricks, brickBuffer);
         Shader.SetGlobalBuffer(Ids.Pages, pageBuffer);
         Shader.SetGlobalBuffer(Ids.BlockInfo, blockInfoBuffer);
+        Shader.SetGlobalBuffer(Ids.SurfaceParams, surfaceParamsBuffer);
     }
 
     static NativeArray<T> Grow<T>(NativeArray<T> old, int newLength) where T : struct
@@ -922,6 +971,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         brickBuffer?.Release();
         pageBuffer?.Release();
         blockInfoBuffer?.Release();
+        surfaceParamsBuffer?.Release();
         gridBuffer?.Release();
 
         if (gridCells.IsCreated) gridCells.Dispose();

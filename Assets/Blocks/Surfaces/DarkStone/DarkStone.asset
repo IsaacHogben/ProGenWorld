@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: DarkStone
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: a23c5ca695edce44cb3fcef4c30d287e, type: 3}
+  colours:
+  - {r: 0.3037785, g: 0.2833806, b: 0.23666951, a: 1}
+  - {r: 0.25254947, g: 0.28964964, b: 0.30225024, a: 1}
+  shadeDark: 0.33776438
+  shadeLight: 1.5506688
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: cff3901f625b58647803ce522e2c72c8, type: 3}
+  alphaMask: {fileID: 0}

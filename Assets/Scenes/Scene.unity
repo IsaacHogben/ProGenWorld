@@ -1799,11 +1799,23 @@ MonoBehaviour:
   farShadowDetail: 1
   shadowMaxDistance: 300
   shadowIgnoreDistance: 0
-  surfaceTint: {r: 0.55, g: 0.8, b: 1, a: 1}
-  surfaceOpacity: 0.25
+  surfaceTint: {r: 1, g: 1, b: 1, a: 1}
+  surfaceOpacity: 0.692
   deepColor: {r: 0.02, g: 0.18, b: 0.28, a: 1}
-  absorption: 0.18
+  absorption: 0.778
   specular: 1.5
+  pixelNoise: 0
+  waveStrength: 0.013
+  foamWidth: 0
+  foamColor: {r: 0.3255162, g: 0.5188679, b: 0.5188679, a: 1}
+  waveSpeed: 0.21
+  windDirection: {x: 1, y: 0.5}
+  reflections: 2
+  reflectionStrength: 1
+  reflectionDistance: 80
+  reflectionSteps: 16
+  skyZenith: {r: 0.4, g: 0.6, b: 0.9, a: 1}
+  skyHorizon: {r: 0.5, g: 0.6, b: 0.7, a: 1}
   initialChunkCapacity: 2048
   initialPageCapacity: 65536
   uploadsPerFrame: 8

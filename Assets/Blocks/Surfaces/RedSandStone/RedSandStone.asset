@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: RedSandStone
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: 4f32c73bcd5b7274d9bf37d488c712a9, type: 3}
+  colours:
+  - {r: 0.6293094, g: 0.23019737, b: 0.075332895, a: 1}
+  - {r: 0.38568807, g: 0.27039847, b: 0.19158626, a: 1}
+  shadeDark: 0.49784222
+  shadeLight: 1.5695692
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: 7943708cfa40b2c4e82574f850bfaae5, type: 3}
+  alphaMask: {fileID: 0}

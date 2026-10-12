@@ -28,6 +28,7 @@ public class RenderBenchmark : MonoBehaviour
         public Vector3 offset;   // camera position relative to the player
         public float yaw, pitch;
         public bool lookAtPlayer;
+        public bool overWater;   // offset / yaw relative to the nearest open water instead of the player
     }
 
     static readonly View[] Views =
@@ -36,7 +37,15 @@ public class RenderBenchmark : MonoBehaviour
         new View { name = "horizon", offset = new Vector3(0f, 2f, 0f), yaw = 30f, pitch = 4f },
         new View { name = "overlook", offset = new Vector3(0f, 40f, 0f), yaw = 140f, pitch = 30f },
         new View { name = "ground", offset = new Vector3(0f, 8f, 0f), yaw = 250f, pitch = 60f },
+        new View { name = "waterLow", offset = new Vector3(0f, 2.5f, 0f), pitch = 8f, overWater = true },
+        new View { name = "waterHigh", offset = new Vector3(0f, 14f, 0f), pitch = 35f, overWater = true },
+        new View { name = "waterFar", offset = new Vector3(0f, 30f, 0f), pitch = 28f, overWater = true },
     };
+
+    // Open water near the player (top of a water surface block) and the direction with the most
+    // water ahead of it, found once after loading. Water views are skipped when there is none.
+    Vector3? waterSpot;
+    float waterYaw;
 
     string outPath, shotDir;
     int frames = 150;
@@ -153,6 +162,20 @@ public class RenderBenchmark : MonoBehaviour
         configs["noFog"] = () => { foreach (var fc in FindObjectsByType<AtmosphericFogController>(FindObjectsSortMode.None)) fc.enabled = false; };
         configs["fxaa"] = () => settings.antiAliasing = VoxelRenderSettings.AntiAliasing.Fxaa;
         configs["fxaaNative"] = () => { settings.antiAliasing = VoxelRenderSettings.AntiAliasing.Fxaa; settings.renderScale = 1f; };
+        configs["noReflections"] = () => settings.reflections = VoxelRenderSettings.WaterReflections.Off;
+        configs["skyReflections"] = () => settings.reflections = VoxelRenderSettings.WaterReflections.Sky;
+        configs["ssr32"] = () => settings.reflectionSteps = 32;
+        configs["calm"] = () => settings.windDirection = Vector2.zero;
+        configs["strongPixels"] = () => { settings.pixelNoise = 0.8f; settings.surfaceOpacity = 0.5f; };
+        configs["opacity45"] = () => settings.surfaceOpacity = 0.45f;
+        configs["opacity65"] = () => settings.surfaceOpacity = 0.65f;
+        configs["noFoam"] = () => settings.foamWidth = 0f;
+        configs["plainWater"] = () =>   // the water look before textures / ripples / reflections
+        {
+            settings.reflections = VoxelRenderSettings.WaterReflections.Off;
+            settings.pixelNoise = 0f;
+            settings.windDirection = Vector2.zero;
+        };
         configs["baselineAgain"] = () => { };
     }
 
@@ -185,6 +208,15 @@ public class RenderBenchmark : MonoBehaviour
 
     void PlaceCamera(View v)
     {
+        if (v.overWater)
+        {
+            // Back off so the view centre lands on the far side of the water spot.
+            Vector3 flat = Quaternion.Euler(0f, waterYaw, 0f) * Vector3.forward;
+            float back = 0.5f * v.offset.y / Mathf.Tan(Mathf.Max(v.pitch, 3f) * Mathf.Deg2Rad);
+            cam.transform.position = waterSpot.Value + v.offset - flat * back;
+            cam.transform.rotation = Quaternion.Euler(v.pitch, waterYaw, 0f);
+            return;
+        }
         Vector3 p = player.position;
         cam.transform.position = p + v.offset;
         cam.transform.rotation = v.lookAtPlayer
@@ -204,11 +236,14 @@ public class RenderBenchmark : MonoBehaviour
         cam = Camera.main;
         CaptureBaseline();
         Log($"screen {Screen.width}x{Screen.height}, player at {player.position}");
+        FindWater();
 
         json.Append("{\n  \"results\": [\n");
         bool first = true;
         foreach (var view in Views)
         {
+            if (view.overWater && waterSpot == null)
+                continue;
             PlaceCamera(view);
             yield return Wait(3f);   // stream in whatever the view needs
 
@@ -271,6 +306,56 @@ public class RenderBenchmark : MonoBehaviour
         File.WriteAllText(outPath, json.ToString());
         Debug.Log($"[RenderBench] Wrote {outPath}");
         Application.Quit();
+    }
+
+    // Top of the first non-air block in a column, when that block is water.
+    static bool WaterSurface(int x, int z, int top, int bottom, out int y)
+    {
+        for (y = top; y >= bottom; y--)
+        {
+            // Empty sky chunks are not stored: unloaded counts as air.
+            if (VoxelPhysics.TryGetBlock(new Unity.Mathematics.int3(x, y, z), out byte id) && id != (byte)BlockType.Air)
+                return id == (byte)BlockType.Water;
+        }
+        return false;
+    }
+
+    void FindWater()
+    {
+        Vector3 p = player.position;
+        int top = Mathf.FloorToInt(p.y) + 40, bottom = Mathf.FloorToInt(p.y) - 120;
+        float best = float.MaxValue;
+        for (int dz = -256; dz <= 256; dz += 4)
+        for (int dx = -256; dx <= 256; dx += 4)
+        {
+            int x = Mathf.FloorToInt(p.x) + dx, z = Mathf.FloorToInt(p.z) + dz;
+            if (!WaterSurface(x, z, top, bottom, out int y))
+                continue;
+            // Wide water only: the same surface 12 blocks away on all four sides.
+            if (!WaterSurface(x + 12, z, y + 1, y, out _) || !WaterSurface(x - 12, z, y + 1, y, out _)
+                || !WaterSurface(x, z + 12, y + 1, y, out _) || !WaterSurface(x, z - 12, y + 1, y, out _))
+                continue;
+            float d = dx * dx + dz * dz;
+            if (d < best) { best = d; waterSpot = new Vector3(x + 0.5f, y + 1f, z + 0.5f); }
+        }
+        if (waterSpot == null)
+        {
+            Log("no open water near the player: water views skipped");
+            return;
+        }
+
+        // Look towards the shore that is farthest away, across the most water.
+        int maxRun = -1;
+        for (int a = 0; a < 360; a += 30)
+        {
+            Vector3 dir = Quaternion.Euler(0f, a, 0f) * Vector3.forward;
+            int run = 0;
+            Vector3 w = waterSpot.Value;
+            while (run < 96 && WaterSurface(Mathf.FloorToInt(w.x + dir.x * run), Mathf.FloorToInt(w.z + dir.z * run), (int)w.y, (int)w.y - 1, out _))
+                run++;
+            if (run > maxRun) { maxRun = run; waterYaw = a; }
+        }
+        Log($"water at {waterSpot.Value}, looking {waterYaw} deg across {maxRun} blocks");
     }
 
     // Terrain shadows on objects: a cube with the player's (URP Lit) material in a spot the terrain

@@ -1253,10 +1253,39 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             translucentMaterial = translucent,
             blockTextures = blockTextures,
             blockHeights = textureArrayBuilder != null ? textureArrayBuilder.generatedHeights : null,
+            alphaMasks = textureArrayBuilder != null ? textureArrayBuilder.generatedAlphaMasks : null,
+            surfaceLut = textureArrayBuilder != null ? textureArrayBuilder.generatedSurfaceLut : null,
+            surfaceParams = textureArrayBuilder != null ? textureArrayBuilder.generatedSurfaceParams : null,
             blockDb = nativeBlockDatabase,
             layer = gameObject.layer,
             gridDims = VoxelGridDims()
         });
+    }
+
+    /// <summary>
+    /// Pushes edited block looks to the running world (Block Studio). Colours only re-bakes the
+    /// surface colour lookup; otherwise the block texture, relief and alpha mask arrays are
+    /// rebuilt too.
+    /// </summary>
+    public void RefreshBlockVisuals(bool coloursOnly)
+    {
+        if (voxelRenderer == null || blockDatabase == null || textureArrayBuilder == null)
+            return;
+
+        if (coloursOnly && textureArrayBuilder.generatedSurfaceLut != null)
+            textureArrayBuilder.UpdateSurfaceLut();
+        else
+        {
+            textureArrayBuilder.GenerateTextureArray(saveAsset: false);
+            voxelRenderer.SetBlockTextures(textureArrayBuilder.generatedArray, textureArrayBuilder.generatedHeights,
+                textureArrayBuilder.generatedAlphaMasks);
+        }
+        voxelRenderer.SetSurfaceLut(textureArrayBuilder.generatedSurfaceLut, textureArrayBuilder.generatedSurfaceParams);
+
+        // Alpha mask slices and surface flags can change; the job side copy keeps its own.
+        var info = blockDatabase.ToNative(Allocator.Temp);
+        voxelRenderer.SetBlockInfo(info);
+        info.Dispose();
     }
 
     void LateUpdate()

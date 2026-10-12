@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: PearlStone
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: 44ffdb0125fbbc34882a149140c91709, type: 3}
+  colours:
+  - {r: 0.09142241, g: 0.87241113, b: 0.7752928, a: 1}
+  - {r: 0.71463853, g: 0.70807904, b: 0.88952965, a: 1}
+  - {r: 0.92189616, g: 0.56770456, b: 0.6736296, a: 1}
+  shadeDark: 0.18628928
+  shadeLight: 1.4453743
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: 89f3e01cc8e627f4d9d8ce2ff3d67831, type: 3}
+  alphaMask: {fileID: 0}

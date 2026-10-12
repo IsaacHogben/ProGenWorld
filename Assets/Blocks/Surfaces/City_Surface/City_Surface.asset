@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: City_Surface
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: 24e2125b183f1ff4ebff38c49acdddcd, type: 3}
+  colours:
+  - {r: 0.19760324, g: 0.20602944, b: 0.20492573, a: 1}
+  - {r: 0.20998617, g: 0.2093776, b: 0.11917456, a: 1}
+  shadeDark: 0.4773377
+  shadeLight: 1.606632
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: 46549f6e8f3f4244cac1f949fcceb00d, type: 3}
+  alphaMask: {fileID: 0}

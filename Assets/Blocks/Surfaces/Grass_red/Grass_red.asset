@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: Grass_red
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: f022f813d28713346ad08a957a6ac11c, type: 3}
+  colours:
+  - {r: 0.3823378, g: 0.38124812, b: 0.3050805, a: 1}
+  - {r: 0.68911624, g: 0.2206503, b: 0.20300521, a: 1}
+  - {r: 0.57692015, g: 0.37331468, b: 0.16801406, a: 1}
+  shadeDark: 0.7417593
+  shadeLight: 1.2663153
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: f139e72f7a943bc489cd1e65af66dfaf, type: 3}
+  alphaMask: {fileID: 0}

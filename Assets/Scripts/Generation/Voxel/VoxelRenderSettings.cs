@@ -15,6 +15,7 @@ public class VoxelRenderSettings : MonoBehaviour
     public enum AntiAliasing { Camera, None, Fxaa, Smaa, Temporal }
     public enum ShadowResolution { Full = 1, Half = 2, Quarter = 4 }
     public enum FarShadowDetail { Half = 1, Quarter = 2, Bricks = 3 }
+    public enum WaterReflections { Off = 0, Sky = 1, ScreenSpace = 2 }
 
     [Header("Materials")]
     [Tooltip("Raymarching material for opaque + alpha masked blocks. Defaults to Resources/VoxelRaymarchOpaque.")]
@@ -112,12 +113,37 @@ public class VoxelRenderSettings : MonoBehaviour
     [Range(0f, 8f)] public float shadowIgnoreDistance = 0f;
 
     [Header("Water / Translucent")]
-    public Color surfaceTint = new(0.55f, 0.8f, 1f, 1f);
+    [Tooltip("Multiplies the water block's painted texture (Block Database), which colours the thin surface layer.")]
+    public Color surfaceTint = Color.white;
     [Range(0f, 1f)] public float surfaceOpacity = 0.25f;
     public Color deepColor = new(0.02f, 0.18f, 0.28f, 1f);
     [Tooltip("Light absorbed per metre travelled through water.")]
     [Range(0f, 2f)] public float absorption = 0.18f;
     [Range(0f, 4f)] public float specular = 1.5f;
+    [Tooltip("Random brightness and opacity on the water surface: half per texel, on the same pixel grid as the terrain textures (follows Small Scale), and half per block. 0 = plain colour.")]
+    [Range(0f, 1f)] public float pixelNoise = 0.6f;
+    [Tooltip("Tilt of the animated ripples on horizontal water faces at a wind of length 1, one facet per texture texel. Bends the reflections and the sun highlight. 0 = flat mirror.")]
+    [Range(0f, 1f)] public float waveStrength = 0.25f;
+    [Tooltip("Shore foam: water surface texels where the water below is shallower than this (blocks) turn to foam, with a dithered pixel edge. 0 = off.")]
+    [Range(0f, 2f)] public float foamWidth = 0.6f;
+    public Color foamColor = new(0.85f, 0.95f, 0.95f, 1f);
+    [Tooltip("Speed of the ripples at a wind of length 1.")]
+    [Range(0f, 4f)] public float waveSpeed = 1f;
+    [Tooltip("Wind over the water in world XZ (x = east, y = north). Ripples travel along it; its length scales their height and speed (0 = calm, flat water). Meant to be set by a weather system.")]
+    public Vector2 windDirection = new(1f, 0.5f);
+
+    [Header("Water Reflections")]
+    [Tooltip("Off: no reflections. Sky: reflect the sky colours only (nearly free). Screen Space: also reflect terrain that is on screen, marched against the depth buffer, falling back to the sky (needs Opaque + Depth Texture on the URP asset).")]
+    public WaterReflections reflections = WaterReflections.ScreenSpace;
+    [Tooltip("Scales the Fresnel reflection: faint looking straight down, mirror-like at grazing angles.")]
+    [Range(0f, 1f)] public float reflectionStrength = 1f;
+    [Tooltip("Farthest reflected object (world units) for screen space reflections.")]
+    [Min(1f)] public float reflectionDistance = 80f;
+    [Tooltip("Depth buffer samples per screen space reflection ray. Steps grow with distance; fewer is cheaper but misses thin objects.")]
+    [Range(4, 48)] public int reflectionSteps = 16;
+    [Tooltip("Sky colours reflected where screen space reflections find nothing. Taken from the Atmospheric Fog Controller when there is one in the scene.")]
+    public Color skyZenith = new(0.4f, 0.6f, 0.9f, 1f);
+    public Color skyHorizon = new(0.5f, 0.6f, 0.7f, 1f);
 
     [Header("GPU Memory (applied at start)")]
     [Tooltip("Chunk slots allocated on the GPU at start (grows automatically).")]
@@ -136,6 +162,12 @@ public class VoxelRenderSettings : MonoBehaviour
         public static readonly int SurfaceOpacity = Shader.PropertyToID("_VoxelSurfaceOpacity");
         public static readonly int Absorption = Shader.PropertyToID("_VoxelAbsorption");
         public static readonly int Specular = Shader.PropertyToID("_VoxelSpecular");
+        public static readonly int WaterSurface = Shader.PropertyToID("_VoxelWaterSurface");
+        public static readonly int WaterWind = Shader.PropertyToID("_VoxelWaterWind");
+        public static readonly int WaterFoam = Shader.PropertyToID("_VoxelWaterFoam");
+        public static readonly int WaterReflection = Shader.PropertyToID("_VoxelWaterReflection");
+        public static readonly int SkyZenith = Shader.PropertyToID("_VoxelSkyZenith");
+        public static readonly int SkyHorizon = Shader.PropertyToID("_VoxelSkyHorizon");
         public static readonly int SunShadowDistance = Shader.PropertyToID("_VoxelSunShadowDistance");
         public static readonly int ShadowDetailDistance = Shader.PropertyToID("_VoxelShadowDetailDistance");
         public static readonly int FarShadowDetail = Shader.PropertyToID("_VoxelFarShadowDetail");
@@ -195,6 +227,10 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalFloat(Ids.SurfaceOpacity, surfaceOpacity);
         Shader.SetGlobalFloat(Ids.Absorption, absorption);
         Shader.SetGlobalFloat(Ids.Specular, specular);
+        ApplyWind();
+        Shader.SetGlobalVector(Ids.WaterFoam, new Vector4(foamColor.linear.r, foamColor.linear.g, foamColor.linear.b, foamWidth));
+        Shader.SetGlobalVector(Ids.WaterReflection, new Vector4((float)reflections, reflectionStrength, reflectionDistance, reflectionSteps));
+        ApplySkyColors();
         Shader.SetGlobalFloat(Ids.SunShadowDistance, sunShadowDistance);
         Shader.SetGlobalFloat(Ids.ShadowDetailDistance, shadowDetailDistance);
         Shader.SetGlobalFloat(Ids.FarShadowDetail, (float)farShadowDetail);
@@ -213,6 +249,40 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalFloat(Ids.AmbientOcclusion, ambientOcclusion);
         Shader.SetGlobalFloat(Ids.ShadowPixelated, pixelatedShadows ? 1f : 0f);
         ApplyAntiAliasing();
+    }
+
+    float wavePhase;
+    float lastWaveTime = -1f;
+
+    // The ripple phase is advanced here rather than from time in the shader, so changing the wind
+    // speeds the waves up or down without making them jump.
+    void ApplyWind()
+    {
+        float wind = windDirection.magnitude;
+        float now = Time.time;
+        if (lastWaveTime >= 0f && now > lastWaveTime)
+            wavePhase = (wavePhase + (now - lastWaveTime) * waveSpeed * wind) % 10000f;
+        lastWaveTime = now;
+
+        Vector2 dir = wind > 1e-4f ? windDirection / wind : Vector2.right;
+        Shader.SetGlobalVector(Ids.WaterSurface, new Vector4(pixelNoise, wavePhase, waveStrength * wind, 0f));
+        Shader.SetGlobalVector(Ids.WaterWind, new Vector4(dir.x, dir.y, 0f, 0f));
+    }
+
+    AtmosphericFogController fog;
+    int fogSearchFrame = -1000;
+
+    // Reflections fall back to the sky the fog pass paints, when there is one.
+    void ApplySkyColors()
+    {
+        if (fog == null && Time.frameCount - fogSearchFrame > 120)
+        {
+            fogSearchFrame = Time.frameCount;
+            fog = FindFirstObjectByType<AtmosphericFogController>();
+        }
+        bool useFog = fog != null && fog.isActiveAndEnabled;
+        Shader.SetGlobalColor(Ids.SkyZenith, useFog ? fog.skyColor : skyZenith);
+        Shader.SetGlobalColor(Ids.SkyHorizon, useFog ? fog.fogColor : skyHorizon);
     }
 
     GraphicsBuffer grassBlades;

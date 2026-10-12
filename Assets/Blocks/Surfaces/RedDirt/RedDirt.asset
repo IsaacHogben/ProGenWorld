@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: RedDirt
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: 7daba643a1b5e2a4089a22698675edc4, type: 3}
+  colours:
+  - {r: 0.50646263, g: 0.24175803, b: 0.15537721, a: 1}
+  - {r: 0.28104532, g: 0.28829768, b: 0.28299358, a: 1}
+  shadeDark: 0.6158256
+  shadeLight: 1.8622365
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: 5c7f15c3e78d0de4db78e7472a43ca1f, type: 3}
+  alphaMask: {fileID: 0}

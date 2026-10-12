@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: PearlSand
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: 43618dc760c3a094092748c0f385a300, type: 3}
+  colours:
+  - {r: 1, g: 0.6733164, b: 0.9905043, a: 1}
+  - {r: 0.6935775, g: 0.78028107, b: 0.7702608, a: 1}
+  shadeDark: 0.96091115
+  shadeLight: 1.2388005
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: 636d4e9b3a2bbbe42b70f8f0b63dded2, type: 3}
+  alphaMask: {fileID: 0}

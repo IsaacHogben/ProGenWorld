@@ -12,27 +12,19 @@ public class BlockDatabaseEditor : Editor
 
         var blocksProp = serializedObject.FindProperty("blocks");
 
+        if (GUILayout.Button("Open Block Studio", GUILayout.Height(28f)))
+            BlockStudioWindow.OpenFor((BlockDatabase)target);
+        EditorGUILayout.Space();
+
         EditorGUILayout.LabelField("Block Table", EditorStyles.boldLabel);
 
         EditorGUILayout.BeginHorizontal();
 
         if (GUILayout.Button("Sync With Enum"))
         {
-            var db = (BlockDatabase)target;
-            var enumValues = (BlockType[])Enum.GetValues(typeof(BlockType));
-
-            var newList = new BlockDatabase.BlockEntry[enumValues.Length];
-            for (int i = 0; i < enumValues.Length; i++)
-            {
-                var existing = Array.Find(db.blocks, b => b.type == enumValues[i]);
-                newList[i] = existing.name != null
-                    ? existing
-                    : new BlockDatabase.BlockEntry(enumValues[i]);
-            }
-
-            db.blocks = newList;
-            EditorUtility.SetDirty(db);
-            Debug.Log($"[BlockDatabaseEditor] Synced {enumValues.Length} entries from BlockType enum.");
+            serializedObject.ApplyModifiedProperties();
+            BlockStudioWindow.SyncWithEnum((BlockDatabase)target, -1);
+            serializedObject.Update();
         }
 
         if (GUILayout.Button("Add Block"))
@@ -50,6 +42,7 @@ public class BlockDatabaseEditor : Editor
             EditorGUILayout.BeginVertical("box");
 
             var typeProp = element.FindPropertyRelative("type");
+            var surfaceProp = element.FindPropertyRelative("surface");
             var matProp = element.FindPropertyRelative("texture");
             var solidProp = element.FindPropertyRelative("isSolid");
             var collProp = element.FindPropertyRelative("hasCollision");
@@ -58,9 +51,11 @@ public class BlockDatabaseEditor : Editor
             var decorationProp = element.FindPropertyRelative("surfaceDecoration");
 
             EditorGUILayout.PropertyField(typeProp, new GUIContent("Type"));
-            EditorGUILayout.PropertyField(matProp, new GUIContent("Texture"));
+            EditorGUILayout.PropertyField(surfaceProp, new GUIContent("Surface"));
+            if (surfaceProp.objectReferenceValue == null)
+                EditorGUILayout.PropertyField(matProp, new GUIContent("Texture"));
             EditorGUILayout.PropertyField(visProp, new GUIContent("Visibility"));
-            if ((BlockVisibility)visProp.enumValueIndex == BlockVisibility.Stacked)
+            if ((BlockVisibility)visProp.enumValueIndex == BlockVisibility.Stacked && surfaceProp.objectReferenceValue == null)
             {
                 EditorGUILayout.PropertyField(alphaMaskProp, new GUIContent("Alpha Mask Index"));
             }

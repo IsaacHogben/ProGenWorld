@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
 
@@ -10,12 +11,16 @@ public class BlockDatabase : ScriptableObject
     {
         public BlockType type;
         public string name;
+        [Tooltip("Colours, relief and alpha mask of the block. Empty: the legacy colour texture below.")]
+        public BlockSurface surface;
+        [Tooltip("Legacy full colour texture, used when the block has no surface.")]
         public Texture2D texture;
 
         [Header("Properties")]
         public bool isSolid;
         public bool hasCollision;
         public BlockVisibility visibility;
+        [Tooltip("Legacy slice of Resources/VoxelAlphaMasks. Blocks with a surface use the surface's alpha mask instead.")]
         public byte alphaMaskIndex;
         [Tooltip("Drawn on the block's top face when the block above is air.")]
         public SurfaceDecoration surfaceDecoration;
@@ -25,6 +30,7 @@ public class BlockDatabase : ScriptableObject
         {
             type = t;
             name = t.ToString();
+            surface = null;
             texture = null;
             isSolid = true;
             hasCollision = true;
@@ -43,6 +49,7 @@ public class BlockDatabase : ScriptableObject
         public BlockVisibility visibility;
         public byte alphaMaskIndex;
         public SurfaceDecoration surfaceDecoration;
+        public bool hasSurface;   // coloured by a BlockSurface palette (lookup texture) instead of its texture's colours
     }
 
     [Header("All Block Types")]
@@ -61,8 +68,44 @@ public class BlockDatabase : ScriptableObject
         return Get((BlockType)id);
     }
 
+    /// <summary>Hand made alpha mask array (slice 0 opaque) that legacy alphaMaskIndex values point into.</summary>
+    public static Texture2DArray LegacyAlphaMasks => Resources.Load<Texture2DArray>("VoxelAlphaMasks");
+
+    /// <summary>
+    /// The distinct alpha masks of the block surfaces and the alpha mask array slice each block
+    /// uses. The array is the legacy masks followed by these, so blocks without a surface keep
+    /// their legacy alphaMaskIndex.
+    /// </summary>
+    public List<Texture2D> CollectAlphaMasks(out byte[] slicePerBlock)
+    {
+        var legacy = LegacyAlphaMasks;
+        int firstSlice = legacy != null ? legacy.depth : 1;
+        var masks = new List<Texture2D>();
+        slicePerBlock = new byte[blocks.Length];
+        for (int i = 0; i < blocks.Length; i++)
+        {
+            var surface = blocks[i].surface;
+            if (surface == null)
+            {
+                slicePerBlock[i] = blocks[i].alphaMaskIndex;
+                continue;
+            }
+            if (surface.alphaMask == null)
+                continue;
+            int index = masks.IndexOf(surface.alphaMask);
+            if (index < 0)
+            {
+                index = masks.Count;
+                masks.Add(surface.alphaMask);
+            }
+            slicePerBlock[i] = (byte)Mathf.Min(firstSlice + index, 255);
+        }
+        return masks;
+    }
+
     public NativeArray<BlockInfoUnmanaged> ToNative(Allocator allocator)
     {
+        CollectAlphaMasks(out var maskSlices);
         var arr = new NativeArray<BlockInfoUnmanaged>(blocks.Length, allocator);
         for (int i = 0; i < blocks.Length; i++)
         {
@@ -72,8 +115,9 @@ public class BlockDatabase : ScriptableObject
                 isSolid = blocks[i].isSolid,
                 hasCollision = blocks[i].hasCollision,
                 visibility = blocks[i].visibility,
-                alphaMaskIndex = blocks[i].alphaMaskIndex,
-                surfaceDecoration = blocks[i].surfaceDecoration
+                alphaMaskIndex = maskSlices[i],
+                surfaceDecoration = blocks[i].surfaceDecoration,
+                hasSurface = blocks[i].surface != null && blocks[i].surface.greyTexture != null
             };
         }
         return arr;

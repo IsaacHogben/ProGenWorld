@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: Fungus_stem
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: 85d82a9c432a1684cbd59d1e3464dbd1, type: 3}
+  colours:
+  - {r: 0.73671263, g: 0.697301, b: 0.3630741, a: 1}
+  - {r: 0.72101957, g: 0.6999521, b: 0.4692834, a: 1}
+  shadeDark: 0.6638389
+  shadeLight: 1.2346909
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: f1f788cb9ec94a04c808206cb965a01d, type: 3}
+  alphaMask: {fileID: 0}

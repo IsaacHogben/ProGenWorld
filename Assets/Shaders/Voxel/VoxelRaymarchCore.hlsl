@@ -45,7 +45,8 @@ StructuredBuffer<VoxelChunk> _VoxelChunks;
 StructuredBuffer<uint>       _VoxelBricks;
 StructuredBuffer<uint>       _VoxelPages;
 StructuredBuffer<uint2>      _VoxelCells;     // per draw cell: packed content bounds (min, max) in chunk voxels
-StructuredBuffer<uint>       _VoxelBlockInfo; // bits 0-7 visibility, 8-15 alpha mask index, 16-23 surface decoration
+StructuredBuffer<uint>       _VoxelBlockInfo; // bits 0-7 visibility, 8-15 alpha mask index, 16-23 surface decoration, 24 palette surface
+StructuredBuffer<float4>     _VoxelSurfaceParams; // per block: patch = saturate(colour * x + y), texel position = lerp(patch, colour, z)
 StructuredBuffer<uint>       _VoxelDrawList;  // instance id -> draw cell id (slot * _VoxelMaxCells + cell)
 StructuredBuffer<int4>       _VoxelChunkGrid; // toroidal chunk grid: x = slot (-1 empty), yzw = chunk coord
 
@@ -60,6 +61,8 @@ float  _VoxelFarShadowDetail;      // ray detail past _VoxelShadowDetailDistance
 
 TEXTURE2D_ARRAY(_Textures);   SAMPLER(sampler_Textures);
 TEXTURE2D_ARRAY(_AlphaMasks); SAMPLER(sampler_AlphaMasks);
+TEXTURE2D_ARRAY(_VoxelSurfaceLut); SAMPLER(sampler_VoxelSurfaceLut);   // BlockTextureArrayBuilder.generatedSurfaceLut
+float  _VoxelSurfaceLutSize;
 
 // Look settings - globals pushed by VoxelRenderSettings (scene component).
 float  _VoxelSmoothness;
@@ -801,6 +804,38 @@ float2 VoxelSharpTexelUV(float2 uv, float2 dx, float2 dy, float size)
     return px / size;
 }
 
+// Palette surface (BlockSurface.cs): the block's slice of _Textures holds shade (r) and palette
+// position (g) as plain values, and its colours come from a lookup baked from
+// BlockSurface.Colour by (position, shade), linear colour.
+bool VoxelHasSurface(uint id) { return (_VoxelBlockInfo[id] & (1u << 24)) != 0u; }
+
+float3 VoxelSurfaceColour(uint id, float position, float shade)
+{
+    float n = _VoxelSurfaceLutSize;
+    float2 uv = (saturate(float2(position, shade)) * (n - 1.0) + 0.5) / n;
+    return SAMPLE_TEXTURE2D_ARRAY_LOD(_VoxelSurfaceLut, sampler_VoxelSurfaceLut, uv, id, 0).rgb;
+}
+
+// Small and large scale colours of a palette surface from its two grey texture samples.
+void VoxelSurfaceColours(uint id, inout float4 small, inout float4 large)
+{
+    float4 pp = _VoxelSurfaceParams[id];
+    float patch = saturate(large.g * pp.x + pp.y);
+    small.rgb = VoxelSurfaceColour(id, lerp(patch, small.g, pp.z), small.r);
+    large.rgb = VoxelSurfaceColour(id, patch, large.r);
+}
+
+// Average linear colour of a block texture (its smallest mip), palette applied.
+float3 VoxelBlockTextureMean(uint id)
+{
+    float4 m = SAMPLE_TEXTURE2D_ARRAY_LOD(_Textures, sampler_Textures, float2(0.5, 0.5), id, 16);
+    if (!VoxelHasSurface(id))
+        return m.rgb;
+    float4 large = m;
+    VoxelSurfaceColours(id, m, large);
+    return m.rgb;
+}
+
 float4 VoxelSampleTiled(uint id, float2 p, float scale, float2 dx, float2 dy, float size)
 {
     float2 uv = frac(p / scale);
@@ -822,9 +857,19 @@ float4 VoxelSampleBlockTexture(uint id, int axis, float3 posWS, float2 dx, float
     _Textures.GetDimensions(w, h, slices);
 
     float4 small = VoxelSampleTiled(id, p, smallScale, dx, dy, w);
-    if (blend <= 0.0)
+    bool palette = VoxelHasSurface(id);
+    if (blend <= 0.0 && !palette)
         return small;
     float4 large = VoxelSampleTiled(id, p, largeScale, dx, dy, w);
+
+    // Palette surface: the large scale grey picks the patch colour, the small scale grey shades
+    // the texel.
+    if (palette)
+    {
+        VoxelSurfaceColours(id, small, large);
+        if (blend <= 0.0)
+            return small;
+    }
 
     if (_VoxelTexVariation.w > 0.5)
         return float4(small.rgb * lerp(1.0, large.rgb * 2.0, blend), small.a);   // multiply (overlay-like)

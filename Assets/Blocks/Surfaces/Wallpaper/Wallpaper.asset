@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: Wallpaper
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: 5a0131f1ddfc6e1478594280134e3750, type: 3}
+  colours:
+  - {r: 0.56848794, g: 0.55008936, b: 0.23501252, a: 1}
+  - {r: 0.5535327, g: 0.5448584, b: 0.28080815, a: 1}
+  shadeDark: 0.8849123
+  shadeLight: 1.0544972
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: 7857212922ef7dc40a8b533297f26c41, type: 3}
+  alphaMask: {fileID: 0}

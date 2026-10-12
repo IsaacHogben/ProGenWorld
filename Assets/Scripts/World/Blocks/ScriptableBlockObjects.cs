@@ -17,6 +17,8 @@ public class BlockDatabase : ScriptableObject
         public bool hasCollision;
         public BlockVisibility visibility;
         public byte alphaMaskIndex;
+        [Tooltip("Drawn on the block's top face when the block above is air.")]
+        public SurfaceDecoration surfaceDecoration;
 
         // Default constructor for new entries
         public BlockEntry(BlockType t)
@@ -28,6 +30,9 @@ public class BlockDatabase : ScriptableObject
             hasCollision = true;
             visibility = BlockVisibility.Opaque;
             alphaMaskIndex = 0;
+            surfaceDecoration = name.IndexOf("grass", StringComparison.OrdinalIgnoreCase) >= 0
+                ? SurfaceDecoration.Grass
+                : SurfaceDecoration.None;
         }
     }
     public struct BlockInfoUnmanaged
@@ -37,6 +42,7 @@ public class BlockDatabase : ScriptableObject
         public bool hasCollision;
         public BlockVisibility visibility;
         public byte alphaMaskIndex;
+        public SurfaceDecoration surfaceDecoration;
     }
 
     [Header("All Block Types")]
@@ -66,7 +72,8 @@ public class BlockDatabase : ScriptableObject
                 isSolid = blocks[i].isSolid,
                 hasCollision = blocks[i].hasCollision,
                 visibility = blocks[i].visibility,
-                alphaMaskIndex = blocks[i].alphaMaskIndex
+                alphaMaskIndex = blocks[i].alphaMaskIndex,
+                surfaceDecoration = blocks[i].surfaceDecoration
             };
         }
         return arr;

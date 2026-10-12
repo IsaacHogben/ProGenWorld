@@ -85,14 +85,18 @@ Shader "ProGenWorld/VoxelRaymarch"
                 }
 
                 half4 albedo = VoxelSampleAlbedo(hit, hitWS, rayDiff);
+                albedo.rgb *= VoxelGrassFarShade(hit.id, hitWS, normalWS);
+
+                // Grass blades are thin cards: lit like the ground they grow from, from both sides.
+                float3 lightNormalWS = hit.grass != 0u ? float3(0, 1, 0) : normalWS;
 
                 InputData inputData = (InputData)0;
                 inputData.positionWS = hitWS;
                 inputData.positionCS = positionCS;
-                inputData.normalWS = normalWS;
+                inputData.normalWS = lightNormalWS;
                 inputData.viewDirectionWS = -rayDirWS;
                 inputData.fogCoord = ComputeFogFactor(positionCS.z);
-                inputData.bakedGI = SampleSH(normalWS);
+                inputData.bakedGI = SampleSH(lightNormalWS);
                 inputData.normalizedScreenSpaceUV = screenUV;
                 inputData.shadowMask = half4(1, 1, 1, 1);
 
@@ -100,7 +104,7 @@ Shader "ProGenWorld/VoxelRaymarch"
                 surface.albedo = albedo.rgb;
                 surface.alpha = 1;
                 surface.metallic = 0;
-                surface.smoothness = _VoxelSmoothness;
+                surface.smoothness = hit.grass != 0u ? 0.0 : _VoxelSmoothness;   // no grazing sheen on blades
                 surface.occlusion = (hit.refined != 0u ? hit.occlusion : 1)
                     * VoxelCornerOcclusion(chunk, input.level, hit, rayDirWS);
                 surface.normalTS = half3(0, 0, 1);

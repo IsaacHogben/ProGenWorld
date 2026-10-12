@@ -215,13 +215,15 @@ public sealed class VoxelWorldRenderer : IDisposable
         for (int i = chunkCapacity - 1; i >= 0; i--) freeSlots.Push(i);
         for (int i = pageCapacity - 1; i >= 0; i--) freePages.Push(i);
 
-        // Block info: visibility | alpha mask index << 8
+        // Block info: visibility | alpha mask index << 8 | surface decoration << 16.
+        // VoxelGpuFormat.GrassMarker (the air above a grass block) keeps the invisible default.
         blockInfoBuffer = CreateBuffer(256, 4);
         var info = new NativeArray<uint>(256, Allocator.Temp);
         for (int i = 0; i < 256; i++)
             info[i] = (uint)BlockVisibility.Invisible;
-        for (int i = 0; i < s.blockDb.Length && i < 256; i++)
-            info[i] = (uint)s.blockDb[i].visibility | ((uint)s.blockDb[i].alphaMaskIndex << 8);
+        for (int i = 0; i < s.blockDb.Length && i < VoxelGpuFormat.GrassMarker; i++)
+            info[i] = (uint)s.blockDb[i].visibility | ((uint)s.blockDb[i].alphaMaskIndex << 8)
+                | ((uint)s.blockDb[i].surfaceDecoration << 16);
         blockInfoBuffer.SetData(info);
         info.Dispose();
 

@@ -138,6 +138,13 @@ public class RenderBenchmark : MonoBehaviour
         configs["noCornerAO"] = () => settings.ambientOcclusion = 0f;
         configs["noSSAO"] = () => { foreach (var s in ssaoFeatures) s.SetActive(false); };
         configs["relief"] = () => settings.relief = true;
+        configs["noGrass"] = () => settings.grass = false;
+        configs["noGrassShadows"] = () => settings.grassShadows = false;
+        configs["flatPatches"] = () => settings.grassPatchHeight = 0f;
+        configs["grass64"] = () => { settings.grassDistance = 64f; settings.grassShadows = false; };
+        configs["noFarShade"] = () => { settings.grassFarShade = 0f; settings.grassShadows = false; settings.grassDistance = 64f; };
+        configs["grass1Blade"] = () => { settings.grassBladesPerBlock = 1f; settings.grassShadows = false; };
+        configs["grass8Blades"] = () => { settings.grassBladesPerBlock = 8f; settings.grassShadows = false; };
         configs["native"] = () => settings.renderScale = 1f;
         configs["scale67"] = () => settings.renderScale = 0.67f;
         configs["scale50"] = () => settings.renderScale = 0.5f;

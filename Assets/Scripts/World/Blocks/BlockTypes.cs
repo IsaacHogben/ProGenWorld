@@ -57,3 +57,10 @@ public enum BlockVisibility
     Stacked     // Semi-transparent but will show adjacent blocks of the same type
 }
 
+// Drawn by the voxel shader on a block's top face when the block above is air (no extra blocks).
+public enum SurfaceDecoration : byte
+{
+    None,
+    Grass        // Texel sized blades, coloured by the block's own texture
+}
+

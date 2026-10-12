@@ -25,6 +25,12 @@
 #define VOXEL_PAGE_UINTS      128u
 #define VOXEL_MAX_STEPS       512
 
+// Surface decorations (_VoxelBlockInfo bits 16-23, BlockDatabase surfaceDecoration).
+#define VOXEL_DECOR_GRASS     1u
+// Id the pack job writes into the air voxel above a grass top (VoxelGpuFormat.GrassMarker).
+// Invisible like air; near the camera the march tests its grass blades (VoxelGrass.hlsl).
+#define VOXEL_ID_GRASS        255u
+
 struct VoxelChunk
 {
     float4 originSize;     // xyz: world origin of the chunk, w: world size of one voxel
@@ -39,7 +45,7 @@ StructuredBuffer<VoxelChunk> _VoxelChunks;
 StructuredBuffer<uint>       _VoxelBricks;
 StructuredBuffer<uint>       _VoxelPages;
 StructuredBuffer<uint2>      _VoxelCells;     // per draw cell: packed content bounds (min, max) in chunk voxels
-StructuredBuffer<uint>       _VoxelBlockInfo; // bits 0-7 visibility, 8-15 alpha mask index
+StructuredBuffer<uint>       _VoxelBlockInfo; // bits 0-7 visibility, 8-15 alpha mask index, 16-23 surface decoration
 StructuredBuffer<uint>       _VoxelDrawList;  // instance id -> draw cell id (slot * _VoxelMaxCells + cell)
 StructuredBuffer<int4>       _VoxelChunkGrid; // toroidal chunk grid: x = slot (-1 empty), yzw = chunk coord
 
@@ -65,6 +71,7 @@ float  _VoxelSpecular;
 float4 _VoxelTexVariation;          // x: small scale, y: large scale (blocks per tile), z: large blend, w: mode (0 lerp, 1 multiply)
 float  _VoxelShadowIgnoreDistance;  // occluders closer than this along a shadow ray are ignored (blocks)
 float  _VoxelSolidLeavesFromLevel;  // detail level from which masked blocks (leaves) render solid; 0 = never
+float  _VoxelTexelCount;            // texels per block texture edge
 
 // Shaders with their own material cbuffer (e.g. the voxel shadow receiver) define this.
 #ifndef VOXEL_NO_MATERIAL_CBUFFER
@@ -80,6 +87,7 @@ CBUFFER_END
 
 uint VoxelBlockVisibility(uint id) { return _VoxelBlockInfo[id] & 0xFFu; }
 uint VoxelBlockMask(uint id)       { return (_VoxelBlockInfo[id] >> 8) & 0xFFu; }
+uint VoxelBlockDecoration(uint id) { return (_VoxelBlockInfo[id] >> 16) & 0xFFu; }
 
 // Detail levels: 0 = full resolution, 1 = half, 2 = quarter. Each level has its own brick table.
 uint VoxelLevelCount(VoxelChunk c) { return max((uint)c.lodBricks.z, 1u); }
@@ -143,6 +151,40 @@ uint VoxelFetchNeighbor(VoxelChunk c, uint level, int3 p)
 uint VoxelFetchAny(VoxelChunk c, uint level, int3 p)
 {
     return VoxelInChunk(c, level, p) ? VoxelFetch(c, level, p) : VoxelFetchNeighbor(c, level, p);
+}
+
+// Voxel the camera march sees at p inside a draw cell. A cell with grass in the chunk's top layer
+// reaches one voxel above the chunk (the blades stand in the chunk above, whose data does not
+// mark them): that layer is the grass marker over exposed grass, air otherwise.
+uint VoxelFetchMarch(VoxelChunk c, uint level, int3 p, out bool isUniform)
+{
+    isUniform = false;
+    uint id = 0u;
+    if (p.y >= VoxelLevelRes(c, level))
+    {
+        if (level == 0u && VoxelBlockDecoration(VoxelFetch(c, 0u, p - int3(0, 1, 0))) == VOXEL_DECOR_GRASS
+            && VoxelBlockVisibility(VoxelFetchNeighbor(c, 0u, p)) == VOXEL_VIS_INVISIBLE)
+            id = VOXEL_ID_GRASS;
+    }
+    else
+    {
+        uint entry = VoxelFetchBrick(c, level, p >> 3);
+        isUniform = (entry & VOXEL_BRICK_UNIFORM) != 0u;
+        id = isUniform ? (entry & 0xFFu) : VoxelFetchInBrick(entry, p & 7);
+    }
+    return id;
+}
+
+// Whether the level 0 voxel v (id already fetched; v may lie just outside the chunk) is the air
+// above a grass top. Inside a chunk that is the grass marker; only air in the bottom layer (grass
+// in the chunk below) or just above the chunk (grass in the top layer) needs the block below.
+bool VoxelGrassAir(VoxelChunk c, int3 v, uint id)
+{
+    if (id == VOXEL_ID_GRASS)
+        return true;
+    if (id != 0u || (v.y != 0 && v.y != VoxelLevelRes(c, 0u)))
+        return false;
+    return VoxelBlockDecoration(VoxelFetchAny(c, 0u, v - int3(0, 1, 0))) == VOXEL_DECOR_GRASS;
 }
 
 // --------------------------------------------------------------------------------------
@@ -227,6 +269,7 @@ struct VoxelHit
     int    texAxis;    // face whose texture colours the hit column
     float3 texPosWS;   // texel centre of the hit column
     float  occlusion;  // ambient occlusion from the column depth (1 = none)
+    uint   grass;      // 1 = a grass blade (id is the grass block it grows from)
 };
 
 bool VoxelRayBox(float3 o, float3 invD, float3 bmin, float3 bmax,
@@ -289,14 +332,20 @@ bool VoxelOutside(int3 p, float3 bmin, float3 bmax)
     return any(p < (int3)bmin) || any(p >= (int3)bmax);
 }
 
+#include "VoxelGrass.hlsl"
+
 // First opaque (or alpha-mask passing) surface along the ray inside [bmin, bmax).
 // o/d are in chunk voxel space.
 // skipStartSolid: when the ray starts inside solid voxels, ignore them until it reaches open
 // space (used by shadow rays that skip nearby occluders).
 // stopAtMaskedBefore: masked voxels entered before this t are returned as hits at their entry
 // (the texel relief gives them thickness). 0 = off.
-bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3 o, float3 d, float tMin, out VoxelHit hit,
-                      bool skipStartSolid = false, float stopAtMaskedBefore = 0.0)
+// stopAtGrassBefore: the stretch of the ray in the grass layer (air above grass tops, level 0,
+// below the blade tips) before this t is returned in grassSpan (x: first entry, y: last exit;
+// -1 = none) for VoxelGrassSegment. The blades are not tested here: inside this loop every pixel
+// of a GPU wave would wait for each one that stops at grass.
+bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3 o, float3 d, float tMin, out VoxelHit hit,
+                      bool skipStartSolid, float stopAtMaskedBefore, float stopAtGrassBefore, inout float2 grassSpan)
 {
     hit = (VoxelHit)0;
     d = VoxelSafeDir(d);
@@ -316,13 +365,13 @@ bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
     int majorAxis = VoxelMajorAxis(d);
     uint prevId = 0u;
     uint prevVis = VOXEL_VIS_INVISIBLE;
+    float grassTips = VoxelGrassTips();   // blade tips above the grass top (voxels = blocks)
 
     [loop]
     for (int i = 0; i < VOXEL_MAX_STEPS; i++)
     {
-        uint entry = VoxelFetchBrick(c, level, cur.p >> 3);
-        bool isUniform = (entry & VOXEL_BRICK_UNIFORM) != 0u;
-        uint id = isUniform ? (entry & 0xFFu) : VoxelFetchInBrick(entry, cur.p & 7);
+        bool isUniform = false;
+        uint id = VoxelFetchMarch(c, level, cur.p, isUniform);
         uint vis = VoxelBlockVisibility(id);
         if (solidMasked && vis == VOXEL_VIS_STACKED)
             vis = VOXEL_VIS_OPAQUE;
@@ -364,6 +413,19 @@ bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
             return true;
         }
 
+        // Air above grass where the ray dips below the blade tips: part of the grass stretch.
+        if (id == VOXEL_ID_GRASS && cur.t < stopAtGrassBefore)
+        {
+            float3 tExit3 = ((float3)cur.p + (float3)(stepDir > 0) - o) * invD;
+            float tExit = min(tExit3.x, min(tExit3.y, tExit3.z));
+            if (min(pos.y, o.y + d.y * tExit) - (float)cur.p.y < grassTips)
+            {
+                if (grassSpan.x < 0.0)
+                    grassSpan.x = cur.t;
+                grassSpan.y = tExit;
+            }
+        }
+
         float3 cellMin, cellMax;
         VoxelStepBounds(cur.p, isUniform && vis != VOXEL_VIS_STACKED, bmin, bmax, cellMin, cellMax);
         VoxelAdvance(cur, o, d, invD, stepDir, cellMin, cellMax);
@@ -389,6 +451,66 @@ bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
         }
     }
     return false;
+}
+
+#define VOXEL_GRASS_SEGMENT_VOXELS 32
+
+// Grass blades along [tFrom, tTo) of a camera ray (level 0, chunk voxel space): walks the voxels
+// of that stretch and tests the blades of the grass voxels the ray dips into. hit: the nearest
+// blade, when there is one.
+bool VoxelGrassSegment(VoxelChunk c, float3 bmin, float3 bmax, float3 o, float3 d, float tFrom, float tTo, inout VoxelHit hit)
+{
+    d = VoxelSafeDir(d);
+    float3 invD = 1.0 / d;
+    int3 stepDir = int3(d.x > 0 ? 1 : -1, d.y > 0 ? 1 : -1, d.z > 0 ? 1 : -1);
+    float tips = VoxelGrassTips();
+    float t = tFrom;
+    int3 p = (int3)floor(o + d * (tFrom + 1e-4));
+
+    [loop]
+    for (int i = 0; i < VOXEL_GRASS_SEGMENT_VOXELS && t < tTo; i++)
+    {
+        if (VoxelOutside(p, bmin, bmax))
+            break;
+
+        float3 tExit3 = ((float3)p + (float3)(stepDir > 0) - o) * invD;
+        float tExit = min(tExit3.x, min(tExit3.y, tExit3.z));
+        bool isUniform;
+        if (VoxelFetchMarch(c, 0u, p, isUniform) == VOXEL_ID_GRASS
+            && min(o.y + d.y * t, o.y + d.y * tExit) - (float)p.y < tips)
+        {
+            VoxelGrassBlade blade; float tBlade; int row, along;
+            float fade = VoxelGrassFade(t * c.originSize.w);
+            if (VoxelGrassTrace(c, p, o, d, invD, t, min(tExit, tTo), fade, 0.0, blade, tBlade, row, along))
+            {
+                hit = (VoxelHit)0;
+                hit.t = tBlade; hit.axis = blade.axis; hit.posVoxel = o + d * tBlade;
+                VoxelGrassFillHit(c, p, blade, row, along, VoxelGrassTexels(), hit);
+                return true;
+            }
+        }
+
+        int axis = (tExit3.x <= tExit3.y && tExit3.x <= tExit3.z) ? 0 : (tExit3.y <= tExit3.z ? 1 : 2);
+        p += stepDir * VoxelAxisMask(axis);
+        t = tExit;
+    }
+    return false;
+}
+
+// First opaque (or alpha-mask passing) surface or grass blade along the ray inside [bmin, bmax).
+// See VoxelMarchVoxels for the parameters.
+bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3 o, float3 d, float tMin, out VoxelHit hit,
+                      bool skipStartSolid = false, float stopAtMaskedBefore = 0.0, float stopAtGrassBefore = 0.0)
+{
+    float2 grassSpan = float2(-1.0, -1.0);
+    bool found = VoxelMarchVoxels(c, level, bmin, bmax, o, d, tMin, hit, skipStartSolid, stopAtMaskedBefore, stopAtGrassBefore, grassSpan);
+    if (grassSpan.x >= 0.0)
+    {
+        float tTo = found ? min(grassSpan.y, hit.t) : grassSpan.y;
+        if (VoxelGrassSegment(c, bmin, bmax, o, d, grassSpan.x, tTo, hit))
+            return true;
+    }
+    return found;
 }
 
 // Low detail occlusion test that only walks bricks (8x8x8). A brick blocks the ray when it is
@@ -721,11 +843,12 @@ float4 VoxelSampleBlockTexture(uint id, int axis, float3 posWS, VoxelRayDiff r)
 float4 VoxelSampleAlbedo(VoxelHit hit, float3 hitWS, VoxelRayDiff r)
 {
     // Relief columns take the colour of their texel on the face they were carved from, walls
-    // included. The footprint is taken at the actual hit so the mip matches the visible size.
+    // included. The footprint is taken at the actual hit so the mip matches the visible size
+    // (on the card itself for grass blades, which are coloured from the top face below them).
     if (hit.refined != 0u)
     {
         float2 dx, dy;
-        VoxelFaceFootprint(r, hit.texAxis, hitWS, dx, dy);
+        VoxelFaceFootprint(r, hit.grass != 0u ? hit.axis : hit.texAxis, hitWS, dx, dy);
         return VoxelSampleBlockTexture(hit.id, hit.texAxis, hit.texPosWS, dx, dy);
     }
     return VoxelSampleBlockTexture(hit.id, hit.axis, hitWS, r);
@@ -768,10 +891,17 @@ float VoxelCornerOcclusion(VoxelChunk c, uint level, VoxelHit hit, float3 rayDir
     if (_VoxelAmbientOcclusion <= 0.0 || VoxelBlockVisibility(hit.id) == VOXEL_VIS_STACKED)
         return 1.0;
 
-    // Relief hits sit inside the block: use the exposed face they were carved from.
+    // Relief hits sit inside the block: use the exposed face they were carved from. Grass blades
+    // take the occlusion of the top face they grow from.
     int a = hit.refined != 0u ? hit.texAxis : hit.axis;
     bool facePositive = rayDir[a] < 0.0;
     float3 p = hit.posVoxel;
+    if (hit.grass != 0u)
+    {
+        a = 1;
+        facePositive = true;
+        p.y = floor((hit.texPosWS.y - c.originSize.y) / (c.originSize.w * VoxelLevelScale(level)));
+    }
 
     int3 m = VoxelAxisMask(a);
     int frontA = facePositive ? (int)ceil(p[a] - 1e-3) : (int)floor(p[a] + 1e-3) - 1;
@@ -870,9 +1000,11 @@ bool VoxelTraceCamera(VoxelVaryings input, out VoxelHit hit, out float3 hitWS, o
 
     float vs = c.originSize.w * VoxelLevelScale(input.level);
     float3 o = (ro - c.originSize.xyz) / vs;
-    // Near the camera the march stops at leaf voxels so the relief can give them thickness.
+    // Near the camera the march stops at leaf voxels so the relief can give them thickness, and
+    // above grass so it can grow the blades.
     float stopMasked = input.level == 0u ? VoxelReliefMaskedStop(vs) : 0.0;
-    bool found = VoxelMarchOpaque(c, input.level, bmin, bmax, o, rayDirWS, tMinWS / vs, hit, false, stopMasked);
+    float stopGrass = input.level == 0u ? VoxelGrassStop(vs) : 0.0;
+    bool found = VoxelMarchOpaque(c, input.level, bmin, bmax, o, rayDirWS, tMinWS / vs, hit, false, stopMasked, stopGrass);
 
     hitWS = ro + rayDirWS * (hit.t * vs);
     normalWS = VoxelFaceNormal(hit.axis, rayDirWS);

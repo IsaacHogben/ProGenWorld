@@ -20,7 +20,6 @@
 float _VoxelPrepassReuse;    // 1 while this camera's prepass depth / normals can be reused
 float _VoxelScreenShadows;   // 1 while _ScreenSpaceShadowmapTexture holds this camera's resolved shadows
 float _VoxelShadowPixelated; // 1 = sun shadows snapped to the block texture's texels
-float _VoxelTexelCount;      // texels per block texture edge
 TEXTURE2D(_VoxelScreenShadowTexture);   // r: sun visibility, g: texel key, b: linear eye depth
 
 #define VOXEL_RESOLVE_HIT   0   // hit rebuilt, and it lies in this draw cell
@@ -111,6 +110,16 @@ int VoxelResolvePrepass(VoxelChunk c, uint level, float3 bmin, float3 bmax, floa
 
     uint id = VoxelFetchGrid(c, level, q);
     uint vis = VoxelBlockVisibility(id);
+    if (level == 0u && VoxelGrassAir(c, q, id))
+    {
+        // A grass blade: find the card under the surface.
+        if (VoxelOutside(q, bmin, bmax))
+            return VOXEL_RESOLVE_OTHER;
+        hit.axis = axis;
+        hit.posVoxel = pv;
+        return VoxelGrassResolve(c, q, pv, axis, distance(hitWS, GetCameraPositionWS()), hit)
+            ? VOXEL_RESOLVE_HIT : VOXEL_RESOLVE_TRACE;
+    }
     if (vis != VOXEL_VIS_OPAQUE && vis != VOXEL_VIS_STACKED)
         return VOXEL_RESOLVE_TRACE;   // e.g. the far face of a leaf block: the surface is in front
     if (VoxelOutside(q, bmin, bmax))
@@ -151,12 +160,16 @@ float VoxelShadowKey(float3 hitWS, float3 normalWS)
     return (float)(h & 0xFFFFFFu);
 }
 
-// Voxel sun shadow at a surface, traced in place (no screen shadow texture available).
+// Voxel sun shadow at a surface, traced in place (no screen shadow texture available). Grass
+// blades are lit as if facing up (VoxelGrassLightNormal), so their shadow uses that normal too.
 half VoxelTraceSurfaceShadow(VoxelChunk c, VoxelHit hit, float3 hitWS, float3 normalWS, float3 sunDir)
 {
-    half s = VoxelSunShadow(VoxelShadowOrigin(hitWS, normalWS), normalWS, sunDir);
+    float3 n = hit.grass != 0u ? float3(0, 1, 0) : normalWS;
+    half s = VoxelSunShadow(VoxelShadowOrigin(hitWS, n), n, sunDir);
     if (s > 0.0)
         s *= VoxelReliefSunShadow(c, hit, hitWS, normalWS, sunDir);
+    if (s > 0.0)
+        s *= VoxelGrassSunShadow(c, hitWS, sunDir);
     return s;
 }
 

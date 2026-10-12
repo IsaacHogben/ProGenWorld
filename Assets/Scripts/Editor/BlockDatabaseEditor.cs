@@ -55,7 +55,8 @@ public class BlockDatabaseEditor : Editor
             var collProp = element.FindPropertyRelative("hasCollision");
             var visProp = element.FindPropertyRelative("visibility");
             var alphaMaskProp = element.FindPropertyRelative("alphaMaskIndex");
-     
+            var decorationProp = element.FindPropertyRelative("surfaceDecoration");
+
             EditorGUILayout.PropertyField(typeProp, new GUIContent("Type"));
             EditorGUILayout.PropertyField(matProp, new GUIContent("Texture"));
             EditorGUILayout.PropertyField(visProp, new GUIContent("Visibility"));
@@ -63,6 +64,7 @@ public class BlockDatabaseEditor : Editor
             {
                 EditorGUILayout.PropertyField(alphaMaskProp, new GUIContent("Alpha Mask Index"));
             }
+            EditorGUILayout.PropertyField(decorationProp, new GUIContent("Surface Decoration"));
             EditorGUILayout.BeginHorizontal();
 
             solidProp.boolValue = EditorGUILayout.ToggleLeft("Solid", solidProp.boolValue);

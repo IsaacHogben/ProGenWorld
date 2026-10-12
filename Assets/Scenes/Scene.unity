@@ -1780,6 +1780,18 @@ MonoBehaviour:
   reliefFade: 54
   reliefOcclusion: 0.121
   reliefShadows: 0
+  grass: 1
+  grassHeight: 0.481
+  grassBladesPerBlock: 16
+  grassCoverage: 0.5
+  grassWidth: 2
+  grassLean: 2
+  grassPatchHeight: 2
+  grassShadows: 0
+  grassRootShade: 0.355
+  grassDistance: 64
+  grassFade: 8
+  grassFarShade: 0.25
   shadowResolution: 2
   pixelatedShadows: 1
   sunShadowDistance: 256

@@ -108,9 +108,8 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                 [loop]
                 for (int i = 0; i < VOXEL_MAX_STEPS; i++)
                 {
-                    uint entry = VoxelFetchBrick(c, level, cur.p >> 3);
-                    bool isUniform = (entry & VOXEL_BRICK_UNIFORM) != 0u;
-                    uint id = isUniform ? (entry & 0xFFu) : VoxelFetchInBrick(entry, cur.p & 7);
+                    bool isUniform = false;
+                    uint id = VoxelFetchMarch(c, level, cur.p, isUniform);
                     uint vis = VoxelBlockVisibility(id);
                     if (i == 0 && startedInside)
                         prevId = id;

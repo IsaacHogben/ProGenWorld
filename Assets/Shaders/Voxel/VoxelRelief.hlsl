@@ -265,16 +265,20 @@ bool VoxelReliefFallback(VoxelChunk c, float3 bmin, float3 bmax, float3 ro, floa
 
 // Refines a coarse level 0 camera hit with the texel relief. o / tMin parameters match the
 // coarse march (chunk voxel space). The coarse hit is either an opaque face or the entry of a
-// masked voxel (the coarse march stops there when leaf thickness is on). Returns false when the
-// ray slips past everything in this draw cell (another cell's box then draws the pixel).
+// masked voxel (the coarse march stops there when leaf thickness is on). Grass blade hits are
+// final. Returns false when the ray slips past everything in this draw cell (another cell's box
+// then draws the pixel).
 bool VoxelReliefRefine(VoxelChunk c, float3 bmin, float3 bmax, float3 ro, float3 o, float3 rd, float vs,
                        inout VoxelHit hit, inout float3 hitWS, inout float3 normalWS)
 {
     float stopMasked = VoxelReliefMaskedStop(vs);
+    float stopGrass = VoxelGrassStop(vs);
 
     [loop]
     for (int attempt = 0; attempt < VOXEL_RELIEF_ATTEMPTS; attempt++)
     {
+        if (hit.grass != 0u)
+            return true;
         bool masked = VoxelBlockVisibility(hit.id) == VOXEL_VIS_STACKED;
         VoxelReliefParams rp;
         if (!VoxelReliefSetup(hitWS, rp))
@@ -309,7 +313,7 @@ bool VoxelReliefRefine(VoxelChunk c, float3 bmin, float3 bmax, float3 ro, float3
         // Slipped through a carved edge or a leaf hole into open space: find the next surface
         // behind it. (Starts a hair past the boundary so rounding cannot put it back in the voxel.)
         VoxelHit next;
-        if (!VoxelMarchOpaque(c, 0u, bmin, bmax, o, rd, hit.t + r.t / vs + 1e-3, next, false, stopMasked))
+        if (!VoxelMarchOpaque(c, 0u, bmin, bmax, o, rd, hit.t + r.t / vs + 1e-3, next, false, stopMasked, stopGrass))
             return false;
         hit = next;
         hitWS = ro + rd * (hit.t * vs);
@@ -324,7 +328,7 @@ bool VoxelReliefRefine(VoxelChunk c, float3 bmin, float3 bmax, float3 ro, float3
 // Sun shadow cast by the relief columns and leaf slabs onto a refined hit (1 = lit).
 float VoxelReliefSunShadow(VoxelChunk c, VoxelHit hit, float3 hitWS, float3 normalWS, float3 sunDirWS)
 {
-    if (hit.refined == 0u || _VoxelReliefShadows < 0.5 || dot(normalWS, sunDirWS) <= 0.0)
+    if (hit.refined == 0u || hit.grass != 0u || _VoxelReliefShadows < 0.5 || dot(normalWS, sunDirWS) <= 0.0)
         return 1.0;
 
     VoxelReliefParams rp;

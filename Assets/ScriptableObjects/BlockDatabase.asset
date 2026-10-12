@@ -20,6 +20,7 @@ MonoBehaviour:
     hasCollision: 0
     visibility: 2
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 1
     name: Dirt
     texture: {fileID: 2800000, guid: af8c2309a0289eb48a415b322a9bd93c, type: 3}
@@ -27,6 +28,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 2
     name: Grass
     texture: {fileID: 2800000, guid: 19be8b484f399db45aa3efbf43b1ef1b, type: 3}
@@ -34,6 +36,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 3
     name: Stone
     texture: {fileID: 2800000, guid: 9edad615d6d0887499fb7bfec0a80d54, type: 3}
@@ -41,6 +44,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 4
     name: Log
     texture: {fileID: 2800000, guid: 95102e4745eaede4b8c72c6b3e918f14, type: 3}
@@ -48,6 +52,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 5
     name: Leaves
     texture: {fileID: 2800000, guid: 947ed903c9b980549b2820e858f7a6db, type: 3}
@@ -55,6 +60,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 6
     name: Leaves
     texture: {fileID: 2800000, guid: 9ed0cc8bb29b40746bfdd41e64e021b3, type: 3}
@@ -62,6 +68,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 7
     name: Leaves
     texture: {fileID: 2800000, guid: 5a6f8648f766b524ab741458ae7253a3, type: 3}
@@ -69,6 +76,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 8
     name: Log
     texture: {fileID: 2800000, guid: fb6021629557d804d84c624b50dccff3, type: 3}
@@ -76,6 +84,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 9
     name: Leaves
     texture: {fileID: 2800000, guid: c58add1582493c54ebcd68c2cd606fc8, type: 3}
@@ -83,6 +92,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 10
     name: Sand
     texture: {fileID: 2800000, guid: c58add1582493c54ebcd68c2cd606fc8, type: 3}
@@ -90,6 +100,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 11
     name: PearlSand
     texture: {fileID: 2800000, guid: fbe598f58a881f9439a967518374038e, type: 3}
@@ -97,6 +108,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 1
   - type: 12
     name: Water
     texture: {fileID: 2800000, guid: ff3d1ac145d22c54dbf2c8f0dd6b4c91, type: 3}
@@ -104,6 +116,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 1
   - type: 13
     name: Water
     texture: {fileID: 2800000, guid: 43562a14eb45d3d4f835961ebb659f81, type: 3}
@@ -111,6 +124,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 1
   - type: 14
     name: Leaves
     texture: {fileID: 2800000, guid: 97b05a1506e83ef4ab14488a2549e5d9, type: 3}
@@ -118,6 +132,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 1
   - type: 15
     name: Sand
     texture: {fileID: 2800000, guid: fe209f4b256f4b841bda972e72876d6f, type: 3}
@@ -125,6 +140,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 16
     name: PearlSand
     texture: {fileID: 2800000, guid: b5a2e4b0f1d2e6341bd51faa444c6106, type: 3}
@@ -132,6 +148,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 3
     alphaMaskIndex: 2
+    surfaceDecoration: 0
   - type: 17
     name: Water
     texture: {fileID: 2800000, guid: db6c75d3610fefd4788dfed81baed279, type: 3}
@@ -139,6 +156,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 18
     name: PearlSand
     texture: {fileID: 2800000, guid: 80c67f05647f67049a093ede8a30fd4b, type: 3}
@@ -146,6 +164,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 19
     name: Water
     texture: {fileID: 2800000, guid: a29d0c1859bd07e4993d1189929af243, type: 3}
@@ -153,6 +172,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 20
     name: Fungus_stem
     texture: {fileID: 2800000, guid: 0f1c13b68beb44a478a26006e046d595, type: 3}
@@ -160,6 +180,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 21
     name: Fungus_mycelium
     texture: {fileID: 2800000, guid: 603a7b5aa046ade479d8d3b4c3dc522b, type: 3}
@@ -167,6 +188,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 22
     name: Water
     texture: {fileID: 2800000, guid: 69ff345f0f7dc544db353278f8310763, type: 3}
@@ -174,6 +196,7 @@ MonoBehaviour:
     hasCollision: 0
     visibility: 1
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 23
     name: RedSandStone
     texture: {fileID: 2800000, guid: 52f5806018e1c874dafa7b0a7ce0258e, type: 3}
@@ -181,6 +204,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 24
     name: SandStone
     texture: {fileID: 2800000, guid: 832e4d24cf0d3f64bbc7c02763c5c46e, type: 3}
@@ -188,6 +212,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 25
     name: SandStone
     texture: {fileID: 2800000, guid: 463e79af0eb3b6d4d8c46a4ef2be2d7d, type: 3}
@@ -195,6 +220,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 3
     alphaMaskIndex: 1
+    surfaceDecoration: 0
   - type: 26
     name: SandStone
     texture: {fileID: 2800000, guid: ad7d1bbbbf9414745b306c45389c6485, type: 3}
@@ -202,6 +228,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 3
     alphaMaskIndex: 2
+    surfaceDecoration: 0
   - type: 27
     name: City_Surface
     texture: {fileID: 2800000, guid: f8276d6d172bb934789da375607507cc, type: 3}
@@ -209,6 +236,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 28
     name: City_Structure
     texture: {fileID: 2800000, guid: 63ea95e29a4857844965c17e70a08c0c, type: 3}
@@ -216,6 +244,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 29
     name: City_Overgrowth
     texture: {fileID: 2800000, guid: 378bf7eb9ebc1b340a6deea4aaf80e5c, type: 3}
@@ -223,6 +252,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 30
     name: Backrooms
     texture: {fileID: 2800000, guid: e7c01e1a2eea2894b8c2b25e33b82b4c, type: 3}
@@ -230,6 +260,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 31
     name: Carpet
     texture: {fileID: 2800000, guid: 792274590f0c0e747bfd48d4f0581329, type: 3}
@@ -237,6 +268,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0
   - type: 32
     name: CherryBlossom
     texture: {fileID: 2800000, guid: c810ea8a5a474c59b968303dd3573e26, type: 3}
@@ -244,6 +276,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 3
     alphaMaskIndex: 1
+    surfaceDecoration: 0
   - type: 33
     name: CherryBlossomPale
     texture: {fileID: 2800000, guid: 37ddfafce9ea47efb0fe46d57a7f7955, type: 3}
@@ -251,6 +284,7 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 3
     alphaMaskIndex: 2
+    surfaceDecoration: 0
   - type: 34
     name: CherryBark
     texture: {fileID: 2800000, guid: bdc047d773904e0bbbdbdc51aa594314, type: 3}
@@ -258,3 +292,4 @@ MonoBehaviour:
     hasCollision: 1
     visibility: 0
     alphaMaskIndex: 0
+    surfaceDecoration: 0

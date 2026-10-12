@@ -23,6 +23,11 @@ public static class VoxelGpuFormat
     public const uint DenseFlag = 0x40000000u;   // mixed brick, at least half solid (coarse shadow LOD)
     public const uint PageMask = 0x3FFFFFFFu;
 
+    // Block id written into the air voxel above a block with a grass surface decoration. Invisible
+    // to everything but the shader's grass (VoxelRelief.hlsl); it makes the voxels above grass
+    // individually addressable so the march can stop there. Never a real block id.
+    public const byte GrassMarker = 255;
+
     public const uint FlagHasOpaque = 1u;      // contains opaque or alpha masked blocks
     public const uint FlagHasTranslucent = 2u; // contains translucent blocks (water...)
 
@@ -182,13 +187,12 @@ public struct VoxelPackJob : IJob
         int mixed = 0;
         int brickOffset = 0;
 
+        PlaceGrass(grid, res, cellSize, cpa);
         PackLevel(grid, res, brickOffset, ref mixed, true, cellSize, cpa, ref bmin, ref bmax, ref flags);
         Occlusion(grid, res, cpa, true);
         brickOffset += VoxelGpuFormat.BricksInLevel(res, 0);
 
         bool empty = bmax.x < bmin.x;
-        if (collectECSSpawns && !empty)
-            CollectSpawns(grid, res);
 
         // ---- Coarser levels: each voxel keeps the top-most visible block of its 2x2x2 parent cell
         int levelRes = res;
@@ -259,7 +263,7 @@ public struct VoxelPackJob : IJob
                 byte id = grid[Index(p, res)];
                 if (id != first) uniform = false;
 
-                var vis = blockDb[id].visibility;
+                var vis = Visibility(id);
                 if (vis == BlockVisibility.Invisible)
                     continue;
                 if (vis != BlockVisibility.Translucent)
@@ -366,7 +370,36 @@ public struct VoxelPackJob : IJob
         }
     }
 
-    bool IsOpaque(NativeArray<byte> grid, int3 p, int res) => blockDb[grid[Index(p, res)]].visibility == BlockVisibility.Opaque;
+    bool IsOpaque(NativeArray<byte> grid, int3 p, int res) => Visibility(grid[Index(p, res)]) == BlockVisibility.Opaque;
+
+    BlockVisibility Visibility(byte id) => id == VoxelGpuFormat.GrassMarker ? BlockVisibility.Invisible : blockDb[id].visibility;
+
+    // Marks the air above every exposed grass top (level 0 only) and grows the draw cell of the
+    // grass block by one voxel upwards so its box covers the blades. Grass in the top layer has its
+    // blades in the chunk above: the cell box reaches one voxel past the chunk and the shader
+    // decides there from the block below (VoxelFetchMarch).
+    void PlaceGrass(NativeArray<byte> grid, int res, int cellSize, int cpa)
+    {
+        for (int z = 0; z < res; z++)
+        for (int y = 0; y < res; y++)
+        for (int x = 0; x < res; x++)
+        {
+            byte id = grid[Index(new int3(x, y, z), res)];
+            if (id == VoxelGpuFormat.GrassMarker || blockDb[id].surfaceDecoration != SurfaceDecoration.Grass)
+                continue;
+
+            bool top = y + 1 >= res;
+            byte above = top ? GetBlock(x, math.min(res, chunkSize), z) : grid[Index(new int3(x, y + 1, z), res)];
+            if (above == VoxelGpuFormat.GrassMarker || blockDb[above].visibility != BlockVisibility.Invisible)
+                continue;
+            if (!top)
+                grid[Index(new int3(x, y + 1, z), res)] = VoxelGpuFormat.GrassMarker;
+
+            int3 cc = new int3(x, y, z) / cellSize;
+            int cb = (cc.x + (cc.y + cc.z * cpa) * cpa) * VoxelGpuFormat.CellInts;
+            cells[cb + 4] = math.max(cells[cb + 4], y + 1);   // inclusive max, the voxel's own bounds come from PackLevel
+        }
+    }
 
     // Keeps the top-most visible block of each 2x2x2 cell so surfaces keep their material
     // (grass stays on top of dirt when seen from a distance).
@@ -382,7 +415,7 @@ public struct VoxelPackJob : IJob
             for (int dx = 0; dx < 2; dx++)
             {
                 byte id = fine[Index(new int3(x * 2 + dx, y * 2 + dy, z * 2 + dz), fineRes)];
-                if (blockDb[id].visibility != BlockVisibility.Invisible)
+                if (Visibility(id) != BlockVisibility.Invisible)
                 {
                     best = id;
                     break;
@@ -398,35 +431,5 @@ public struct VoxelPackJob : IJob
     {
         int s = chunkSize + 1;
         return blocks[x + y * s + z * s * s];
-    }
-
-    void CollectSpawns(NativeArray<byte> grid, int res)
-    {
-        uint seed = (uint)(coord.x * 73856093 ^ coord.y * 19349663 ^ coord.z * 83492791) | 1u;
-        var rng = new Unity.Mathematics.Random(seed);
-
-        for (int z = 0; z < res; z++)
-        for (int x = 0; x < res; x++)
-        for (int y = 0; y < res; y++)
-        {
-            if (grid[Index(new int3(x, y, z), res)] != (byte)BlockType.Grass_red)
-                continue;
-
-            byte above = y + 1 < res ? grid[Index(new int3(x, y + 1, z), res)] : GetBlock(x, chunkSize, z);
-            if (blockDb[above].visibility == BlockVisibility.Opaque)
-                continue;
-
-            if (rng.NextFloat() <= 0.9f)
-                continue;
-
-            ecsSpawns.Add(new ECSSpawnPoint
-            {
-                position = new float3(x, y, z),
-                category = (byte)DecorationCategory.Vegetation,
-                decorationType = (byte)DecorationType.Vegetation.Fern,
-                biomeIndex = 0,
-                flags = 0
-            });
-        }
     }
 }

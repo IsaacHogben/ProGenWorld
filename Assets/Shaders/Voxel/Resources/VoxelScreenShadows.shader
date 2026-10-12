@@ -58,22 +58,33 @@ Shader "Hidden/ProGenWorld/VoxelScreenShadows"
                     return float4(VoxelSunShadowForObject(hitWS, n, sunDir), -1, eye, -1);
                 }
 
-                float shadow = VoxelSunShadow(VoxelShadowOrigin(hitWS, normalWS), normalWS, sunDir);
+                // The chunk behind the surface. A surface in the air above grass is a blade: blades
+                // are lit as if facing up (VoxelGrassLightNormal), so their shadow uses that normal.
+                float3 inside = hitWS - normalWS * 0.01;
+                int slot = _VoxelChunkWorldSize > 0.0 ? VoxelLookupChunk((int3)floor(inside / _VoxelChunkWorldSize)) : -1;
+                VoxelChunk c = (VoxelChunk)0;
+                bool blade = false;
+                if (slot >= 0)
+                {
+                    c = _VoxelChunks[slot];
+                    int3 q = (int3)floor((inside - c.originSize.xyz) / c.originSize.w);
+                    blade = VoxelGrassAir(c, q, VoxelFetchAny(c, 0u, q));
+                }
+                float3 lightNormal = blade ? float3(0, 1, 0) : normalWS;
+
+                float shadow = VoxelSunShadow(VoxelShadowOrigin(hitWS, lightNormal), lightNormal, sunDir);
 
                 // Relief columns shadowing each other (needs the refined hit of the chunk).
-                if (shadow > 0.0 && _VoxelReliefShadows > 0.5 && _VoxelChunkWorldSize > 0.0)
+                if (shadow > 0.0 && _VoxelReliefShadows > 0.5 && slot >= 0 && !blade)
                 {
-                    float3 inside = hitWS - normalWS * 0.01;
-                    int slot = VoxelLookupChunk((int3)floor(inside / _VoxelChunkWorldSize));
-                    if (slot >= 0)
-                    {
-                        VoxelChunk c = _VoxelChunks[slot];
-                        VoxelHit hit = (VoxelHit)0;
-                        hit.axis = axis;
-                        VoxelResolveRelief(c, hitWS, normalWS, hit);
-                        shadow *= VoxelReliefSunShadow(c, hit, hitWS, normalWS, sunDir);
-                    }
+                    VoxelHit hit = (VoxelHit)0;
+                    hit.axis = axis;
+                    VoxelResolveRelief(c, hitWS, normalWS, hit);
+                    shadow *= VoxelReliefSunShadow(c, hit, hitWS, normalWS, sunDir);
                 }
+                // Grass blades shadowing the ground and each other.
+                if (shadow > 0.0 && slot >= 0)
+                    shadow *= VoxelGrassSunShadow(c, hitWS, sunDir);
 
                 float key = _VoxelShadowPixelated > 0.5 ? VoxelShadowKey(hitWS, normalWS) : -1.0;
                 return float4(shadow, key, eye, VoxelFaceId(normalWS));

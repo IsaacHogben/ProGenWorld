@@ -69,6 +69,32 @@ public class VoxelRenderSettings : MonoBehaviour
     [Tooltip("Relief columns cast sun shadows on each other.")]
     public bool reliefShadows = true;
 
+    [Header("Grass")]
+    [Tooltip("Grow thin pixel art grass blades on the top face of blocks whose Surface Decoration is Grass (Block Database), when the block above is air. Blades take the colour of the top texel they stand on.")]
+    public bool grass = true;
+    [Tooltip("Tallest blade (blocks). Rounded to whole texels; blades vary between about half of this and all of it.")]
+    [Range(0f, 0.9375f)] public float grassHeight = 0.5f;
+    [Tooltip("Blades on a block that shows grass, on average.")]
+    [Range(0f, 16f)] public float grassBladesPerBlock = 5f;
+    [Tooltip("Share of grass blocks that show grass. Bare and grassy blocks form patches a few blocks wide.")]
+    [Range(0f, 1f)] public float grassCoverage = 0.6f;
+    [Tooltip("Widest blade root (texels). Blades narrow to one texel at the tip.")]
+    [Range(1, 4)] public int grassWidth = 2;
+    [Tooltip("Most a blade's tip leans sideways (texels).")]
+    [Range(0, 4)] public int grassLean = 2;
+    [Tooltip("Blades rise towards the densest centre of a coverage patch, where they reach Grass Height: 1 = blades at the patch edges are half as tall as at the centre. 0 = same height everywhere.")]
+    [Range(0f, 2f)] public float grassPatchHeight = 0.75f;
+    [Tooltip("Blades cast sun shadows on the ground and on each other.")]
+    public bool grassShadows = true;
+    [Tooltip("Darkens ambient light towards the blade roots.")]
+    [Range(0f, 1f)] public float grassRootShade = 0.4f;
+    [Tooltip("Grass closer to the camera than this (world units) has blades.")]
+    [Min(0f)] public float grassDistance = 32f;
+    [Tooltip("Distance over which the blades shrink into the ground before Grass Distance.")]
+    [Min(0f)] public float grassFade = 10f;
+    [Tooltip("Past Grass Distance, grass tops are darkened where their patch would grow blades, so patches still show far away and the blade cutoff blends in. 0 = off.")]
+    [Range(0f, 1f)] public float grassFarShade = 0.25f;
+
     [Header("Shadows")]
     [Tooltip("Screen resolution the voxel sun shadow rays are traced at. Half traces a quarter of the rays; the result is upsampled along depth (and texel edges with Pixelated Shadows).")]
     public ShadowResolution shadowResolution = ShadowResolution.Half;
@@ -118,6 +144,14 @@ public class VoxelRenderSettings : MonoBehaviour
         public static readonly int Relief = Shader.PropertyToID("_VoxelRelief");
         public static readonly int ReliefShadows = Shader.PropertyToID("_VoxelReliefShadows");
         public static readonly int ReliefLeaf = Shader.PropertyToID("_VoxelReliefLeaf");
+        public static readonly int Grass = Shader.PropertyToID("_VoxelGrass");
+        public static readonly int GrassShape = Shader.PropertyToID("_VoxelGrassShape");
+        public static readonly int GrassShadows = Shader.PropertyToID("_VoxelGrassShadows");
+        public static readonly int GrassPatchHeight = Shader.PropertyToID("_VoxelGrassPatchHeight");
+        public static readonly int GrassFar = Shader.PropertyToID("_VoxelGrassFar");
+        public static readonly int GrassBlades = Shader.PropertyToID("_VoxelGrassBlades");
+        public static readonly int GrassTexels = Shader.PropertyToID("_VoxelGrassTexels");
+        public static readonly int TexelCount = Shader.PropertyToID("_VoxelTexelCount");
         public static readonly int SolidLeavesFromLevel = Shader.PropertyToID("_VoxelSolidLeavesFromLevel");
         public static readonly int AmbientOcclusion = Shader.PropertyToID("_VoxelAmbientOcclusion");
         public static readonly int ShadowPixelated = Shader.PropertyToID("_VoxelShadowPixelated");
@@ -138,7 +172,12 @@ public class VoxelRenderSettings : MonoBehaviour
     }
 
     void OnEnable() => Apply();
-    void OnDisable() => RestorePipeline();
+    void OnDisable()
+    {
+        RestorePipeline();
+        grassBlades?.Release();
+        grassBlades = null;
+    }
     void OnValidate() => Apply();
 
     void Update()
@@ -164,10 +203,42 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalVector(Ids.Relief, new Vector4(relief ? reliefDepth : 0f, reliefDistance, reliefFade, reliefOcclusion));
         Shader.SetGlobalFloat(Ids.ReliefShadows, reliefShadows ? 1f : 0f);
         Shader.SetGlobalFloat(Ids.ReliefLeaf, relief ? leafThickness : 0f);
+        Shader.SetGlobalVector(Ids.Grass, new Vector4(grass ? grassHeight : 0f, grassBladesPerBlock, grassDistance, grassFade));
+        Shader.SetGlobalVector(Ids.GrassShape, new Vector4(grassCoverage, grassWidth, grassLean, grassRootShade));
+        Shader.SetGlobalFloat(Ids.GrassShadows, grassShadows ? 1f : 0f);
+        Shader.SetGlobalFloat(Ids.GrassPatchHeight, grassPatchHeight);
+        Shader.SetGlobalFloat(Ids.GrassFar, grassFarShade);
+        ApplyGrassBlades();
         Shader.SetGlobalFloat(Ids.SolidLeavesFromLevel, solidLeavesFromLod);
         Shader.SetGlobalFloat(Ids.AmbientOcclusion, ambientOcclusion);
         Shader.SetGlobalFloat(Ids.ShadowPixelated, pixelatedShadows ? 1f : 0f);
         ApplyAntiAliasing();
+    }
+
+    GraphicsBuffer grassBlades;
+    int bakedTexels, bakedWidth, bakedLean;
+
+    // Blade layouts are baked for the blade grid (block texture texels per block, one voxel =
+    // one block) and the width / lean settings; re-baked only when one of them changes.
+    void ApplyGrassBlades()
+    {
+        float texelCount = Shader.GetGlobalFloat(Ids.TexelCount);   // set by VoxelWorldRenderer
+        if (texelCount <= 0f)
+            texelCount = 16f;
+        int texels = Mathf.Clamp(Mathf.RoundToInt(texelCount / Mathf.Max(smallScale, 0.01f)), 2, VoxelGrassBlades.MaxTexels);
+
+        if (grassBlades != null && !grassBlades.IsValid())
+            grassBlades = null;
+        if (grassBlades == null || texels != bakedTexels || grassWidth != bakedWidth || grassLean != bakedLean)
+        {
+            grassBlades ??= new GraphicsBuffer(GraphicsBuffer.Target.Structured, VoxelGrassBlades.Length, 16);
+            grassBlades.SetData(VoxelGrassBlades.Bake(texels, grassWidth, grassLean));
+            bakedTexels = texels;
+            bakedWidth = grassWidth;
+            bakedLean = grassLean;
+        }
+        Shader.SetGlobalBuffer(Ids.GrassBlades, grassBlades);
+        Shader.SetGlobalFloat(Ids.GrassTexels, texels);
     }
 
     // Only while playing, so edit mode never writes into the scene's camera.

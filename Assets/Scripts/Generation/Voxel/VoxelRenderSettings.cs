@@ -117,8 +117,10 @@ public class VoxelRenderSettings : MonoBehaviour
     public Color surfaceTint = Color.white;
     [Range(0f, 1f)] public float surfaceOpacity = 0.25f;
     public Color deepColor = new(0.02f, 0.18f, 0.28f, 1f);
-    [Tooltip("Light absorbed per metre travelled through water.")]
+    [Tooltip("Light absorbed per metre travelled through water, seen from above the surface.")]
     [Range(0f, 2f)] public float absorption = 0.18f;
+    [Tooltip("Absorption used while the camera is inside water: lower than Absorption so you can see around underwater.")]
+    [Range(0f, 2f)] public float underwaterAbsorption = 0.06f;
     [Range(0f, 4f)] public float specular = 1.5f;
     [Tooltip("Random brightness and opacity on the water surface: half per texel, on the same pixel grid as the terrain textures (follows Small Scale), and half per block. 0 = plain colour.")]
     [Range(0f, 1f)] public float pixelNoise = 0.6f;
@@ -225,7 +227,7 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalColor(Ids.TranslucentTint, surfaceTint);
         Shader.SetGlobalColor(Ids.DeepColor, deepColor);
         Shader.SetGlobalFloat(Ids.SurfaceOpacity, surfaceOpacity);
-        Shader.SetGlobalFloat(Ids.Absorption, absorption);
+        Shader.SetGlobalFloat(Ids.Absorption, CameraUnderwater() ? underwaterAbsorption : absorption);
         Shader.SetGlobalFloat(Ids.Specular, specular);
         ApplyWind();
         Shader.SetGlobalVector(Ids.WaterFoam, new Vector4(foamColor.linear.r, foamColor.linear.g, foamColor.linear.b, foamWidth));
@@ -249,6 +251,16 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalFloat(Ids.AmbientOcclusion, ambientOcclusion);
         Shader.SetGlobalFloat(Ids.ShadowPixelated, pixelatedShadows ? 1f : 0f);
         ApplyAntiAliasing();
+    }
+
+    // Whether the rendering camera is inside a water block (Underwater Absorption applies).
+    bool CameraUnderwater()
+    {
+        var cam = targetCamera != null ? targetCamera : Camera.main;
+        if (cam == null || !VoxelPhysics.IsReady)
+            return false;
+        Vector3 p = cam.transform.position;
+        return VoxelPhysics.IsWater(new Unity.Mathematics.int3(Mathf.FloorToInt(p.x), Mathf.FloorToInt(p.y), Mathf.FloorToInt(p.z)));
     }
 
     float wavePhase;

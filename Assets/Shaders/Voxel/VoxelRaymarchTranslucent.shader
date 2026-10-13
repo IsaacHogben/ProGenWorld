@@ -146,6 +146,31 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                 return (VoxelGrassHash(cell + seed) & 0xFFFFu) / 65536.0;
             }
 
+            // Distance (blocks) from a point on a water surface to the nearest terrain block next to its
+            // water block in the same layer (straight or diagonal neighbours), up to 1 voxel.
+            float WaterShoreDistance(VoxelChunk c, uint level, float3 surfaceWS)
+            {
+                float vs = c.originSize.w * VoxelLevelScale(level);
+                float3 v = (surfaceWS - c.originSize.xyz) / vs;
+                int3 w = (int3)floor(v - float3(0.0, 0.5, 0.0));   // the water voxel under the surface
+                float2 f = frac(v.xz);
+                float2 g = 1.0 - f;
+
+                float d = 1.0;
+                if (VoxelOccluderAt(c, level, w + int3(-1, 0, 0)) > 0.0) d = min(d, f.x);
+                if (VoxelOccluderAt(c, level, w + int3( 1, 0, 0)) > 0.0) d = min(d, g.x);
+                if (VoxelOccluderAt(c, level, w + int3(0, 0, -1)) > 0.0) d = min(d, f.y);
+                if (VoxelOccluderAt(c, level, w + int3(0, 0,  1)) > 0.0) d = min(d, g.y);
+                if (d >= 1.0)
+                {
+                    if (VoxelOccluderAt(c, level, w + int3(-1, 0, -1)) > 0.0) d = min(d, length(f));
+                    if (VoxelOccluderAt(c, level, w + int3( 1, 0, -1)) > 0.0) d = min(d, length(float2(g.x, f.y)));
+                    if (VoxelOccluderAt(c, level, w + int3(-1, 0,  1)) > 0.0) d = min(d, length(float2(f.x, g.y)));
+                    if (VoxelOccluderAt(c, level, w + int3( 1, 0,  1)) > 0.0) d = min(d, length(g));
+                }
+                return d * vs;
+            }
+
             float SceneEyeDepth(float2 uv)
             {
                 float raw = SAMPLE_TEXTURE2D_X_LOD(_CameraDepthTexture, sampler_PointClamp, UnityStereoTransformScreenSpaceTex(uv), 0).r;
@@ -203,7 +228,7 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
             }
 
             // fromAir: the ray enters the water here from the open air (reflections only apply there).
-            void AddSurface(inout TranslucentState s, uint id, int axis, float3 posVoxel, float3 posWS, float3 rayDirWS, VoxelRayDiff rayDiff,
+            void AddSurface(inout TranslucentState s, VoxelChunk c, uint level, uint id, int axis, float3 posWS, float3 rayDirWS, VoxelRayDiff rayDiff,
                             bool fromAir)
             {
                 // Ripples, highlight and reflections are evaluated once per texel, at its centre, so they
@@ -230,19 +255,17 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                 float3 h = normalize(light.direction + vt);
                 float spec = pow(saturate(dot(nw, h)), 96.0) * _VoxelSpecular;
 
-                // Painted strokes are more opaque than the dark texels between them.
-                float a = saturate(_VoxelSurfaceOpacity * stroke * (1.0 + noise));
+                // Painted strokes are more opaque than the dark texels between them. Seen from below the
+                // surface stays a thin, plain layer so the world above shows through.
+                float a = fromAir ? saturate(_VoxelSurfaceOpacity * stroke * (1.0 + noise)) : _VoxelSurfaceOpacity;
 
-                // Shore foam: texels over shallow water (the opaque depth behind the surface, measured
-                // vertically) turn to foam, with a dithered pixel edge.
+                // Shore foam on top faces within Foam Width of terrain at the water level, with a dithered
+                // pixel edge. From the voxels, so only terrain makes foam (not the player or objects).
                 float foam = 0.0;
-                if (fromAir && n.y > 0.5 && _VoxelWaterFoam.a > 0.0 && unity_OrthoParams.w < 0.5)
+                if (fromAir && n.y > 0.5 && _VoxelWaterFoam.a > 0.0)
                 {
-                    float4 cs = TransformWorldToHClip(texelWS);
-                    float behindEye = SceneEyeDepth(ScreenUV(cs)) - cs.w;
-                    float depth = behindEye * distance(GetCameraPositionWS(), texelWS) / max(cs.w, 1e-3) * vt.y;
-                    // Negative: the texel centre is hidden behind terrain in front of the water.
-                    float shallow = behindEye < 0.0 ? 0.0 : 1.0 - depth / _VoxelWaterFoam.a;
+                    float shore = WaterShoreDistance(c, level, texelWS);
+                    float shallow = 1.0 - shore / _VoxelWaterFoam.a;
                     foam = step(WaterCellRandom(cell, 31337) * 0.85 + 0.1, shallow);
                     albedo = lerp(albedo, _VoxelWaterFoam.rgb * (1.0 + noise * 0.5), foam);
                     a = lerp(a, 0.9, foam);
@@ -285,7 +308,9 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                 s.transmittance *= tr;
             }
 
-            float4 MarchTranslucent(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3 o, float3 d, float tMin, float3 roWS, float3 rdWS, VoxelRayDiff rayDiff)
+            // tMax: where the opaque scene (terrain, player, objects) is along the ray, in voxels. The
+            // water in front of it is drawn, nothing behind it.
+            float4 MarchTranslucent(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3 o, float3 d, float tMin, float tMax, float3 roWS, float3 rdWS, VoxelRayDiff rayDiff)
             {
                 TranslucentState s;
                 s.color = 0;
@@ -323,6 +348,9 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                     if (i == 0 && startedInside)
                         prevId = id;
 
+                    if (cur.t >= tMax)
+                        break;
+
                     int faceAxis = cur.axis >= 0 ? cur.axis : majorAxis;
                     float3 pos = o + d * cur.t;
 
@@ -337,7 +365,7 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                     {
                         uint surfaceId = vis == VOXEL_VIS_TRANSLUCENT ? id : prevId;
                         bool fromAir = vis == VOXEL_VIS_TRANSLUCENT && prevVis == VOXEL_VIS_INVISIBLE;
-                        AddSurface(s, surfaceId, faceAxis, pos, roWS + rdWS * (cur.t * vs), rdWS, rayDiff, fromAir);
+                        AddSurface(s, c, level, surfaceId, faceAxis, roWS + rdWS * (cur.t * vs), rdWS, rayDiff, fromAir);
                     }
 
                     float3 cellMin, cellMax;
@@ -346,7 +374,9 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                     VoxelAdvance(cur, o, d, invD, stepDir, cellMin, cellMax);
 
                     if (vis == VOXEL_VIS_TRANSLUCENT)
-                        Absorb(s, (cur.t - tEnter) * vs, inscatter);
+                        Absorb(s, (min(cur.t, tMax) - tEnter) * vs, inscatter);
+                    if (cur.t >= tMax)
+                        break;
 
                     if (VoxelOutside(cur.p, bmin, bmax))
                     {
@@ -355,7 +385,7 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                             uint nextId = VoxelFetchAny(c, level, cur.p);
                             uint nextVis = VoxelBlockVisibility(nextId);
                             if (nextId != id && (nextVis == VOXEL_VIS_INVISIBLE || nextVis == VOXEL_VIS_TRANSLUCENT))
-                                AddSurface(s, id, cur.axis, o + d * cur.t, roWS + rdWS * (cur.t * vs), rdWS, rayDiff, false);
+                                AddSurface(s, c, level, id, cur.axis, roWS + rdWS * (cur.t * vs), rdWS, rayDiff, false);
                         }
                         break;
                     }
@@ -379,7 +409,13 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                 float3 o = (ro - c.originSize.xyz) / vs;
                 float3 bmin, bmax;
                 VoxelLevelBounds(input.cellBounds, input.level, bmin, bmax);
-                float4 result = MarchTranslucent(c, input.level, bmin, bmax, o, rd, tMinWS / vs, ro, rd, rayDiff);
+                // Stop at the opaque scene in the depth buffer, so the player and objects in or under the
+                // water are not covered by water behind them.
+                // (Perspective only; orthographic cameras march to the voxels as before.)
+                float tMaxWS = 1e20;
+                if (unity_OrthoParams.w < 0.5)
+                    tMaxWS = SceneEyeDepth(GetNormalizedScreenSpaceUV(input.positionCS)) / max(dot(rd, -UNITY_MATRIX_V[2].xyz), 1e-4);
+                float4 result = MarchTranslucent(c, input.level, bmin, bmax, o, rd, tMinWS / vs, tMaxWS / vs, ro, rd, rayDiff);
                 if (result.a <= 0.0)
                     discard;
 

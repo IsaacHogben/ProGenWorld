@@ -7,7 +7,7 @@
 // Results are written as JSON; -benchShots also saves a screenshot per view and configuration.
 //
 // Args: -benchRender  -benchOut <file.json>  -benchShotDir <dir>  -benchShots <config,config|all>
-//       -benchConfigs <config,config>  -benchFrames <n>
+//       -benchConfigs <config,config>  -benchViews <view,view>  -benchFrames <n>
 
 using System;
 using System.Collections;
@@ -29,6 +29,7 @@ public class RenderBenchmark : MonoBehaviour
         public float yaw, pitch;
         public bool lookAtPlayer;
         public bool overWater;   // offset / yaw relative to the nearest open water instead of the player
+        public bool playerInWater;   // move the player into shallow water first (lookAtPlayer views)
     }
 
     static readonly View[] Views =
@@ -40,11 +41,14 @@ public class RenderBenchmark : MonoBehaviour
         new View { name = "waterLow", offset = new Vector3(0f, 2.5f, 0f), pitch = 8f, overWater = true },
         new View { name = "waterHigh", offset = new Vector3(0f, 14f, 0f), pitch = 35f, overWater = true },
         new View { name = "waterFar", offset = new Vector3(0f, 30f, 0f), pitch = 28f, overWater = true },
+        new View { name = "underwater", offset = new Vector3(0f, -0.6f, 0f), pitch = -30f, overWater = true },
+        new View { name = "wading", offset = new Vector3(2.5f, 1.8f, -4f), lookAtPlayer = true, playerInWater = true },
     };
 
     // Open water near the player (top of a water surface block) and the direction with the most
     // water ahead of it, found once after loading. Water views are skipped when there is none.
     Vector3? waterSpot;
+    Vector3? shallowSpot;   // water one block deep, for the player to stand in
     float waterYaw;
 
     string outPath, shotDir;
@@ -53,6 +57,7 @@ public class RenderBenchmark : MonoBehaviour
     HashSet<string> shotConfigs = new();
     bool shotAll;
     List<string> configNames;
+    HashSet<string> viewFilter;   // -benchViews: only these views
 
     ChunkManager chunkManager;
     VoxelRenderSettings settings;
@@ -111,6 +116,8 @@ public class RenderBenchmark : MonoBehaviour
             pc.enabled = false;
 
         DefineConfigs();
+        string views = Arg("-benchViews");
+        if (!string.IsNullOrEmpty(views)) viewFilter = new HashSet<string>(views.Split(','));
         string only = Arg("-benchConfigs");
         configNames = new List<string>(string.IsNullOrEmpty(only) ? configs.Keys : only.Split(','));
 
@@ -170,6 +177,8 @@ public class RenderBenchmark : MonoBehaviour
         configs["opacity45"] = () => settings.surfaceOpacity = 0.45f;
         configs["opacity65"] = () => settings.surfaceOpacity = 0.65f;
         configs["noFoam"] = () => settings.foamWidth = 0f;
+        configs["noAbsorption"] = () => { settings.absorption = 0f; settings.underwaterAbsorption = 0f; };
+        configs["noSurface"] = () => settings.surfaceOpacity = 0f;
         configs["plainWater"] = () =>   // the water look before textures / ripples / reflections
         {
             settings.reflections = VoxelRenderSettings.WaterReflections.Off;
@@ -212,7 +221,7 @@ public class RenderBenchmark : MonoBehaviour
         {
             // Back off so the view centre lands on the far side of the water spot.
             Vector3 flat = Quaternion.Euler(0f, waterYaw, 0f) * Vector3.forward;
-            float back = 0.5f * v.offset.y / Mathf.Tan(Mathf.Max(v.pitch, 3f) * Mathf.Deg2Rad);
+            float back = v.offset.y > 0f ? 0.5f * v.offset.y / Mathf.Tan(Mathf.Max(v.pitch, 3f) * Mathf.Deg2Rad) : 0f;
             cam.transform.position = waterSpot.Value + v.offset - flat * back;
             cam.transform.rotation = Quaternion.Euler(v.pitch, waterYaw, 0f);
             return;
@@ -236,14 +245,19 @@ public class RenderBenchmark : MonoBehaviour
         cam = Camera.main;
         CaptureBaseline();
         Log($"screen {Screen.width}x{Screen.height}, player at {player.position}");
+        playerStart = player.position;
         FindWater();
 
         json.Append("{\n  \"results\": [\n");
         bool first = true;
         foreach (var view in Views)
         {
-            if (view.overWater && waterSpot == null)
+            if ((view.overWater && waterSpot == null) || (view.playerInWater && shallowSpot == null))
                 continue;
+            if (viewFilter != null && !viewFilter.Contains(view.name))
+                continue;
+            if (view.playerInWater)
+                player.GetComponent<VoxelCharacterMotor>().Teleport(shallowSpot.Value);
             PlaceCamera(view);
             yield return Wait(3f);   // stream in whatever the view needs
 
@@ -293,6 +307,8 @@ public class RenderBenchmark : MonoBehaviour
             }
         }
         RestoreBaseline();
+        if (playerStart != null)
+            player.GetComponent<VoxelCharacterMotor>().Teleport(playerStart.Value);
 
         if (shotDir != null)
             yield return ShadowProbe();
@@ -319,6 +335,8 @@ public class RenderBenchmark : MonoBehaviour
         }
         return false;
     }
+
+    Vector3? playerStart;
 
     void FindWater()
     {
@@ -356,6 +374,22 @@ public class RenderBenchmark : MonoBehaviour
             if (run > maxRun) { maxRun = run; waterYaw = a; }
         }
         Log($"water at {waterSpot.Value}, looking {waterYaw} deg across {maxRun} blocks");
+
+        // Shallow water near the open water, for the player to stand in: one water block on solid ground.
+        float bestShallow = float.MaxValue;
+        Vector3 ws = waterSpot.Value;
+        int wy = Mathf.FloorToInt(ws.y) - 1;
+        for (int dz = -48; dz <= 48; dz++)
+        for (int dx = -48; dx <= 48; dx++)
+        {
+            int x = Mathf.FloorToInt(ws.x) + dx, z = Mathf.FloorToInt(ws.z) + dz;
+            if (!WaterSurface(x, z, wy + 1, wy, out int y) || VoxelPhysics.IsWater(new Unity.Mathematics.int3(x, y - 1, z))
+                || !VoxelPhysics.IsSolid(new Unity.Mathematics.int3(x, y - 1, z)))
+                continue;
+            float d = dx * dx + dz * dz;
+            if (d < bestShallow) { bestShallow = d; shallowSpot = new Vector3(x + 0.5f, y, z + 0.5f); }
+        }
+        Log(shallowSpot != null ? $"shallow water at {shallowSpot.Value}" : "no shallow water: wading view skipped");
     }
 
     // Terrain shadows on objects: a cube with the player's (URP Lit) material in a spot the terrain

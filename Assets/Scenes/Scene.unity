@@ -1803,6 +1803,7 @@ MonoBehaviour:
   surfaceOpacity: 0.692
   deepColor: {r: 0.02, g: 0.18, b: 0.28, a: 1}
   absorption: 0.778
+  underwaterAbsorption: 0.06
   specular: 1.5
   pixelNoise: 0
   waveStrength: 0.013

@@ -12,7 +12,7 @@ using UnityEngine.InputSystem;
 /// animated pose.
 ///
 /// Folded (the fold key): the legs snap up into the body and the arms tuck in, then the whole
-/// bundle tumbles as one rigid piece.
+/// bundle tumbles as one rigid piece. The fold key again unfolds at once, wherever it is.
 /// </summary>
 [DefaultExecutionOrder(60)] // after CharacterAnimator (50) poses the bones, before the camera (100)
 [RequireComponent(typeof(CharacterAnimator))]
@@ -98,6 +98,7 @@ public class VoxelRagdoll : MonoBehaviour
     float stateTime;
     float restTimer;
     bool getUpRequested;
+    bool unfoldRequested;
     bool folded;
     float foldT;
     readonly Vector3[] foldFrom = new Vector3[Count]; // torso frame, at the start of the fold
@@ -150,6 +151,13 @@ public class VoxelRagdoll : MonoBehaviour
                 if (motor != null) motor.NoClip = false;
                 Activate(motor != null ? motor.Velocity : Vector3.zero, foldPressed);
             }
+            return;
+        }
+
+        // Folded: the fold key again unfolds straight away, even mid-roll or in the air.
+        if (state == State.Ragdoll && folded && foldPressed)
+        {
+            unfoldRequested = true;
             return;
         }
 
@@ -217,6 +225,7 @@ public class VoxelRagdoll : MonoBehaviour
         stateTime = 0f;
         restTimer = 0f;
         getUpRequested = false;
+        unfoldRequested = false;
         Started?.Invoke();
     }
 
@@ -363,7 +372,7 @@ public class VoxelRagdoll : MonoBehaviour
             fastest = Mathf.Max(fastest, (pos[i] - prev[i]).magnitude / dt);
         restTimer = fastest < restSpeed ? restTimer + dt : 0f;
 
-        if (getUpRequested && CanGetUp)
+        if ((getUpRequested && CanGetUp) || (unfoldRequested && foldT >= 1f))
             BeginGetUp();
     }
 
@@ -531,9 +540,13 @@ public class VoxelRagdoll : MonoBehaviour
         up.y = 0f;
         float yaw = up.sqrMagnitude > 0.01f ? Mathf.Atan2(up.x, up.z) * Mathf.Rad2Deg : transform.eulerAngles.y;
 
+        // On the ground under the pelvis; unfolding in the air, the feet hang below the body and
+        // it falls from there.
         Vector3 stand = pos[Pelvis];
-        if (VoxelPhysics.TryGetGroundHeight(pos[Pelvis] + Vector3.up * 0.5f, 1.5f, 6f, out float ground))
+        if (VoxelPhysics.TryGetGroundHeight(pos[Pelvis] + Vector3.up * 0.5f, 1.5f, 2.2f, out float ground))
             stand.y = ground;
+        else
+            stand.y -= rig.PelvisRestPosition.y * 0.85f;
         if (motor != null)
         {
             motor.HorizontalVelocity = Vector3.zero;

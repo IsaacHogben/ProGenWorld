@@ -9,8 +9,10 @@ using Unity.Mathematics;
 /// A chunk is split into 8x8x8 bricks. A brick whose voxels are all the same block is stored
 /// inline in the brick table (UniformFlag | blockId). Any other brick gets a page of 512
 /// voxels (1 byte each, 128 uints) in a shared page pool.
-/// Every chunk is stored at up to three detail levels (full, 1/2, 1/4 resolution); the shader
-/// picks a level per draw cell from the camera distance, so LOD changes never re-upload.
+/// Every chunk is packed at up to four detail levels (full, 1/2, 1/4, 1/8 resolution); the
+/// shader picks a level per draw cell from the camera distance. Levels finer than the chunk's
+/// LOD needs keep their brick table (coarse shadows read its flags) but get no pages
+/// (NoPage entries), which saves most of the GPU memory of distant chunks.
 /// For drawing, a chunk is also split into draw cells (16^3 voxels); each non-empty cell is
 /// drawn as its own box shrunk to its content, so rays only cross small, dense regions.
 /// </summary>
@@ -22,6 +24,7 @@ public static class VoxelGpuFormat
     public const uint UniformFlag = 0x80000000u;
     public const uint DenseFlag = 0x40000000u;   // mixed brick, at least half solid (coarse shadow LOD)
     public const uint PageMask = 0x3FFFFFFFu;
+    public const uint NoPage = PageMask;         // mixed brick of a level that was not uploaded
 
     // Block id written into the air voxel above a block with a grass surface decoration. Invisible
     // to everything but the shader's grass (VoxelRelief.hlsl); it makes the voxels above grass
@@ -30,8 +33,11 @@ public static class VoxelGpuFormat
 
     public const uint FlagHasOpaque = 1u;      // contains opaque or alpha masked blocks
     public const uint FlagHasTranslucent = 2u; // contains translucent blocks (water...)
+    public const uint FlagHorizon = 4u;        // chunk record flag: far horizon chunk (VoxelWorldRenderer.SetHorizonChunk)
+    public const int HorizonRingShift = 8;     // chunk record flags: horizon ring in bits 8-11
+    public const int MaxHorizonRings = 4;
 
-    public const int MaxLodLevels = 3;         // matches LODLevel Near / Mid / Far
+    public const int MaxLodLevels = 4;         // full, 1/2, 1/4, 1/8 resolution
 
     // Meta array layout written by VoxelPackJob
     public const int MetaMin = 0;         // 3 ints
@@ -42,7 +48,8 @@ public static class VoxelGpuFormat
     public const int MetaCellsPerAxis = 9;
     public const int MetaLodLevels = 10;
     public const int MetaTotalBricks = 11;
-    public const int MetaLength = 12;
+    public const int MetaMinLevel = 12;   // finest level that has pages
+    public const int MetaLength = 13;
 
     public const int CellSize = 16;      // draw cell edge in voxels (multiple of BrickSize)
     public const int CellInts = 8;       // per cell: min xyz, max xyz (exclusive), flags, occlusion
@@ -100,6 +107,7 @@ public struct VoxelPackResult : IDisposable
     public int LodLevels => meta[VoxelGpuFormat.MetaLodLevels];
     public int BrickCount => meta[VoxelGpuFormat.MetaTotalBricks];
     public int MixedBrickCount => meta[VoxelGpuFormat.MetaMixedBricks];
+    public int MinLevel => meta[VoxelGpuFormat.MetaMinLevel];
     public uint Flags => (uint)meta[VoxelGpuFormat.MetaFlags];
     public bool IsEmpty => meta[VoxelGpuFormat.MetaMax] <= meta[VoxelGpuFormat.MetaMin];
     public int3 BoundsMin => new int3(meta[0], meta[1], meta[2]);
@@ -143,11 +151,13 @@ public struct VoxelPackResult : IDisposable
 [BurstCompile(FloatMode = FloatMode.Fast, OptimizeFor = OptimizeFor.Performance)]
 public struct VoxelPackJob : IJob
 {
-    [ReadOnly] public NativeArray<byte> blocks;   // (chunkSize + 1)^3, x + y*S + z*S*S
+    [ReadOnly] public NativeArray<byte> blocks;   // (chunkSize / 2^inputLevel + 1)^3, x + y*S + z*S*S
     [ReadOnly] public NativeArray<BlockDatabase.BlockInfoUnmanaged> blockDb;
     public int chunkSize;
     public int3 coord;
     public bool collectECSSpawns;
+    public int minLevel;   // levels below this get no pages (see VoxelGpuFormat.NoPage)
+    public int inputLevel; // detail level the block array was generated at (0 = full resolution)
 
     public NativeArray<uint> bricks;
     public NativeList<uint> pages;
@@ -159,9 +169,16 @@ public struct VoxelPackJob : IJob
     {
         int res = VoxelGpuFormat.Resolution(chunkSize);
         int levels = VoxelGpuFormat.LodLevels(res);
+        int firstLevel = math.clamp(minLevel, 0, levels - 1);
 
         pages.Clear();
         ecsSpawns.Clear();
+
+        if (inputLevel > 0)
+        {
+            ExecuteCoarse(res, levels);
+            return;
+        }
 
         // ---- Level 0: full resolution, also gathers bounds / flags / draw cells
         var grid = new NativeArray<byte>(res * res * res, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
@@ -172,14 +189,7 @@ public struct VoxelPackJob : IJob
 
         int cpa = VoxelGpuFormat.CellsPerAxis(res);
         int cellSize = res / cpa;
-        for (int c = 0; c < cpa * cpa * cpa; c++)
-        {
-            int b = c * VoxelGpuFormat.CellInts;
-            cells[b + 0] = cells[b + 1] = cells[b + 2] = res;   // min
-            cells[b + 3] = cells[b + 4] = cells[b + 5] = -1;    // max (inclusive while scanning)
-            cells[b + 6] = 0;
-            cells[b + 7] = VoxelGpuFormat.OccFull | VoxelGpuFormat.OccFaceMask;   // cleared per level
-        }
+        InitCells(res, cpa);
 
         int3 bmin = new int3(res);
         int3 bmax = new int3(-1);
@@ -188,7 +198,7 @@ public struct VoxelPackJob : IJob
         int brickOffset = 0;
 
         PlaceGrass(grid, res, cellSize, cpa);
-        PackLevel(grid, res, brickOffset, ref mixed, true, cellSize, cpa, ref bmin, ref bmax, ref flags);
+        PackLevel(grid, res, brickOffset, ref mixed, firstLevel == 0, true, cellSize, cpa, ref bmin, ref bmax, ref flags);
         Occlusion(grid, res, cpa, true);
         brickOffset += VoxelGpuFormat.BricksInLevel(res, 0);
 
@@ -206,12 +216,18 @@ public struct VoxelPackJob : IJob
             levelRes = coarseRes;
 
             int3 unusedMin = default, unusedMax = default; uint unusedFlags = 0;
-            PackLevel(grid, levelRes, brickOffset, ref mixed, false, 0, 0, ref unusedMin, ref unusedMax, ref unusedFlags);
+            PackLevel(grid, levelRes, brickOffset, ref mixed, level >= firstLevel, false, 0, 0, ref unusedMin, ref unusedMax, ref unusedFlags);
             Occlusion(grid, levelRes, cpa, false);
             brickOffset += VoxelGpuFormat.BricksInLevel(res, level);
         }
         grid.Dispose();
 
+        WriteMeta(res, levels, cpa, empty, bmin, bmax, flags, mixed, brickOffset, firstLevel);
+        FinishCells(cpa);
+    }
+
+    void WriteMeta(int res, int levels, int cpa, bool empty, int3 bmin, int3 bmax, uint flags, int mixed, int brickOffset, int firstLevel)
+    {
         meta[VoxelGpuFormat.MetaMin + 0] = empty ? 0 : bmin.x;
         meta[VoxelGpuFormat.MetaMin + 1] = empty ? 0 : bmin.y;
         meta[VoxelGpuFormat.MetaMin + 2] = empty ? 0 : bmin.z;
@@ -224,7 +240,137 @@ public struct VoxelPackJob : IJob
         meta[VoxelGpuFormat.MetaCellsPerAxis] = cpa;
         meta[VoxelGpuFormat.MetaLodLevels] = levels;
         meta[VoxelGpuFormat.MetaTotalBricks] = empty ? VoxelGpuFormat.BricksInLevel(res, 0) : brickOffset;
+        meta[VoxelGpuFormat.MetaMinLevel] = empty ? 0 : firstLevel;
+    }
 
+    void InitCells(int res, int cpa)
+    {
+        for (int c = 0; c < cpa * cpa * cpa; c++)
+        {
+            int b = c * VoxelGpuFormat.CellInts;
+            cells[b + 0] = cells[b + 1] = cells[b + 2] = res;   // min
+            cells[b + 3] = cells[b + 4] = cells[b + 5] = -1;    // max (inclusive while scanning)
+            cells[b + 6] = 0;
+            cells[b + 7] = VoxelGpuFormat.OccFull | VoxelGpuFormat.OccFaceMask;   // cleared per level
+        }
+    }
+
+    // A block array generated at a coarse detail level (Horizon chunks: no full resolution data).
+    // That level and the coarser ones are packed as usual. The finer levels get brick tables
+    // only (uniform or NoPage, with the dense flag for coarse shadows) and are never drawn:
+    // MinLevel is the input level.
+    void ExecuteCoarse(int res, int levels)
+    {
+        int lvl = math.min(inputLevel, levels - 1);
+        int scale = 1 << lvl;
+        int lres = res >> lvl;
+        int side = lres + 1;
+
+        var grid = new NativeArray<byte>(lres * lres * lres, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+        for (int z = 0; z < lres; z++)
+        for (int y = 0; y < lres; y++)
+        for (int x = 0; x < lres; x++)
+            grid[Index(new int3(x, y, z), lres)] = blocks[x + y * side + z * side * side];
+
+        int cpa = VoxelGpuFormat.CellsPerAxis(res);
+        int cellSize = res / cpa;
+        InitCells(res, cpa);
+
+        // Bounds, flags and draw cells in level 0 voxels
+        int3 bmin = new int3(res);
+        int3 bmax = new int3(-1);
+        uint flags = 0;
+        for (int z = 0; z < lres; z++)
+        for (int y = 0; y < lres; y++)
+        for (int x = 0; x < lres; x++)
+        {
+            var vis = Visibility(grid[Index(new int3(x, y, z), lres)]);
+            if (vis == BlockVisibility.Invisible)
+                continue;
+
+            int3 lo = new int3(x, y, z) * scale;
+            int3 hi = lo + (scale - 1);
+            bmin = math.min(bmin, lo);
+            bmax = math.max(bmax, hi);
+            uint voxelFlag = vis == BlockVisibility.Translucent ? VoxelGpuFormat.FlagHasTranslucent : VoxelGpuFormat.FlagHasOpaque;
+            flags |= voxelFlag;
+
+            int3 cc = lo / cellSize;
+            int cb = (cc.x + (cc.y + cc.z * cpa) * cpa) * VoxelGpuFormat.CellInts;
+            cells[cb + 0] = math.min(cells[cb + 0], lo.x);
+            cells[cb + 1] = math.min(cells[cb + 1], lo.y);
+            cells[cb + 2] = math.min(cells[cb + 2], lo.z);
+            cells[cb + 3] = math.max(cells[cb + 3], hi.x);
+            cells[cb + 4] = math.max(cells[cb + 4], hi.y);
+            cells[cb + 5] = math.max(cells[cb + 5], hi.z);
+            cells[cb + 6] |= (int)voxelFlag;
+        }
+
+        bool empty = bmax.x < bmin.x;
+        int mixed = 0;
+        int brickOffset = 0;
+
+        if (!empty)
+        {
+            // Finer levels: brick tables only. A level L brick spans n coarse voxels per axis.
+            for (int level = 0; level < lvl; level++)
+            {
+                int bpa = (res >> level) / VoxelGpuFormat.BrickSize;
+                int n = (VoxelGpuFormat.BrickSize << level) / scale;
+                int count = n * n * n;
+                for (int bz = 0; bz < bpa; bz++)
+                for (int by = 0; by < bpa; by++)
+                for (int bx = 0; bx < bpa; bx++)
+                {
+                    int3 o = new int3(bx, by, bz) * n;
+                    byte first = grid[Index(o, lres)];
+                    bool uniform = true;
+                    int solid = 0;
+                    for (int z = 0; z < n; z++)
+                    for (int y = 0; y < n; y++)
+                    for (int x = 0; x < n; x++)
+                    {
+                        byte id = grid[Index(o + new int3(x, y, z), lres)];
+                        if (id != first) uniform = false;
+                        var vis = Visibility(id);
+                        if (vis != BlockVisibility.Invisible && vis != BlockVisibility.Translucent)
+                            solid++;
+                    }
+                    bricks[brickOffset + bx + (by + bz * bpa) * bpa] = uniform
+                        ? VoxelGpuFormat.UniformFlag | first
+                        : VoxelGpuFormat.NoPage | (solid * 2 >= count ? VoxelGpuFormat.DenseFlag : 0u);
+                }
+                brickOffset += VoxelGpuFormat.BricksInLevel(res, level);
+            }
+
+            // The input level and coarser ones
+            int3 unusedMin = default, unusedMax = default; uint unusedFlags = 0;
+            PackLevel(grid, lres, brickOffset, ref mixed, true, false, 0, 0, ref unusedMin, ref unusedMax, ref unusedFlags);
+            Occlusion(grid, lres, cpa, true);
+            brickOffset += VoxelGpuFormat.BricksInLevel(res, lvl);
+
+            int levelRes = lres;
+            for (int level = lvl + 1; level < levels; level++)
+            {
+                int coarseRes = levelRes >> 1;
+                var coarse = new NativeArray<byte>(coarseRes * coarseRes * coarseRes, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+                Downsample(grid, levelRes, coarse, coarseRes);
+                grid.Dispose();
+                grid = coarse;
+                levelRes = coarseRes;
+                PackLevel(grid, levelRes, brickOffset, ref mixed, true, false, 0, 0, ref unusedMin, ref unusedMax, ref unusedFlags);
+                Occlusion(grid, levelRes, cpa, false);
+                brickOffset += VoxelGpuFormat.BricksInLevel(res, level);
+            }
+        }
+        grid.Dispose();
+
+        WriteMeta(res, levels, cpa, empty, bmin, bmax, flags, mixed, brickOffset, lvl);
+        FinishCells(cpa);
+    }
+
+    void FinishCells(int cpa)
+    {
         // Cell max -> exclusive; empty cells end up with max <= min
         for (int c = 0; c < cpa * cpa * cpa; c++)
         {
@@ -241,7 +387,7 @@ public struct VoxelPackJob : IJob
         }
     }
 
-    void PackLevel(NativeArray<byte> grid, int res, int brickOffset, ref int mixed,
+    void PackLevel(NativeArray<byte> grid, int res, int brickOffset, ref int mixed, bool emitPages,
                    bool collectStats, int cellSize, int cpa, ref int3 bmin, ref int3 bmax, ref uint flags)
     {
         int bpa = res / VoxelGpuFormat.BrickSize;
@@ -295,7 +441,14 @@ public struct VoxelPackJob : IJob
                 continue;
             }
 
-            bricks[brickIndex] = (uint)mixed++ | (solid * 2 >= VoxelGpuFormat.BrickVoxels ? VoxelGpuFormat.DenseFlag : 0u);
+            uint dense = solid * 2 >= VoxelGpuFormat.BrickVoxels ? VoxelGpuFormat.DenseFlag : 0u;
+            if (!emitPages)
+            {
+                bricks[brickIndex] = VoxelGpuFormat.NoPage | dense;
+                continue;
+            }
+
+            bricks[brickIndex] = (uint)mixed++ | dense;
             for (int li = 0; li < VoxelGpuFormat.BrickVoxels; li += 4)
             {
                 uint word = 0;

@@ -148,7 +148,7 @@ public class NoiseGenerator
                 TerrainTypeDefinitionSO terrainSO = terrainTypeSOs[terrainID];
                 float terrainFrequency = relativeFrequency * terrainSO.frequencyMultiplier;
                 int3 terrainWorldPos = worldPos;
-                terrainWorldPos.y += terrainSO.yOffset / sampleRes;  // Apply Y offset
+                terrainWorldPos.y += (int)math.round(terrainSO.yOffset / (float)sampleRes);  // Apply Y offset (in samples; off by under half a sample at low resolution)
 
                 float[] field = RentScratch(voxelCount);
                 noise.GenUniformGrid3D(

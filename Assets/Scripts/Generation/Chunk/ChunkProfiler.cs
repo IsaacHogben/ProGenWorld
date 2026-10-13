@@ -204,6 +204,9 @@ public class ChunkProfiler : MonoBehaviour
                 GUILayout.Label($"GPU Chunks:     {voxels.LoadedChunks}");
                 GUILayout.Label($"Voxel Pages:    {voxels.UsedPages:N0} / {voxels.PageCapacity:N0}");
                 GUILayout.Label($"GPU Memory:     {voxels.GpuBytes / (1024f * 1024f):F1} MB");
+                var blocks = chunkManager.BlockStore;
+                if (blocks != null)
+                    GUILayout.Label($"Block Data:     {blocks.FullCount} full {blocks.FullBytes / (1024f * 1024f):F0} MB, {blocks.CompressedCount} compressed {blocks.CompressedBytes / (1024f * 1024f):F0} MB");
                 GUILayout.Label($"Draw Cells:     {voxels.LastDrawnCells:N0} drawn, {voxels.BuriedCells:N0} / {voxels.TotalCells:N0} buried");
             }
         }

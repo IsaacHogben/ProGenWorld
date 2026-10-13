@@ -1965,6 +1965,7 @@ MonoBehaviour:
   terrainTypes:
   - {fileID: 11400000, guid: a024df3b0c9f85f4692a81593ec923a2, type: 2}
   - {fileID: 11400000, guid: ac30749d934c76b488557c1d909942de, type: 2}
+  - {fileID: 11400000, guid: 1795584bc77b8964b9d93b228d738b9e, type: 2}
   biomes:
   - {fileID: 11400000, guid: bdf93638ce508f24c946a8bbd360e96e, type: 2}
   - {fileID: 11400000, guid: 871c7c24b7ee57a489d4635f25a69a3f, type: 2}
@@ -2478,13 +2479,28 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: be7e13c94c9c40e8b3d276c64bb3beca, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ViewDistanceSettings
-  viewDistance: 20
+  viewDistance: 30
   unloadPastViewDistance: 1
-  nearRange: 7
-  midRange: 14
+  nearRange: 12
+  midRange: 18
+  lowestDetailRange: 26
+  trimGpuDetail: 1
+  lowResHorizon: 1
+  horizonUpgradeMargin: 2
+  farHorizon: 0
+  horizonRings: 2
+  horizonVoxelSize: 16
+  horizonRingRadius: 2
+  horizonMinHeight: -256
+  horizonMaxHeight: 768
+  fogToHorizon: 1
+  midBlockStorage: 1
+  farBlockStorage: 1
+  compressAfterSeconds: 5
+  compressBudgetMs: 0.5
   linkFog: 1
-  fogStartDistance: 448
-  fogEndInset: 16
+  fogStartDistance: 400
+  fogEndInset: 0
   driveCameraFarClip: 1
   farClipMargin: 64
   targetCamera: {fileID: 0}

@@ -137,7 +137,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     readonly HashSet<int3> generatingSet = new();   // coords reserved for generation or meshing
 
     readonly Dictionary<LODLevel, LODSettings> lodConfigs = new();
-    readonly Dictionary<int3, NativeArray<byte>> fullResBlocksByChunk = new();
+    ChunkBlockStore blockStore;                       // full resolution blocks of every loaded chunk (plain or compressed)
+    readonly HashSet<int3> decoratedChunks = new();   // chunks whose own decoration step has finished
+    readonly Dictionary<int3, LODLevel> regenTargets = new(); // Horizon chunks regenerating in full, and their new LOD
     readonly Dictionary<int3, int> lastMeshFrame = new();
     readonly Dictionary<int3, LODLevel> lodByCoord = new();
 
@@ -241,8 +243,11 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     private WriteSystem writeSystem;
     private VoxelPackSystem packSystem;
     private VoxelWorldRenderer voxelRenderer;
+    private HorizonSystem horizonSystem;
 
     public VoxelWorldRenderer VoxelRenderer => voxelRenderer;
+    public ChunkBlockStore BlockStore => blockStore;
+    public HorizonSystem Horizon => horizonSystem;
 
     void Awake()
     {
@@ -250,6 +255,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             viewSettings = ViewDistanceSettings.FindOrCreate();
 
         nativeBlockDatabase = blockDatabase.ToNative(Allocator.Persistent);
+        blockStore = new ChunkBlockStore(chunkSize);
         cts = new CancellationTokenSource();
         gpuFrameTimeRecorder = ProfilerRecorder.StartNew(ProfilerCategory.Render, "GPU Frame Time");
 
@@ -264,6 +270,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         lodConfigs[LODLevel.Near] = new LODSettings { voxelScale = 1, sampleRes = 1 };
         lodConfigs[LODLevel.Mid] = new LODSettings { voxelScale = 2, sampleRes = 1 };
         lodConfigs[LODLevel.Far] = new LODSettings { voxelScale = 4, sampleRes = 1 };
+        // Horizon: generated directly at the lowest GPU detail level (8 blocks per voxel for 64 block chunks)
+        int horizonScale = 1 << (VoxelGpuFormat.LodLevels(VoxelGpuFormat.Resolution(chunkSize)) - 1);
+        lodConfigs[LODLevel.Horizon] = new LODSettings { voxelScale = horizonScale, sampleRes = horizonScale };
         // Compute density counts per LOD
         foreach (var kv in lodConfigs.ToArray())
         {
@@ -400,8 +409,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             {
                 var coord = tmpChunkKeys[i];
 
-                // Must have blockIds
-                if (!fullResBlocksByChunk.TryGetValue(coord, out var blockIds) || !blockIds.IsCreated)
+                // Must have blockIds (expanded if they were compressed)
+                if (!blockStore.TryGetFull(coord, Time.time, out var blockIds))
                 {
                     Debug.LogWarning($"[BlockGen] Remesh attempted without full res at {coord}");
                     //generatingSet.Remove(coord);
@@ -503,11 +512,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 if (!chunks.ContainsKey(coord))
                     continue;
 
-                // Block data already exists at full resolution: the GPU holds every detail level,
-                // so a LOD change is just bookkeeping (no regeneration, no re-upload).
-                if (lodConfigs[targetLod].sampleRes == 1 &&
-                    fullResBlocksByChunk.TryGetValue(coord, out var existing) &&
-                    existing.IsCreated)
+                // Block data already exists at full resolution: no regeneration. ApplyLodChange
+                // repacks the chunk if the new LOD uploads different GPU detail levels.
+                if (lodConfigs[targetLod].sampleRes == 1 && blockStore.Has(coord))
                 {
                     ApplyLodChange(coord, targetLod);
                     continue;
@@ -516,8 +523,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 if (generatingSet.Contains(coord))
                     continue;
 
-                // If target chunk did not previously exist due to low resolution,
-                // schedual it now
+                // No full resolution blocks (a Horizon chunk): regenerate it in full at the
+                // target LOD. It keeps drawing its low resolution data until the new pack lands.
+                regenTargets[coord] = targetLod;
                 EnsureBiome(coord);
                 generatingSet.Add(coord);
                 spawnedThisTick++;
@@ -678,15 +686,25 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         bool IsSeeThrough(int x, int y, int z)
             => nativeBlockDatabase[blockIds[x + y * s + z * s * s]].visibility != BlockVisibility.Opaque; // Anything that might allow vision into neigbour chunk
 
+        // Low resolution samples miss surfaces that cross a face between them. A Horizon chunk with
+        // any terrain also opens every face it can see through, so the flood fill keeps going;
+        // the extra chunks this loads are mostly empty air, which is cheap at this resolution.
+        bool generous = false;
+        if (sampleRes > 1)
+        {
+            for (int i = 0; i < blockIds.Length && !generous; i++)
+                generous = nativeBlockDatabase[blockIds[i]].isSolid;
+        }
+
         bool FaceExposed(Func<int, int, bool> solidCheck, Func<int, int, bool> seeThroughCheck)
         {
             bool sawSolid = false;
             bool sawTransparent = false;
 
-            // sample every Nth voxel depending on LOD meshRes
-            for (int i = 0; i < s; i += sampleRes)
+            // The array is already at the LOD's resolution: check every sample on the face
+            for (int i = 0; i < s; i++)
             {
-                for (int j = 0; j < s; j += sampleRes)
+                for (int j = 0; j < s; j++)
                 {
 
                     if (solidCheck(i, j)) sawSolid = true;
@@ -696,7 +714,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                         return true; // mixed = exposed
                 }
             }
-            return false; // fully solid or fully air = not exposed
+            return generous && sawTransparent; // otherwise fully solid or fully air = not exposed
         }
 
         // +X
@@ -992,7 +1010,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 frequency = frequency,
                 chunkSize = chunkSize,
                 maxConcurrentNoiseTasks = NoiseThreadCount,
-                biomeDataManager = biomeDataManager
+                biomeDataManager = biomeDataManager,
+                GetSampleRes = lod => lodConfigs[lod].sampleRes
             },
             lod => RentDensityArray(lod),
             (lod, arr) => ReturnDensityArray(lod, arr)
@@ -1034,8 +1053,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             chunkSize,
             coord => chunksStillDecorating.Contains(coord),
             coord => packSystem.IsPackInProgress(coord),
-            coord => fullResBlocksByChunk.ContainsKey(coord) && fullResBlocksByChunk[coord].IsCreated,
-            coord => fullResBlocksByChunk[coord],
+            coord => blockStore.Has(coord),
+            coord => blockStore.TryGetFull(coord, Time.time, out var blocks) ? blocks : default,
             coord => MarkChunkForRemesh(coord),
             coord => GetDistanceAtChunkScaleWithRenderShape(coord, lastPlayerPos),    // getDistance()
             viewDistance,                                                             // forceGenRange
@@ -1049,7 +1068,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             {
                 chunkSize = chunkSize,
                 blockDb = nativeBlockDatabase,
-                GetMaxUploadsPerFrame = () => Math.Max(1, (renderSettings != null ? renderSettings.uploadsPerFrame : 8) * Math.Min(currentMeshUploadsPerFrame, maxMeshUploadsPerFrame) / Math.Max(1, maxMeshUploadsPerFrame))
+                GetMaxUploadsPerFrame = () => Math.Max(1, (renderSettings != null ? renderSettings.uploadsPerFrame : 8) * Math.Min(currentMeshUploadsPerFrame, maxMeshUploadsPerFrame) / Math.Max(1, maxMeshUploadsPerFrame)),
+                GetMinLevel = lod => viewSettings.MinGpuLevel(lod),
+                GetSampleRes = lod => lodConfigs[lod].sampleRes
             },
             canPackNow: coord => CanMeshNow(coord),
             markPacked: coord => lastMeshFrame[coord] = Time.frameCount
@@ -1065,6 +1086,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     private void AbandonGeneration(int3 coord)
     {
         generatingSet.Remove(coord);
+        regenTargets.Remove(coord);
         deferredFrontier.Add(coord);
 
         if (biomeDataByChunk.TryGetValue(coord, out var biome))
@@ -1078,7 +1100,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     {
         biomeDataByChunk[coord] = biome;
         pendingBiome.Remove(coord);
-        LODLevel lod = GetLODForCoord(coord, lastPlayerPos, LODLevel.Mid);
+        LODLevel lod = regenTargets.Remove(coord, out var target)
+            ? target
+            : LodForDistance(GetDistanceAtChunkScaleWithRenderShape(coord, lastPlayerPos));
         noiseSystem.RequestDensity(coord, lod, biomeDataByChunk[coord]);
     }
     private void HandleECSSpawns(int3 coord, VoxelPackResult result)
@@ -1129,12 +1153,16 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
 
         generatingSet.Remove(coord);
         deferredFrontier.Remove(coord);
+
+        if (viewSettings.StorageFor(result.lod) == BlockStorage.Compressed)
+            blockStore.MarkCandidate(coord, Time.time);
     }
     private void HandleDecorationCompleted(int3 coord, NativeList<PendingBlockWrite> writes)
     {
         chunksStillDecorating.Remove(coord);
+        decoratedChunks.Add(coord);
 
-        if (!fullResBlocksByChunk.TryGetValue(coord, out var blockIds) || !blockIds.IsCreated)
+        if (!blockStore.TryGetFull(coord, Time.time, out var blockIds))
         {
             Debug.LogError($"[Decoration] Completed for {coord} but no fullResBlocksByChunk exists."); // This error never occurs
 
@@ -1186,7 +1214,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         {
             // If we already have a full-res block array for this chunk,
             // this generation was redundant. Dispose the new one and bail.
-            if (fullResBlocksByChunk.TryGetValue(coord, out var existing) && existing.IsCreated)
+            if (blockStore.Has(coord))
             {
                 Debug.LogWarning($"[BlockGen] Redundant full-res blockIds for {coord}, discarding new buffer.");
 
@@ -1198,7 +1226,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             }
 
             // Normal case: first time full-res is generated for this chunk
-            fullResBlocksByChunk[coord] = blockIds;
+            blockStore.SetFull(coord, blockIds, Time.time);
 
             // A chunk regenerating after an unload gets back the blocks its loaded neighbours'
             // decorations put in it; they wait until its own decoration has run.
@@ -1215,12 +1243,23 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             return;
         }
 
-        // --- Test for skipping Decoration ---
+        // --- Horizon: low resolution, no decoration, no block data kept ---
+        // Neighbours' tree writes into this chunk are stored by the write system and replayed
+        // when it is regenerated in full.
         {
             var faces = DetectTerrainFlowFromBlocks(blockIds, lod);
+            if (faces != OpenFaces.None)
+            {
+                surfaceChunks.Add(coord);
+                terrainMinY = Math.Min(terrainMinY, coord.y);
+                terrainMaxY = Math.Max(terrainMaxY, coord.y);
+            }
             ExpandFrontierFromFaces(coord, lastPlayerPos, faces);
 
-            packSystem.RequestPack(coord, blockIds, lod);
+            if (biomeDataByChunk.Remove(coord, out var biome) && biome.grid.IsCreated)
+                biome.grid.Dispose();
+
+            packSystem.RequestPack(coord, blockIds, lod, takeOwnership: true);
         }
     }
     private void HandleDensityReady(int3 coord, LODLevel lod, NativeArray<float> density)
@@ -1296,8 +1335,59 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         // Live settings
         voxelRenderer.shadowDownsample = (int)renderSettings.shadowResolution;
         voxelRenderer.reusePrepass = renderSettings.reusePrepass;
-        voxelRenderer.SetLodDistances(nearRange * chunkSize, midRange * chunkSize);
+        voxelRenderer.SetLodDistances(nearRange * chunkSize, midRange * chunkSize, viewSettings.lowestDetailRange * chunkSize);
         voxelRenderer.FlushUploads();
+
+        blockStore.CompressIdle(Time.time, viewSettings.compressAfterSeconds, viewSettings.compressBudgetMs, CanCompressBlocks);
+
+        UpdateHorizon();
+    }
+
+    void UpdateHorizon()
+    {
+        if (horizonSystem == null)
+        {
+            if (!viewSettings.farHorizon || biomeDataManager == null || !biomeDataManager.IsInitialized)
+                return;
+            horizonSystem = new HorizonSystem(new HorizonSystem.Config
+            {
+                chunkSize = chunkSize,
+                seed = seed,
+                frequency = frequency,
+                biomeSystem = biomeSystem,
+                biomeDataManager = biomeDataManager,
+                blockDb = nativeBlockDatabase,
+                renderer = voxelRenderer,
+                settings = viewSettings
+            });
+        }
+
+        // Search the configured heights, widened to where surface chunks have been found
+        float minY = viewSettings.horizonMinHeight, maxY = viewSettings.horizonMaxHeight;
+        if (terrainMaxY >= terrainMinY)
+        {
+            minY = Mathf.Min(minY, (terrainMinY - 1) * chunkSize);
+            maxY = Mathf.Max(maxY, (terrainMaxY + 2) * chunkSize);
+        }
+
+        // Chunks are loaded around lastPlayerPos out to the view distance (to chunk centres)
+        float loadedRadius = Mathf.Max(0f, viewDistance - 1f) * chunkSize;
+        horizonSystem.Update(player.transform.position, new Vector2(lastPlayerPos.x, lastPlayerPos.z), loadedRadius, minY, maxY);
+    }
+
+    // A chunk's blocks may be compressed once its LOD asks for it and nothing is using them:
+    // its own decoration has run (neighbours' tree writes wait for that), and no pack, write or
+    // generation step holds or is about to change the array.
+    ChunkBlockStore.CompressCheck CanCompressBlocks(int3 coord)
+    {
+        if (!lodByCoord.TryGetValue(coord, out var lod))
+            return ChunkBlockStore.CompressCheck.NotNow;
+        if (viewSettings.StorageFor(lod) != BlockStorage.Compressed)
+            return ChunkBlockStore.CompressCheck.Never;
+        if (!decoratedChunks.Contains(coord) || chunksStillDecorating.Contains(coord) || generatingSet.Contains(coord)
+            || packSystem.IsPackQueued(coord) || chunksNeedingRemeshSet.Contains(coord) || writeSystem.HasPendingWrites(coord))
+            return ChunkBlockStore.CompressCheck.NotNow;
+        return ChunkBlockStore.CompressCheck.Yes;
     }
 
     // =============================
@@ -1314,7 +1404,26 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     public LODLevel GetLodAt(Vector3 worldPosition)
     {
         int3 coord = WorldToChunkCoord(worldPosition);
-        return TryGetChunkLod(coord, out var lod) ? lod : GetLODForCoord(coord, lastPlayerPos, LODLevel.Mid);
+        return TryGetChunkLod(coord, out var lod) ? lod : LodForDistance(GetDistanceAtChunkScaleWithRenderShape(coord, lastPlayerPos));
+    }
+
+    /// <summary>Loaded chunks at a LOD (debug stats).</summary>
+    public int CountChunksAtLod(LODLevel lod)
+    {
+        int n = 0;
+        foreach (var l in lodByCoord.Values)
+            if (l == lod) n++;
+        return n;
+    }
+
+    // LOD for a chunk without a current LOD (no hysteresis). Horizon only past the horizon distance.
+    LODLevel LodForDistance(float dist, bool allowHorizon = true)
+    {
+        if (dist < nearRange) return LODLevel.Near;
+        if (dist < midRange) return LODLevel.Mid;
+        float horizon = viewSettings.HorizonDistance;
+        if (allowHorizon && horizon > 0f && dist > horizon) return LODLevel.Horizon;
+        return LODLevel.Far;
     }
 
     public LODSettings GetLodSettings(LODLevel lod) => lodConfigs[lod];
@@ -1327,9 +1436,13 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             chunk.lod = lod;
 
         // ECS decorations are only collected for Near chunks - a chunk coming into Near range
-        // needs one pack pass to spawn them (cheap: block data is already in memory).
-        if (lod == LODLevel.Near && previous != LODLevel.Near)
+        // needs one pack pass to spawn them (cheap: block data is already in memory). A chunk
+        // also repacks when its LOD uploads a different set of GPU detail levels.
+        if ((lod == LODLevel.Near && previous != LODLevel.Near) || viewSettings.MinGpuLevel(lod) != viewSettings.MinGpuLevel(previous))
             MarkChunkForRemesh(coord);
+
+        if (viewSettings.StorageFor(lod) == BlockStorage.Compressed)
+            blockStore.MarkCandidate(coord, Time.time);
 
         if (previous != lod)
             OnChunkLodChanged?.Invoke(coord, previous, lod);
@@ -1350,8 +1463,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     bool IVoxelWorldSource.TryGetChunkBlocks(int3 coord, out NativeArray<byte> blocks)
     {
         // Chunks being decorated are written by a job - not safe to read on the main thread.
-        if (chunksStillDecorating.Contains(coord) ||
-            !fullResBlocksByChunk.TryGetValue(coord, out blocks) || !blocks.IsCreated)
+        // Compressed blocks are expanded (physics near a Mid chunk keeps it expanded while used).
+        if (chunksStillDecorating.Contains(coord) || !blockStore.TryGetFull(coord, Time.time, out blocks))
         {
             blocks = default;
             return false;
@@ -1439,8 +1552,17 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 return LODLevel.Mid;
 
             case LODLevel.Far:
+                // Loaded full resolution chunks are never downgraded to Horizon
                 if (dist < midRange - h) return LODLevel.Mid;
                 return LODLevel.Far;
+
+            case LODLevel.Horizon:
+            {
+                float horizon = viewSettings.HorizonDistance;
+                if (horizon <= 0f || dist < horizon - h)
+                    return LodForDistance(dist, allowHorizon: false);
+                return LODLevel.Horizon;
+            }
         }
 
         return current;
@@ -1545,11 +1667,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         packSystem.Cancel(coord);
 
         // Clear stored block data
-        if (fullResBlocksByChunk.TryGetValue(coord, out var arr))
-        {
-            if (arr.IsCreated) arr.Dispose();
-            fullResBlocksByChunk.Remove(coord);
-        }
+        blockStore.Remove(coord);
+        decoratedChunks.Remove(coord);
+        regenTargets.Remove(coord);
 
         // Drop writes waiting for this chunk and the cross-chunk writes it sent
         writeSystem.OnChunkUnloaded(coord);
@@ -1692,21 +1812,13 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
 
         // Pending pack jobs read the block arrays disposed below
         packSystem?.Dispose();
+        horizonSystem?.Dispose();
         voxelRenderer?.Dispose();
         if (ReferenceEquals(VoxelPhysics.Source, this))
             VoxelPhysics.Source = null;
 
         // Dispose all full-res block arrays that were never cleaned
-        foreach (var kv in fullResBlocksByChunk)
-        {
-            try
-            {
-                if (kv.Value.IsCreated)
-                    kv.Value.Dispose();
-            }
-            catch { /* already disposed, ignore */ }
-        }
-        fullResBlocksByChunk.Clear();
+        blockStore?.Dispose();
 
         // Also clear leftover pending writes
         writeSystem.ClearAll();

@@ -13,7 +13,8 @@ public struct BlockAssignmentJob : IJobParallelFor
 {
     [ReadOnly] public NativeArray<float> density;
     [WriteOnly] public NativeArray<byte> blockIds;
-    [ReadOnly] public int chunkSize;
+    [ReadOnly] public int chunkSize;   // voxels per axis of this array (chunk size / sampleRes)
+    [ReadOnly] public int sampleRes;   // blocks per voxel (1 = full resolution)
     [ReadOnly] public int3 chunkCoord;
     [ReadOnly] public int waterLevel;
 
@@ -28,8 +29,9 @@ public struct BlockAssignmentJob : IJobParallelFor
         int3 index = IndexToXYZ(i);
         float aboveBlockDensity = TryGetIndex(index.x, index.y + 1, index.z, out int r) ? density[r] : blockDensity;
 
-        // Gradient: positive = terrain getting less dense upward (approaching surface)
-        float verticalGradient = aboveBlockDensity - blockDensity;
+        // Gradient: positive = terrain getting less dense upward (approaching surface).
+        // Per block, so the slope thresholds mean the same at every sample resolution.
+        float verticalGradient = (aboveBlockDensity - blockDensity) / sampleRes;
 
         bool isSolid = blockDensity <= 0;
         bool isAirAbove = aboveBlockDensity > 0;
@@ -124,7 +126,7 @@ public struct BlockAssignmentJob : IJobParallelFor
 
     int GetWorldYValue(int3 index)
     {
-        return index.y + chunkCoord.y * chunkSize;
+        return (index.y + chunkCoord.y * chunkSize) * sampleRes;
     }
 
     int3 IndexToXYZ(int i)

@@ -319,7 +319,8 @@ bool VoxelGrassResolve(VoxelChunk c, int3 p, float3 pv, int axis, float distWS, 
 // crosses next to the surface; the regular voxel shadow rays ignore the blades.
 float VoxelGrassSunShadow(VoxelChunk c, float3 posWS, float3 sunDirWS)
 {
-    if (!VoxelGrassEnabled() || _VoxelGrassShadows < 0.5 || sunDirWS.y <= 0.0)
+    // Grass is read from full resolution data, which distant chunks don't upload.
+    if (!VoxelGrassEnabled() || _VoxelGrassShadows < 0.5 || sunDirWS.y <= 0.0 || VoxelMinLevel(c) > 0u)
         return 1.0;
     float fade = VoxelGrassFade(distance(posWS, GetCameraPositionWS()));
     if (fade <= 0.0)

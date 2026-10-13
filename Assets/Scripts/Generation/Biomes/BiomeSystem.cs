@@ -126,12 +126,46 @@ public sealed class BiomeSystem : MonoBehaviour
         var terrainNoiseGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
         var humidityNoiseGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
         var temperatureNoiseGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+        var grid = new NativeArray<BiomeHint>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+
+        Profiler.StartBiome();
+        JobHandle handle = ScheduleHints(chunkCoord, chunkSize, biomeResolution, terrainNoiseGrid, humidityNoiseGrid, temperatureNoiseGrid, grid, climateGrid);
+
+        pending.Add(chunkCoord, new PendingBiome
+        {
+            handle = handle,
+            grid = grid,
+            terrainNoise = terrainNoiseGrid,
+            humidityNoise = humidityNoiseGrid,
+            temperatureNoise = temperatureNoiseGrid
+        });
+        UnityEngine.Profiling.Profiler.EndSample();
+    }
+
+    /// <summary>
+    /// Schedules the biome hint jobs for a (resolution + 1)^2 grid of points spaced
+    /// size / resolution apart, starting at coord * size (x/z). Chunks use their own size; the far
+    /// horizon samples much larger areas at coarse spacing. The four arrays hold (resolution + 1)^2
+    /// entries and must stay alive until the returned job is complete.
+    /// </summary>
+    public JobHandle ScheduleHints(int3 coord, int size, int resolution,
+        NativeArray<float> terrainNoiseGrid, NativeArray<float> humidityNoiseGrid, NativeArray<float> temperatureNoiseGrid,
+        NativeArray<BiomeHint> output)
+    {
+        return ScheduleHints(coord, size, resolution, terrainNoiseGrid, humidityNoiseGrid, temperatureNoiseGrid, output, biomeDataManager.GetClimateGrid());
+    }
+
+    JobHandle ScheduleHints(int3 chunkCoord, int chunkSize, int resolution,
+        NativeArray<float> terrainNoiseGrid, NativeArray<float> humidityNoiseGrid, NativeArray<float> temperatureNoiseGrid,
+        NativeArray<BiomeHint> grid, ClimateGridSO climateGrid)
+    {
+        int count = (resolution + 1) * (resolution + 1);
 
         var noiseJob = new BiomeNoiseJob
         {
             chunkCoord = chunkCoord,
             chunkSize = chunkSize,
-            resolution = biomeResolution,
+            resolution = resolution,
             terrainNoise = terrainNoise,
             humidityNoise = humidityNoise,
             temperatureNoise = temperatureNoise,
@@ -140,13 +174,11 @@ public sealed class BiomeSystem : MonoBehaviour
             temperatureNoiseGrid = temperatureNoiseGrid
         };
 
-        var grid = new NativeArray<BiomeHint>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-
         var job = new BiomeJob
         {
             chunkCoord = chunkCoord,
             chunkSize = chunkSize,
-            resolution = biomeResolution,
+            resolution = resolution,
             waterLevel = biomeDataManager.GetWaterLevel(),
             terrainTypes = biomeDataManager.GetTerrainTypeData(),
             terrainAllowedBiomes = biomeDataManager.GetTerrainAllowedBiomes(),
@@ -175,19 +207,8 @@ public sealed class BiomeSystem : MonoBehaviour
             output = grid
         };
 
-        Profiler.StartBiome();
         JobHandle noiseHandle = noiseJob.Schedule(count, 64);
-        JobHandle handle = job.Schedule(count, 64, noiseHandle);
-
-        pending.Add(chunkCoord, new PendingBiome
-        {
-            handle = handle,
-            grid = grid,
-            terrainNoise = terrainNoiseGrid,
-            humidityNoise = humidityNoiseGrid,
-            temperatureNoise = temperatureNoiseGrid
-        });
-        UnityEngine.Profiling.Profiler.EndSample();
+        return job.Schedule(count, 64, noiseHandle);
     }
 
     public void CancelBiome(int3 chunkCoord)

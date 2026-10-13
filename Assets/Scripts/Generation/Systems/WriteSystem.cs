@@ -14,6 +14,7 @@ public class WriteSystem
         new Stack<List<PendingBlockWrite>>();
 
     public int PendingWritesCount => pendingWrites.Count;
+    public bool HasPendingWrites(int3 coord) => pendingWrites.ContainsKey(coord);
 
     // External state
     private Func<int3, bool> isDecorating;

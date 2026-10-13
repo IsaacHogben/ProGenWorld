@@ -70,6 +70,7 @@ public class BlockGenSystem
             density = density,
             blockIds = blockIds,
             chunkSize = chunkLodSize,
+            sampleRes = sampleRes,
             chunkCoord = coord,
             waterLevel = cfg.biomeDataManager.GetWaterLevel(),
 

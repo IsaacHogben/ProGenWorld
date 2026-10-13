@@ -37,6 +37,8 @@ public class RenderBenchmark : MonoBehaviour
         new View { name = "thirdPerson", offset = new Vector3(0f, 3.5f, -6f), lookAtPlayer = true },
         new View { name = "horizon", offset = new Vector3(0f, 2f, 0f), yaw = 30f, pitch = 4f },
         new View { name = "overlook", offset = new Vector3(0f, 40f, 0f), yaw = 140f, pitch = 30f },
+        new View { name = "farOverlook", offset = new Vector3(0f, 160f, 0f), yaw = 140f, pitch = 10f },
+        new View { name = "skyHigh", offset = new Vector3(0f, 700f, 0f), yaw = 140f, pitch = 12f },
         new View { name = "ground", offset = new Vector3(0f, 8f, 0f), yaw = 250f, pitch = 60f },
         new View { name = "waterLow", offset = new Vector3(0f, 2.5f, 0f), pitch = 8f, overWater = true },
         new View { name = "waterHigh", offset = new Vector3(0f, 14f, 0f), pitch = 35f, overWater = true },
@@ -109,6 +111,17 @@ public class RenderBenchmark : MonoBehaviour
         settings = FindFirstObjectByType<VoxelRenderSettings>();
         urp = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
         player = chunkManager.player.transform;
+
+        // World settings that need a restart to change (applied before the chunk manager starts)
+        var view = FindFirstObjectByType<ViewDistanceSettings>();
+        if (view != null)
+        {
+            if (int.TryParse(Arg("-benchView"), out int viewDistance)) view.viewDistance = viewDistance;
+            if (int.TryParse(Arg("-benchTrimGpu"), out int trim)) view.trimGpuDetail = trim != 0;
+            if (int.TryParse(Arg("-benchHorizon"), out int horizon)) view.lowResHorizon = horizon != 0;
+            if (int.TryParse(Arg("-benchFarHorizon"), out int farHorizon)) view.farHorizon = farHorizon != 0;
+            Log($"view distance {view.viewDistance}, trim gpu detail {view.trimGpuDetail}, lowest detail range {view.lowestDetailRange}, low res horizon {view.lowResHorizon}");
+        }
 
         foreach (var p in FindObjectsByType<ChunkProfiler>(FindObjectsSortMode.None))
             p.enabled = false;
@@ -185,6 +198,8 @@ public class RenderBenchmark : MonoBehaviour
             settings.pixelNoise = 0f;
             settings.windDirection = Vector2.zero;
         };
+        configs["noFarHorizon"] = () => FindFirstObjectByType<ViewDistanceSettings>().farHorizon = false;
+        configs["noLowestDetail"] = () => FindFirstObjectByType<ViewDistanceSettings>().lowestDetailRange = 0;
         configs["baselineAgain"] = () => { };
     }
 
@@ -242,6 +257,14 @@ public class RenderBenchmark : MonoBehaviour
 
         // Let decoration and LOD streaming settle, then freeze the world as far as possible.
         yield return Wait(8f);
+
+        // Far horizon tiles build one at a time after the chunks
+        float horizonStart = Time.realtimeSinceStartup;
+        while (chunkManager.Horizon != null && (chunkManager.Horizon.Busy || chunkManager.Horizon.PendingTiles > 0)
+               && Time.realtimeSinceStartup - horizonStart < 120f)
+            yield return null;
+        if (chunkManager.Horizon != null)
+            Log($"far horizon: {chunkManager.Horizon.TileCount} tiles, {chunkManager.VoxelRenderer.HorizonChunkCount} chunks, built in {Time.realtimeSinceStartup - horizonStart:F1}s");
         cam = Camera.main;
         CaptureBaseline();
         Log($"screen {Screen.width}x{Screen.height}, player at {player.position}");

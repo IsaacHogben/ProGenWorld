@@ -15,6 +15,7 @@ public class NoiseSystem
         public float frequency;
         public int maxConcurrentNoiseTasks;
         public BiomeDataManager biomeDataManager;
+        public Func<LODLevel, int> GetSampleRes;   // blocks per noise sample at a LOD (null = 1)
     }
 
     private NoiseConfig config;
@@ -63,12 +64,7 @@ public class NoiseSystem
             return;
         }
 
-        int sampleRes = lod switch
-        {
-            LODLevel.Near => 1,
-            LODLevel.Mid => 1,
-            _ => 1
-        };
+        int sampleRes = config.GetSampleRes != null ? config.GetSampleRes(lod) : 1;
 
         NativeArray<float> density = rentDensity(lod);
 

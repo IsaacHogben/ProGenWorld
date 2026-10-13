@@ -14,7 +14,7 @@ using UnityEngine.Rendering.Universal;
 ///
 /// Chunks are split into draw cells (16^3 voxels). Every non-empty cell is one box, shrunk to
 /// its content and drawn with Graphics.RenderPrimitives (36 vertices, no mesh). Cells are
-/// frustum culled and sorted per camera every frame.
+/// frustum culled (whole chunks first, then their cells) and sorted per camera every frame.
 /// The shaders read the voxel data straight from structured buffers:
 ///   _VoxelChunks : per chunk record (origin, voxel size, content bounds, neighbours)
 ///   _VoxelCells  : per draw cell content bounds
@@ -49,8 +49,18 @@ public sealed class VoxelWorldRenderer : IDisposable
         public uint4 boundsMinRes;
         public uint4 boundsMaxFlags;
         public int4 neighborsA;
-        public int4 neighborsB;
-        public int4 lodBricks;   // x: level 1 brick table start, y: level 2 start, z: level count
+        public int4 neighborsB;  // x: -Z, y: +Z neighbour, z: level 0 brick table start, w: level 3 start
+        public int4 lodBricks;   // x: level 1 brick table start, y: level 2 start, z: level count, w: finest level with pages
+    }
+
+    // World space content bounds of a chunk slot, for culling whole chunks before their cells.
+    struct ChunkCull
+    {
+        public float3 min;
+        public float3 max;
+        public int cells;        // non-empty cells
+        public int unburied;     // non-empty cells that are not buried
+        public int ringTag;      // 0 = chunk, n = far horizon ring n - 1
     }
 
     struct CellCull
@@ -60,6 +70,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         public uint flags;
         public int active;
         public int buried;   // fully enclosed by opaque blocks: never visible, not drawn
+        public int ringTag;  // 0 = chunk, n = far horizon ring n - 1
     }
 
     struct SortItem : IComparable<SortItem>
@@ -103,6 +114,8 @@ public sealed class VoxelWorldRenderer : IDisposable
         public static readonly int Heights = Shader.PropertyToID("_VoxelHeights");
         public static readonly int TextureSize = Shader.PropertyToID("_VoxelTextureSize");
         public static readonly int TexelCount = Shader.PropertyToID("_VoxelTexelCount");
+        public static readonly int ColumnGrid = Shader.PropertyToID("_VoxelColumnGrid");
+        public static readonly int HorizonInner = Shader.PropertyToID("_VoxelHorizonInner");
     }
 
     readonly Settings settings;
@@ -125,6 +138,7 @@ public sealed class VoxelWorldRenderer : IDisposable
     NativeArray<ChunkGpu> chunkRecords;
     NativeArray<uint2> cellBounds;   // GPU mirror, packed bounds per draw cell
     NativeArray<CellCull> cellCull;  // world space bounds per draw cell for culling
+    NativeArray<ChunkCull> chunkCull; // per chunk slot
     NativeArray<byte> cellOcclusion; // VoxelGpuFormat.Occ* bits per draw cell
     readonly int cellsPerAxis;
     int chunkCapacity;
@@ -176,11 +190,12 @@ public sealed class VoxelWorldRenderer : IDisposable
 
     /// <summary>
     /// Camera distances (world units) where draw cells switch to detail level 1 (half
-    /// resolution) and level 2 (quarter resolution). Chosen per cell on the GPU every frame.
+    /// resolution), level 2 (quarter) and level 3 (eighth; 0 = never). Chosen per cell on the
+    /// GPU every frame, never finer than the levels a chunk has uploaded.
     /// </summary>
-    public void SetLodDistances(float level1Distance, float level2Distance)
+    public void SetLodDistances(float level1Distance, float level2Distance, float level3Distance = 0f)
     {
-        Shader.SetGlobalVector(Ids.LodDistances, new Vector4(level1Distance, level2Distance, 0, 0));
+        Shader.SetGlobalVector(Ids.LodDistances, new Vector4(level1Distance, level2Distance, level3Distance, 0));
     }
 
     /// <summary>Toggle voxel drawing (debugging / profiling).</summary>
@@ -213,6 +228,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         chunkRecords = new NativeArray<ChunkGpu>(chunkCapacity, Allocator.Persistent);
         cellBounds = new NativeArray<uint2>(chunkCapacity * maxCellsPerChunk, Allocator.Persistent);
         cellCull = new NativeArray<CellCull>(chunkCapacity * maxCellsPerChunk, Allocator.Persistent);
+        chunkCull = new NativeArray<ChunkCull>(chunkCapacity, Allocator.Persistent);
         cellOcclusion = new NativeArray<byte>(chunkCapacity * maxCellsPerChunk, Allocator.Persistent);
         pagesBySlot = new List<int>[chunkCapacity];
 
@@ -241,6 +257,13 @@ public sealed class VoxelWorldRenderer : IDisposable
             gridCells[i] = new int4(-1, 0, 0, 0);
         gridBuffer = CreateBuffer(gridCount, 16);
         gridBuffer.SetData(gridCells);
+
+        int columnCount = gridDims.x * gridDims.z;
+        columnCells = new NativeArray<int4>(columnCount, Allocator.Persistent);
+        columnBuffer = CreateBuffer(columnCount, 16);
+        columnBuffer.SetData(columnCells);
+        horizonInner = new NativeArray<float4>(VoxelGpuFormat.MaxHorizonRings, Allocator.Persistent);
+        Shader.SetGlobalVectorArray(Ids.HorizonInner, horizonInnerVec);
 
         Shader.SetGlobalVector(Ids.GridDims, new Vector4(gridDims.x, gridDims.y, gridDims.z, 0));
         Shader.SetGlobalFloat(Ids.ChunkWorldSize, s.chunkSize);
@@ -296,6 +319,7 @@ public sealed class VoxelWorldRenderer : IDisposable
     {
         RemoveSlot(coord);
         emptyChunks.Add(coord);
+        SetColumnPresence(coord, true);
         UpdateBuriedAround(coord);
     }
 
@@ -312,66 +336,27 @@ public sealed class VoxelWorldRenderer : IDisposable
         bool isNew = !slotByCoord.TryGetValue(coord, out int slot);
         if (isNew)
         {
-            if (freeSlots.Count == 0)
-                GrowChunkCapacity();
-            slot = freeSlots.Pop();
+            slot = AllocateSlot();
             slotByCoord[coord] = slot;
-            highestSlot = Mathf.Max(highestSlot, slot);
 
             int g = GridIndex(coord);
             gridCells[g] = new int4(slot, coord.x, coord.y, coord.z);
             dirtyGridCells.Add(g);
         }
+        SetColumnPresence(coord, true);
 
-        var pages = pagesBySlot[slot] ??= new List<int>(64);
-        ReleasePages(pages);
-
-        int mixed = result.MixedBrickCount;
-        if (freePages.Count < mixed)
-            GrowPageCapacity(UsedPages + mixed);
-        for (int i = 0; i < mixed; i++)
-            pages.Add(freePages.Pop());
-
-        // Brick table: replace local page indices with pool indices
-        int brickCount = result.BrickCount;
-        var bricks = result.bricks;
-        for (int b = 0; b < brickCount; b++)
-        {
-            uint e = bricks[b];
-            if ((e & VoxelGpuFormat.UniformFlag) == 0)
-                bricks[b] = (uint)pages[(int)(e & VoxelGpuFormat.PageMask)] | (e & VoxelGpuFormat.DenseFlag);
-        }
-        brickBuffer.SetData(bricks, 0, slot * maxBricksPerChunk, brickCount);
-
-        // Pages: upload consecutive runs in one call
-        var pageData = result.pages.AsArray();
-        for (int i = 0; i < mixed;)
-        {
-            int start = i;
-            while (i + 1 < mixed && pages[i + 1] == pages[i] + 1)
-                i++;
-            int run = i - start + 1;
-            pageBuffer.SetData(pageData, start * VoxelGpuFormat.PageUints, pages[start] * VoxelGpuFormat.PageUints, run * VoxelGpuFormat.PageUints);
-            i++;
-        }
+        UploadBricks(slot, result);
 
         // Chunk record
         int res = result.Resolution;
         float voxelSize = settings.chunkSize / (float)res;
         float3 origin = (float3)(coord * settings.chunkSize);
-        uint flags = result.Flags;
 
         var rec = chunkRecords[slot];
         rec.originSize = new float4(origin, voxelSize);
         rec.boundsMinRes = new uint4((uint3)result.BoundsMin, (uint)res);
-        rec.boundsMaxFlags = new uint4((uint3)result.BoundsMax, flags);
-        rec.neighborsB.z = slot * maxBricksPerChunk;
-
-        // Coarser detail levels follow level 0 in the slot's brick table
-        int levels = result.LodLevels;
-        int level1 = rec.neighborsB.z + VoxelGpuFormat.BricksInLevel(res, 0);
-        int level2 = levels > 1 ? level1 + VoxelGpuFormat.BricksInLevel(res, 1) : level1;
-        rec.lodBricks = new int4(level1, level2, levels, 0);
+        rec.boundsMaxFlags = new uint4((uint3)result.BoundsMax, result.Flags);
+        SetLevelStarts(ref rec, slot, result);
 
         for (int f = 0; f < 6; f++)
         {
@@ -389,9 +374,76 @@ public sealed class VoxelWorldRenderer : IDisposable
         chunkRecords[slot] = rec;
         MarkDirty(slot);
 
-        // Draw cells
+        WriteCells(slot, origin, voxelSize, result, 0);
+
+        UpdateBuried(slot);
+        UpdateBuriedAround(coord);
+    }
+
+    int AllocateSlot()
+    {
+        if (freeSlots.Count == 0)
+            GrowChunkCapacity();
+        int slot = freeSlots.Pop();
+        highestSlot = Mathf.Max(highestSlot, slot);
+        return slot;
+    }
+
+    // Brick table and voxel pages of a packed chunk into a slot.
+    void UploadBricks(int slot, VoxelPackResult result)
+    {
+        var pages = pagesBySlot[slot] ??= new List<int>(64);
+        ReleasePages(pages);
+
+        int mixed = result.MixedBrickCount;
+        if (freePages.Count < mixed)
+            GrowPageCapacity(UsedPages + mixed);
+        for (int i = 0; i < mixed; i++)
+            pages.Add(freePages.Pop());
+
+        // Brick table: replace local page indices with pool indices
+        int brickCount = result.BrickCount;
+        var bricks = result.bricks;
+        for (int b = 0; b < brickCount; b++)
+        {
+            uint e = bricks[b];
+            if ((e & VoxelGpuFormat.UniformFlag) == 0 && (e & VoxelGpuFormat.PageMask) != VoxelGpuFormat.NoPage)
+                bricks[b] = (uint)pages[(int)(e & VoxelGpuFormat.PageMask)] | (e & VoxelGpuFormat.DenseFlag);
+        }
+        brickBuffer.SetData(bricks, 0, slot * maxBricksPerChunk, brickCount);
+
+        // Pages: upload consecutive runs in one call
+        var pageData = result.pages.AsArray();
+        for (int i = 0; i < mixed;)
+        {
+            int start = i;
+            while (i + 1 < mixed && pages[i + 1] == pages[i] + 1)
+                i++;
+            int run = i - start + 1;
+            pageBuffer.SetData(pageData, start * VoxelGpuFormat.PageUints, pages[start] * VoxelGpuFormat.PageUints, run * VoxelGpuFormat.PageUints);
+            i++;
+        }
+    }
+
+    // Coarser detail levels follow level 0 in the slot's brick table
+    void SetLevelStarts(ref ChunkGpu rec, int slot, VoxelPackResult result)
+    {
+        int res = result.Resolution;
+        int levels = result.LodLevels;
+        rec.neighborsB.z = slot * maxBricksPerChunk;
+        int level1 = rec.neighborsB.z + VoxelGpuFormat.BricksInLevel(res, 0);
+        int level2 = levels > 1 ? level1 + VoxelGpuFormat.BricksInLevel(res, 1) : level1;
+        int level3 = levels > 2 ? level2 + VoxelGpuFormat.BricksInLevel(res, 2) : level2;
+        rec.neighborsB.w = level3;
+        rec.lodBricks = new int4(level1, level2, levels, result.MinLevel);
+    }
+
+    // Draw cells of a slot. ringTag: 0 for chunks, horizon ring + 1 for far horizon chunks.
+    void WriteCells(int slot, float3 origin, float voxelSize, VoxelPackResult result, int ringTag)
+    {
         int baseCell = slot * maxCellsPerChunk;
         int cellCount = result.CellCount;
+        float3 chunkMin = new float3(float.MaxValue), chunkMax = new float3(float.MinValue);
         for (int c = 0; c < maxCellsPerChunk; c++)
         {
             if (c >= cellCount || result.CellEmpty(c))
@@ -407,19 +459,123 @@ public sealed class VoxelWorldRenderer : IDisposable
             cellBounds[baseCell + c] = new uint2(
                 (uint)cmin.x | ((uint)cmin.y << 8) | ((uint)cmin.z << 16),
                 (uint)cmax.x | ((uint)cmax.y << 8) | ((uint)cmax.z << 16));
-            SetCellCull(baseCell + c, new CellCull
+            var cull = new CellCull
             {
                 min = origin + (float3)cmin * voxelSize,
                 max = origin + (float3)cmax * voxelSize,
                 flags = result.CellFlags(c),
-                active = 1
-            });
-            cellOcclusion[baseCell + c] = (byte)result.CellOcclusion(c);
+                active = 1,
+                ringTag = ringTag
+            };
+            SetCellCull(baseCell + c, cull);
+            chunkMin = math.min(chunkMin, cull.min);
+            chunkMax = math.max(chunkMax, cull.max);
+            cellOcclusion[baseCell + c] = ringTag == 0 ? (byte)result.CellOcclusion(c) : (byte)0;
         }
         cellBuffer.SetData(cellBounds, baseCell, baseCell, maxCellsPerChunk);
 
-        UpdateBuried(slot);
-        UpdateBuriedAround(coord);
+        var cc = chunkCull[slot];
+        cc.min = chunkMin;   // union of the cell boxes (grass can reach just above the content)
+        cc.max = chunkMax;
+        cc.ringTag = ringTag;
+        chunkCull[slot] = cc;
+    }
+
+    // ==================================================================================
+    // Far horizon
+    // ==================================================================================
+    // Coarse terrain beyond the loaded chunks (HorizonSystem): ordinary packed chunks whose voxels
+    // are many blocks wide, in rings of growing voxel size. They are not in the chunk grid and have
+    // no neighbours. The shader hides their voxels wherever the ring inside them has terrain:
+    // ring 0 under loaded chunk columns, ring n inside ring n - 1's square.
+
+    readonly Dictionary<int4, int> horizonSlots = new();   // (ring, tile x, layer, tile z) -> slot
+
+    public int HorizonChunkCount => horizonSlots.Count;
+
+    public void SetHorizonChunk(int ring, int3 tile, float3 origin, float voxelSize, VoxelPackResult result)
+    {
+        var key = new int4(ring, tile);
+        if (result.IsEmpty)
+        {
+            RemoveHorizonChunk(ring, tile);
+            return;
+        }
+
+        if (!horizonSlots.TryGetValue(key, out int slot))
+        {
+            slot = AllocateSlot();
+            horizonSlots[key] = slot;
+        }
+
+        UploadBricks(slot, result);
+
+        var rec = new ChunkGpu
+        {
+            originSize = new float4(origin, voxelSize),
+            boundsMinRes = new uint4((uint3)result.BoundsMin, (uint)result.Resolution),
+            boundsMaxFlags = new uint4((uint3)result.BoundsMax,
+                result.Flags | VoxelGpuFormat.FlagHorizon | ((uint)ring << VoxelGpuFormat.HorizonRingShift)),
+            neighborsA = new int4(-1)
+        };
+        SetLevelStarts(ref rec, slot, result);
+        rec.neighborsB.x = rec.neighborsB.y = -1;
+        rec.lodBricks.z = 1;   // always drawn at their own (already coarse) resolution
+        rec.lodBricks.w = 0;
+        chunkRecords[slot] = rec;
+        MarkDirty(slot);
+
+        WriteCells(slot, origin, voxelSize, result, ring + 1);
+    }
+
+    public void RemoveHorizonChunk(int ring, int3 tile)
+    {
+        if (!horizonSlots.Remove(new int4(ring, tile), out int slot))
+            return;
+        FreeSlot(slot);
+    }
+
+    /// <summary>
+    /// Where the horizon rings are hidden: ring 0 is culled (whole cells) inside a circle around
+    /// the loaded area and hidden per voxel under loaded chunk columns; ring n (1..3) is hidden
+    /// inside ring n - 1's square (x: min x, y: min z, z: max x, w: max z).
+    /// </summary>
+    public void SetHorizonHoles(float2 center, float ring0CullRadius, Vector4[] innerSquares)
+    {
+        horizonCenter = center;
+        horizonCullRadius = ring0CullRadius;
+        for (int i = 0; i < horizonInner.Length; i++)
+        {
+            var v = innerSquares != null && i < innerSquares.Length ? innerSquares[i] : Vector4.zero;
+            horizonInner[i] = v;
+            horizonInnerVec[i] = v;
+        }
+        Shader.SetGlobalVectorArray(Ids.HorizonInner, horizonInnerVec);
+    }
+
+    float2 horizonCenter;
+    float horizonCullRadius;
+    NativeArray<float4> horizonInner;
+    readonly Vector4[] horizonInnerVec = new Vector4[VoxelGpuFormat.MaxHorizonRings];
+
+    // Loaded chunk columns (x/z), as a toroidal grid the shader reads to hide ring 0 there.
+    NativeArray<int4> columnCells;      // x: chunks (incl. empty ones) loaded in the column, y/z: column coord
+    GraphicsBuffer columnBuffer;
+    readonly HashSet<int> dirtyColumns = new();
+    readonly HashSet<int3> presentCoords = new();
+
+    void SetColumnPresence(int3 coord, bool present)
+    {
+        if (present ? !presentCoords.Add(coord) : !presentCoords.Remove(coord))
+            return;
+
+        int i = (coord.x & (gridDims.x - 1)) + (coord.z & (gridDims.z - 1)) * gridDims.x;
+        var e = columnCells[i];
+        if (e.x == 0 || e.y != coord.x || e.z != coord.z)
+            e = new int4(0, coord.x, coord.z, 0);
+        e.x = math.max(0, e.x + (present ? 1 : -1));
+        columnCells[i] = e;
+        dirtyColumns.Add(i);
     }
 
     /// <summary>Unloads a chunk. Its neighbours treat it as covered until it is loaded again.</summary>
@@ -427,6 +583,7 @@ public sealed class VoxelWorldRenderer : IDisposable
     {
         RemoveSlot(coord);
         emptyChunks.Remove(coord);
+        SetColumnPresence(coord, false);
         UpdateBuriedAround(coord);
     }
 
@@ -443,15 +600,6 @@ public sealed class VoxelWorldRenderer : IDisposable
             return;
 
         slotByCoord.Remove(coord);
-        if (pagesBySlot[slot] != null)
-            ReleasePages(pagesBySlot[slot]);
-
-        int baseCell = slot * maxCellsPerChunk;
-        for (int c = 0; c < maxCellsPerChunk; c++)
-        {
-            SetCellCull(baseCell + c, default);
-            cellOcclusion[baseCell + c] = 0;
-        }
 
         for (int f = 0; f < 6; f++)
         {
@@ -470,7 +618,23 @@ public sealed class VoxelWorldRenderer : IDisposable
             dirtyGridCells.Add(g);
         }
 
+        FreeSlot(slot);
+    }
+
+    void FreeSlot(int slot)
+    {
+        if (pagesBySlot[slot] != null)
+            ReleasePages(pagesBySlot[slot]);
+
+        int baseCell = slot * maxCellsPerChunk;
+        for (int c = 0; c < maxCellsPerChunk; c++)
+        {
+            SetCellCull(baseCell + c, default);
+            cellOcclusion[baseCell + c] = 0;
+        }
+
         chunkRecords[slot] = default;
+        chunkCull[slot] = default;
         dirtySlots.Remove(slot);
         freeSlots.Push(slot);
     }
@@ -480,6 +644,7 @@ public sealed class VoxelWorldRenderer : IDisposable
     {
         UploadDirty(dirtySlots, chunkBuffer, chunkRecords);
         UploadDirty(dirtyGridCells, gridBuffer, gridCells);
+        UploadDirty(dirtyColumns, columnBuffer, columnCells);
     }
 
     void UploadDirty<T>(HashSet<int> dirty, GraphicsBuffer buffer, NativeArray<T> data) where T : struct
@@ -540,13 +705,24 @@ public sealed class VoxelWorldRenderer : IDisposable
 
     void MarkDirty(int slot) => dirtySlots.Add(slot);
 
-    // Keeps TotalCells / BuriedCells in step with the cull records.
+    // Keeps TotalCells / BuriedCells and the per chunk counts in step with the cull records.
     void SetCellCull(int index, CellCull value)
     {
         var old = cellCull[index];
-        TotalCells += value.active - old.active;
-        BuriedCells += value.buried - old.buried;
+        int activeDelta = value.active - old.active;
+        int buriedDelta = value.buried - old.buried;
+        TotalCells += activeDelta;
+        BuriedCells += buriedDelta;
         cellCull[index] = value;
+
+        if (activeDelta != 0 || buriedDelta != 0)
+        {
+            int slot = index / maxCellsPerChunk;
+            var cc = chunkCull[slot];
+            cc.cells += activeDelta;
+            cc.unburied += activeDelta - buriedDelta;
+            chunkCull[slot] = cc;
+        }
     }
 
     /// <summary>
@@ -683,6 +859,7 @@ public sealed class VoxelWorldRenderer : IDisposable
     void BindGlobals()
     {
         Shader.SetGlobalBuffer(Ids.Grid, gridBuffer);
+        Shader.SetGlobalBuffer(Ids.ColumnGrid, columnBuffer);
         Shader.SetGlobalBuffer(Ids.Chunks, chunkBuffer);
         Shader.SetGlobalBuffer(Ids.Cells, cellBuffer);
         Shader.SetGlobalBuffer(Ids.Bricks, brickBuffer);
@@ -707,6 +884,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         chunkRecords = Grow(chunkRecords, newCapacity);
         cellBounds = Grow(cellBounds, newCapacity * maxCellsPerChunk);
         cellCull = Grow(cellCull, newCapacity * maxCellsPerChunk);
+        chunkCull = Grow(chunkCull, newCapacity);
         cellOcclusion = Grow(cellOcclusion, newCapacity * maxCellsPerChunk);
         Array.Resize(ref pagesBySlot, newCapacity);
 
@@ -815,11 +993,16 @@ public sealed class VoxelWorldRenderer : IDisposable
     struct CullJob : IJob
     {
         [ReadOnly] public NativeArray<CellCull> cells;
+        [ReadOnly] public NativeArray<ChunkCull> chunks;
         [ReadOnly] public NativeArray<float4> planes;
-        public int count;
+        public int slotCount;
+        public int cellsPerChunk;
         public float3 cameraPos;
         public float insideMargin;
         public bool skipBuried;
+        public float2 horizonCenter;
+        public float horizonCullRadius;
+        [ReadOnly] public NativeArray<float4> horizonInner;
 
         public NativeList<SortItem> sortOpaque, sortTranslucent;
         public NativeList<uint> opaqueOut, opaqueIn, translucentOut, translucentIn;
@@ -829,36 +1012,67 @@ public sealed class VoxelWorldRenderer : IDisposable
             sortOpaque.Clear(); sortTranslucent.Clear();
             opaqueOut.Clear(); opaqueIn.Clear(); translucentOut.Clear(); translucentIn.Clear();
 
-            for (int i = 0; i < count; i++)
+            for (int slot = 0; slot < slotCount; slot++)
             {
-                var c = cells[i];
-                if (c.active == 0 || (skipBuried && c.buried != 0))
+                // Whole chunk first: most loaded chunks are outside the frustum or fully buried.
+                var ch = chunks[slot];
+                if ((skipBuried ? ch.unburied : ch.cells) == 0)
+                    continue;
+                bool insideChunk = math.all(cameraPos >= ch.min - insideMargin) && math.all(cameraPos <= ch.max + insideMargin);
+                if (!insideChunk && !InFrustum(ch.min, ch.max))
+                    continue;
+                if (ch.ringTag > 0 && HiddenHorizon(ch.ringTag, ch.min, ch.max))
                     continue;
 
-                bool opaque = (c.flags & VoxelGpuFormat.FlagHasOpaque) != 0;
-                bool translucent = (c.flags & VoxelGpuFormat.FlagHasTranslucent) != 0;
-                float dist = math.distance(cameraPos, math.clamp(cameraPos, c.min, c.max));
-
-                bool inside = math.all(cameraPos >= c.min - insideMargin) && math.all(cameraPos <= c.max + insideMargin);
-                if (!inside && !InFrustum(c.min, c.max))
-                    continue;
-
-                if (opaque)
-                {
-                    if (inside) opaqueIn.Add((uint)i);
-                    else sortOpaque.Add(new SortItem { key = dist, id = (uint)i });
-                }
-                if (translucent)
-                {
-                    if (inside) translucentIn.Add((uint)i);
-                    else sortTranslucent.Add(new SortItem { key = -math.distance(cameraPos, (c.min + c.max) * 0.5f), id = (uint)i });
-                }
+                int first = slot * cellsPerChunk;
+                for (int i = first; i < first + cellsPerChunk; i++)
+                    AddCell(i);
             }
 
             sortOpaque.Sort();       // front to back: early depth rejection
             sortTranslucent.Sort();  // back to front: correct blending
             for (int i = 0; i < sortOpaque.Length; i++) opaqueOut.Add(sortOpaque[i].id);
             for (int i = 0; i < sortTranslucent.Length; i++) translucentOut.Add(sortTranslucent[i].id);
+        }
+
+        void AddCell(int i)
+        {
+            var c = cells[i];
+            if (c.active == 0 || (skipBuried && c.buried != 0))
+                return;
+            if (c.ringTag > 0 && HiddenHorizon(c.ringTag, c.min, c.max))
+                return;
+
+            bool opaque = (c.flags & VoxelGpuFormat.FlagHasOpaque) != 0;
+            bool translucent = (c.flags & VoxelGpuFormat.FlagHasTranslucent) != 0;
+            float dist = math.distance(cameraPos, math.clamp(cameraPos, c.min, c.max));
+
+            bool inside = math.all(cameraPos >= c.min - insideMargin) && math.all(cameraPos <= c.max + insideMargin);
+            if (!inside && !InFrustum(c.min, c.max))
+                return;
+
+            if (opaque)
+            {
+                if (inside) opaqueIn.Add((uint)i);
+                else sortOpaque.Add(new SortItem { key = dist, id = (uint)i });
+            }
+            if (translucent)
+            {
+                if (inside) translucentIn.Add((uint)i);
+                else sortTranslucent.Add(new SortItem { key = -math.distance(cameraPos, (c.min + c.max) * 0.5f), id = (uint)i });
+            }
+        }
+
+        // Far horizon boxes entirely inside the area the ring inside them covers.
+        bool HiddenHorizon(int ringTag, float3 min, float3 max)
+        {
+            if (ringTag == 1)
+            {
+                float2 far = math.max(math.abs(min.xz - horizonCenter), math.abs(max.xz - horizonCenter));
+                return math.length(far) < horizonCullRadius;
+            }
+            float4 sq = horizonInner[ringTag - 1];
+            return sq.z > sq.x && min.x >= sq.x && min.z >= sq.y && max.x <= sq.z && max.z <= sq.w;
         }
 
         bool InFrustum(float3 min, float3 max)
@@ -893,11 +1107,16 @@ public sealed class VoxelWorldRenderer : IDisposable
         var job = new CullJob
         {
             cells = cellCull,
+            chunks = chunkCull,
             planes = planes,
-            count = (highestSlot + 1) * maxCellsPerChunk,
+            slotCount = highestSlot + 1,
+            cellsPerChunk = maxCellsPerChunk,
             cameraPos = cam.transform.position,
             insideMargin = insideMargin + cam.nearClipPlane * 2f,
             skipBuried = skipBuriedCells,
+            horizonCenter = horizonCenter,
+            horizonCullRadius = horizonCullRadius,
+            horizonInner = horizonInner,
             sortOpaque = sortOpaque,
             sortTranslucent = sortTranslucent,
             opaqueOut = listOpaqueOut,
@@ -973,11 +1192,15 @@ public sealed class VoxelWorldRenderer : IDisposable
         blockInfoBuffer?.Release();
         surfaceParamsBuffer?.Release();
         gridBuffer?.Release();
+        columnBuffer?.Release();
 
         if (gridCells.IsCreated) gridCells.Dispose();
+        if (columnCells.IsCreated) columnCells.Dispose();
+        if (horizonInner.IsCreated) horizonInner.Dispose();
         if (chunkRecords.IsCreated) chunkRecords.Dispose();
         if (cellBounds.IsCreated) cellBounds.Dispose();
         if (cellCull.IsCreated) cellCull.Dispose();
+        if (chunkCull.IsCreated) chunkCull.Dispose();
         if (cellOcclusion.IsCreated) cellOcclusion.Dispose();
         if (planes.IsCreated) planes.Dispose();
         if (sortOpaque.IsCreated) sortOpaque.Dispose();

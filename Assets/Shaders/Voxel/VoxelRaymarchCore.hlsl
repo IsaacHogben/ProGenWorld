@@ -37,8 +37,9 @@ struct VoxelChunk
     uint4  boundsMinRes;   // xyz: min corner of non-air content (voxels), w: voxels per axis
     uint4  boundsMaxFlags; // xyz: max corner (exclusive), w: content flags
     int4   neighborsA;     // slots of the -X, +X, -Y, +Y neighbours (-1 = none)
-    int4   neighborsB;     // x: -Z, y: +Z, z: level 0 brick table start, w: unused
-    int4   lodBricks;      // x: level 1 brick table start, y: level 2 start, z: level count
+    int4   neighborsB;     // x: -Z, y: +Z, z: level 0 brick table start, w: level 3 start
+    int4   lodBricks;      // x: level 1 brick table start, y: level 2 start, z: level count,
+                           // w: finest level with voxel pages (distant chunks skip the fine levels)
 };
 
 StructuredBuffer<VoxelChunk> _VoxelChunks;
@@ -53,7 +54,7 @@ StructuredBuffer<int4>       _VoxelChunkGrid; // toroidal chunk grid: x = slot (
 float  _VoxelMaxCells;          // draw cells per chunk slot
 float4 _VoxelGridDims;          // xyz: grid size in chunks (powers of two)
 float  _VoxelChunkWorldSize;    // world size of a chunk
-float4 _VoxelLodDistances;      // x: camera distance where cells switch to level 1, y: to level 2 (0 = off)
+float4 _VoxelLodDistances;      // camera distance where cells switch to level 1 (x), 2 (y), 3 (z, 0 = never); x 0 = LOD off
 float  _VoxelSunShadowDistance; // max length of voxel shadow rays (world units)
 float  _VoxelShadowDetailDistance; // receivers closer than this trace full resolution shadow rays
 float  _VoxelShadowMaxDistance;    // receivers farther than this get no voxel shadow rays
@@ -92,15 +93,20 @@ uint VoxelBlockVisibility(uint id) { return _VoxelBlockInfo[id] & 0xFFu; }
 uint VoxelBlockMask(uint id)       { return (_VoxelBlockInfo[id] >> 8) & 0xFFu; }
 uint VoxelBlockDecoration(uint id) { return (_VoxelBlockInfo[id] >> 16) & 0xFFu; }
 
-// Detail levels: 0 = full resolution, 1 = half, 2 = quarter. Each level has its own brick table.
+// Detail levels: 0 = full resolution, 1 = half, 2 = quarter, 3 = eighth. Each level has its own
+// brick table. Levels below VoxelMinLevel have brick tables (coarse shadows read their flags)
+// but no voxel pages, so voxel reads always go through VoxelClampLevel.
 uint VoxelLevelCount(VoxelChunk c) { return max((uint)c.lodBricks.z, 1u); }
+uint VoxelMinLevel(VoxelChunk c) { return min((uint)c.lodBricks.w, VoxelLevelCount(c) - 1u); }
+uint VoxelClampLevel(VoxelChunk c, uint level) { return clamp(level, VoxelMinLevel(c), VoxelLevelCount(c) - 1u); }
 int  VoxelLevelRes(VoxelChunk c, uint level) { return (int)(c.boundsMinRes.w >> level); }
 float VoxelLevelScale(uint level) { return (float)(1u << level); }
 
 uint VoxelFetchBrick(VoxelChunk c, uint level, int3 brick)
 {
     uint bricksPerAxis = c.boundsMinRes.w >> (3u + level);
-    uint start = level == 0u ? (uint)c.neighborsB.z : (level == 1u ? (uint)c.lodBricks.x : (uint)c.lodBricks.y);
+    uint start = level == 0u ? (uint)c.neighborsB.z : (level == 1u ? (uint)c.lodBricks.x
+               : (level == 2u ? (uint)c.lodBricks.y : (uint)c.neighborsB.w));
     uint index = (uint)brick.x + ((uint)brick.y + (uint)brick.z * bricksPerAxis) * bricksPerAxis;
     return _VoxelBricks[start + index];
 }
@@ -143,7 +149,7 @@ uint VoxelFetchNeighbor(VoxelChunk c, uint level, int3 p)
         return 0u;
 
     VoxelChunk nc = _VoxelChunks[n];
-    uint nLevel = min(level, VoxelLevelCount(nc) - 1u);
+    uint nLevel = VoxelClampLevel(nc, level);
     float3 world = c.originSize.xyz + ((float3)p + 0.5) * (c.originSize.w * VoxelLevelScale(level));
     int3 q = (int3)floor((world - nc.originSize.xyz) / (nc.originSize.w * VoxelLevelScale(nLevel)));
     q = clamp(q, 0, VoxelLevelRes(nc, nLevel) - 1);
@@ -154,6 +160,28 @@ uint VoxelFetchNeighbor(VoxelChunk c, uint level, int3 p)
 uint VoxelFetchAny(VoxelChunk c, uint level, int3 p)
 {
     return VoxelInChunk(c, level, p) ? VoxelFetch(c, level, p) : VoxelFetchNeighbor(c, level, p);
+}
+
+// Far horizon chunks (VoxelWorldRenderer.SetHorizonChunk): coarse terrain beyond the loaded
+// chunks. Their voxels are hidden where the ring inside them has terrain: ring 0 under any loaded
+// chunk column, ring n inside ring n - 1's square.
+#define VOXEL_FLAG_HORIZON 4u
+StructuredBuffer<int4> _VoxelColumnGrid;   // toroidal x/z grid: x = loaded chunks in the column, yz = column coord
+float4 _VoxelHorizonInner[4];             // per ring: min x, min z, max x, max z of the ring inside it
+
+bool VoxelHorizonHidden(VoxelChunk c, int3 p)
+{
+    float3 world = c.originSize.xyz + ((float3)p + 0.5) * c.originSize.w;
+    uint ring = (c.boundsMaxFlags.w >> 8) & 0xFu;
+    if (ring == 0u)
+    {
+        int2 col = (int2)floor(world.xz / _VoxelChunkWorldSize);
+        int2 dims = (int2)_VoxelGridDims.xz;
+        int4 e = _VoxelColumnGrid[(col.x & (dims.x - 1)) + (col.y & (dims.y - 1)) * dims.x];
+        return e.x > 0 && e.y == col.x && e.z == col.y;
+    }
+    float4 sq = _VoxelHorizonInner[ring];
+    return world.x >= sq.x && world.z >= sq.y && world.x < sq.z && world.z < sq.w;
 }
 
 // Voxel the camera march sees at p inside a draw cell. A cell with grass in the chunk's top layer
@@ -174,6 +202,11 @@ uint VoxelFetchMarch(VoxelChunk c, uint level, int3 p, out bool isUniform)
         uint entry = VoxelFetchBrick(c, level, p >> 3);
         isUniform = (entry & VOXEL_BRICK_UNIFORM) != 0u;
         id = isUniform ? (entry & 0xFFu) : VoxelFetchInBrick(entry, p & 7);
+    }
+    if (id != 0u && (c.boundsMaxFlags.w & VOXEL_FLAG_HORIZON) != 0u && VoxelHorizonHidden(c, p))
+    {
+        id = 0u;
+        isUniform = false;
     }
     return id;
 }
@@ -615,7 +648,7 @@ float VoxelSunShadowRay(float3 posWS, float3 dirWS, int detail, float ignoreDist
             {
                 // Coarser levels march fewer, bigger voxels. They also skip the first coarse
                 // voxel: it can bulge above the full resolution surface it starts from.
-                uint level = min((uint)detail, VoxelLevelCount(c) - 1u);
+                uint level = VoxelClampLevel(c, (uint)detail);
                 float scale = VoxelLevelScale(level);
                 float vs = c.originSize.w * scale;
                 float3 o = (posWS - c.originSize.xyz) / vs;
@@ -693,7 +726,7 @@ void VoxelLevelBounds(uint2 packedBounds, uint level, out float3 bmin, out float
 uint VoxelSelectLevel(VoxelChunk c, uint2 packedBounds)
 {
     if (_VoxelLodDistances.x <= 0.0)
-        return 0u;
+        return VoxelMinLevel(c);
 
     float3 bmin, bmax;
     VoxelUnpackBounds(packedBounds, bmin, bmax);
@@ -701,7 +734,9 @@ uint VoxelSelectLevel(VoxelChunk c, uint2 packedBounds)
     float dist = distance(centerWS, GetCameraPositionWS());
 
     uint level = dist > _VoxelLodDistances.y ? 2u : (dist > _VoxelLodDistances.x ? 1u : 0u);
-    return min(level, VoxelLevelCount(c) - 1u);
+    if (_VoxelLodDistances.z > 0.0 && dist > _VoxelLodDistances.z)
+        level = 3u;
+    return VoxelClampLevel(c, level);
 }
 
 // Emits one corner of a draw cell's content box. 36 vertices = 6 faces * 2 triangles.
@@ -918,7 +953,7 @@ uint VoxelFetchGrid(VoxelChunk c, uint level, int3 p)
         return 0u;
 
     VoxelChunk nc = _VoxelChunks[slot];
-    uint nLevel = min(level, VoxelLevelCount(nc) - 1u);
+    uint nLevel = VoxelClampLevel(nc, level);
     int3 q = (int3)floor((world - nc.originSize.xyz) / (nc.originSize.w * VoxelLevelScale(nLevel)));
     return VoxelFetch(nc, nLevel, clamp(q, 0, VoxelLevelRes(nc, nLevel) - 1));
 }

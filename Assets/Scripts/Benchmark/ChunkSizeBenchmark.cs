@@ -36,7 +36,7 @@ public class ChunkSizeBenchmark : MonoBehaviour
     ProfilerRecorder totalUsedMemory;
     ProfilerRecorder gcUsedMemory;
 
-    FieldInfo chunksField, generatingField, frontierField, fullResField, lodUpdateField;
+    FieldInfo chunksField, generatingField, frontierField, lodUpdateField;
     FieldInfo noiseSystemField, packSystemField, decoSystemField, blockGenSystemField;
 
     readonly StringBuilder json = new();
@@ -97,6 +97,18 @@ public class ChunkSizeBenchmark : MonoBehaviour
         chunkManager.decorationBudgetMs = ArgFloat("-benchDecoBudget", chunkManager.decorationBudgetMs);
         Log($"decoration budget {chunkManager.decorationBudgetMs} ms");
 
+        if (int.TryParse(Arg("-benchView"), out int benchView))
+            view.viewDistance = benchView;
+        if (Enum.TryParse(Arg("-benchBlockStorage") ?? "", true, out BlockStorage storage))
+            view.midBlockStorage = view.farBlockStorage = storage;
+        if (int.TryParse(Arg("-benchTrimGpu"), out int trim))
+            view.trimGpuDetail = trim != 0;
+        if (int.TryParse(Arg("-benchLowestDetail"), out int lowest))
+            view.lowestDetailRange = lowest;
+        if (int.TryParse(Arg("-benchHorizon"), out int horizon))
+            view.lowResHorizon = horizon != 0;
+        Log($"block storage mid {view.midBlockStorage} far {view.farBlockStorage}, trim gpu {view.trimGpuDetail}, lowest detail {view.lowestDetailRange}, low res horizon {view.lowResHorizon}");
+
         Log($"chunkSize {refSize} -> {chunkSize}  view {refView}->{view.viewDistance}  near {refNear}->{view.nearRange}  mid {refMid}->{view.midRange}  unloadPast {refUnload}->{view.unloadPastViewDistance}");
         Log($"world: view {view.viewDistance * chunkSize}u near {view.nearRange * chunkSize}u mid {view.midRange * chunkSize}u");
 
@@ -121,7 +133,6 @@ public class ChunkSizeBenchmark : MonoBehaviour
         chunksField = t.GetField("chunks", F);
         generatingField = t.GetField("generatingSet", F);
         frontierField = t.GetField("frontier", F);
-        fullResField = t.GetField("fullResBlocksByChunk", F);
         lodUpdateField = t.GetField("lodUpdateQueue", F);
         noiseSystemField = t.GetField("noiseSystem", F);
         packSystemField = t.GetField("packSystem", F);
@@ -323,12 +334,14 @@ public class ChunkSizeBenchmark : MonoBehaviour
     string Snapshot()
     {
         var r = chunkManager.VoxelRenderer;
-        int fullRes = Count(fullResField);
-        long blockBytes = (long)fullRes * (chunkSize + 1) * (chunkSize + 1) * (chunkSize + 1);
+        var store = chunkManager.BlockStore;
         return "{ " +
                $"\"chunks\": {Count(chunksField)}, " +
-               $"\"blockArrays\": {fullRes}, " +
-               $"\"blockArrayMB\": {F(blockBytes / 1048576.0)}, " +
+               $"\"blockArrays\": {store.FullCount}, " +
+               $"\"blockArrayMB\": {F(store.FullBytes / 1048576.0)}, " +
+               $"\"compressedBlocks\": {store.CompressedCount}, " +
+               $"\"compressedMB\": {F(store.CompressedBytes / 1048576.0)}, " +
+               $"\"horizonChunks\": {chunkManager.CountChunksAtLod(LODLevel.Horizon)}, " +
                $"\"gpuChunks\": {r.LoadedChunks}, " +
                $"\"gpuCells\": {r.TotalCells}, " +
                $"\"buriedCells\": {r.BuriedCells}, " +

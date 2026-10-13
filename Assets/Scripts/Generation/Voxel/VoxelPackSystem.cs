@@ -15,6 +15,8 @@ public class VoxelPackSystem : IDisposable
         public int chunkSize;
         public NativeArray<BlockDatabase.BlockInfoUnmanaged> blockDb;
         public Func<int> GetMaxUploadsPerFrame;
+        public Func<LODLevel, int> GetMinLevel;   // finest GPU detail level a LOD uploads (null = all)
+        public Func<LODLevel, int> GetSampleRes;  // blocks per voxel of a LOD's block arrays (null = 1)
     }
 
     struct PackJob
@@ -22,12 +24,14 @@ public class VoxelPackSystem : IDisposable
         public JobHandle handle;
         public VoxelPackResult result;
         public int version;
+        public NativeArray<byte> ownedBlocks;   // disposed once the job is done (default = caller's array)
     }
 
     struct PendingRequest
     {
         public NativeArray<byte> blocks;
         public LODLevel lod;
+        public bool owned;
     }
 
     Config config;
@@ -61,26 +65,37 @@ public class VoxelPackSystem : IDisposable
 
     public bool IsPackInProgress(int3 coord) => jobs.ContainsKey(coord);
 
+    /// <summary>A pack is running or waiting for this chunk (either one holds its block array).</summary>
+    public bool IsPackQueued(int3 coord) => jobs.ContainsKey(coord) || pending.ContainsKey(coord);
+
     /// <summary>
     /// Requests a (re)pack of a chunk. Requests that arrive while a pack is running, or inside
     /// the debounce window, are kept and run as soon as possible instead of being dropped.
     /// </summary>
-    public void RequestPack(int3 coord, NativeArray<byte> blocks, LODLevel lod)
+    /// <param name="takeOwnership">The pack system disposes the block array when it is done with
+    /// it (arrays nobody else keeps, e.g. Horizon chunks' low resolution blocks).</param>
+    public void RequestPack(int3 coord, NativeArray<byte> blocks, LODLevel lod, bool takeOwnership = false)
     {
+        DropPending(coord);
         if (jobs.ContainsKey(coord) || !canPackNow(coord))
         {
-            pending[coord] = new PendingRequest { blocks = blocks, lod = lod };
+            pending[coord] = new PendingRequest { blocks = blocks, lod = lod, owned = takeOwnership };
             return;
         }
 
-        pending.Remove(coord);
-        Schedule(coord, blocks, lod);
+        Schedule(coord, blocks, lod, takeOwnership);
+    }
+
+    void DropPending(int3 coord)
+    {
+        if (pending.Remove(coord, out var old) && old.owned && old.blocks.IsCreated)
+            old.blocks.Dispose();
     }
 
     /// <summary>Drops any queued or running work for a chunk that is being unloaded.</summary>
     public void Cancel(int3 coord)
     {
-        pending.Remove(coord);
+        DropPending(coord);
         versions[coord] = Version(coord) + 1;
 
         // The block array is about to be disposed - make sure no job is still reading it.
@@ -89,6 +104,7 @@ public class VoxelPackSystem : IDisposable
             job.handle.Complete();
             Profiler.EndMesh();
             jobs.Remove(coord);
+            if (job.ownedBlocks.IsCreated) job.ownedBlocks.Dispose();
             ReturnResult(job.result);
         }
     }
@@ -109,6 +125,7 @@ public class VoxelPackSystem : IDisposable
                 job.handle.Complete();
                 Profiler.EndMesh();
                 jobs.Remove(coord);
+                if (job.ownedBlocks.IsCreated) job.ownedBlocks.Dispose();
                 completed.Enqueue((coord, job.result, job.version));
             }
         }
@@ -126,7 +143,7 @@ public class VoxelPackSystem : IDisposable
                 var request = pending[coord];
                 pending.Remove(coord);
                 if (request.blocks.IsCreated)
-                    Schedule(coord, request.blocks, request.lod);
+                    Schedule(coord, request.blocks, request.lod, request.owned);
             }
         }
 
@@ -146,8 +163,10 @@ public class VoxelPackSystem : IDisposable
         }
     }
 
-    void Schedule(int3 coord, NativeArray<byte> blocks, LODLevel lod)
+    void Schedule(int3 coord, NativeArray<byte> blocks, LODLevel lod, bool owned)
     {
+        int sampleRes = config.GetSampleRes != null ? config.GetSampleRes(lod) : 1;
+
         var result = RentResult();
         result.lod = lod;
 
@@ -158,6 +177,8 @@ public class VoxelPackSystem : IDisposable
             chunkSize = config.chunkSize,
             coord = coord,
             collectECSSpawns = lod == LODLevel.Near,
+            minLevel = config.GetMinLevel != null ? config.GetMinLevel(lod) : 0,
+            inputLevel = math.tzcnt(math.max(1, sampleRes)),
             bricks = result.bricks,
             pages = result.pages,
             meta = result.meta,
@@ -170,7 +191,8 @@ public class VoxelPackSystem : IDisposable
         {
             handle = job.Schedule(),
             result = result,
-            version = Version(coord)
+            version = Version(coord),
+            ownedBlocks = owned ? blocks : default
         };
     }
 
@@ -196,9 +218,14 @@ public class VoxelPackSystem : IDisposable
         foreach (var job in jobs.Values)
         {
             job.handle.Complete();
+            if (job.ownedBlocks.IsCreated) job.ownedBlocks.Dispose();
             job.result.Dispose();
         }
         jobs.Clear();
+
+        foreach (var request in pending.Values)
+            if (request.owned && request.blocks.IsCreated)
+                request.blocks.Dispose();
 
         while (completed.Count > 0)
             completed.Dequeue().result.Dispose();

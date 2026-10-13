@@ -2483,7 +2483,7 @@ MonoBehaviour:
   nearRange: 7
   midRange: 14
   linkFog: 1
-  fogStart: 0
+  fogStartDistance: 448
   fogEndInset: 16
   driveCameraFarClip: 1
   farClipMargin: 64

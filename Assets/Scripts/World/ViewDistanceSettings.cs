@@ -4,14 +4,13 @@ using UnityEngine;
 /// View distance, LOD ranges and the fog / camera values derived from them. Put one on its own
 /// GameObject (GameObject > ProGenWorld > View Distance Settings). ChunkManager reads the chunk
 /// ranges from here, and AtmosphericFogController takes its fog distances from here while
-/// Link Fog is on, so fog always fully covers the edge of the loaded terrain.
+/// Link Fog is on: the start is set here, the end follows the view distance so fog always fully
+/// covers the edge of the loaded terrain.
 /// </summary>
 [ExecuteAlways]
 [DisallowMultipleComponent]
 public class ViewDistanceSettings : MonoBehaviour
 {
-    public enum FogStartPoint { NearLodBoundary, MidLodBoundary }
-
     [Header("View Distance (chunks)")]
     [Tooltip("Chunks are loaded out to this distance from the player (measured to chunk centres).")]
     [Min(1)] public int viewDistance = 20;
@@ -25,10 +24,10 @@ public class ViewDistanceSettings : MonoBehaviour
     [Min(0)] public int midRange = 14;
 
     [Header("Fog Link")]
-    [Tooltip("Drive the atmospheric fog start/end from the values above instead of the fog controller / presets.")]
+    [Tooltip("Use the fog start below and end the fog at the view distance, instead of the fog controller / preset distances.")]
     public bool linkFog = true;
-    [Tooltip("Where the fog begins.")]
-    public FogStartPoint fogStart = FogStartPoint.MidLodBoundary;
+    [Tooltip("World units from the camera where fog begins. Kept below the linked fog end.")]
+    [Min(0f)] public float fogStartDistance = 448f;
     [Tooltip("World units before the nearest unloaded terrain where fog reaches full density.")]
     [Min(0f)] public float fogEndInset = 16f;
 
@@ -61,14 +60,7 @@ public class ViewDistanceSettings : MonoBehaviour
 
     public float FogEndDistance => Mathf.Max(1f, LoadedEdgeDistance - fogEndInset);
 
-    public float FogStartDistance
-    {
-        get
-        {
-            int range = fogStart == FogStartPoint.NearLodBoundary ? nearRange : midRange;
-            return Mathf.Clamp(range * ChunkSize, 0f, FogEndDistance - 1f);
-        }
-    }
+    public float FogStartDistance => Mathf.Clamp(fogStartDistance, 0f, FogEndDistance - 1f);
 
     public float FarClipDistance => (UnloadDistance + 1f) * ChunkSize + farClipMargin;
 

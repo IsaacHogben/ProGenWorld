@@ -85,6 +85,8 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     [SerializeField] private float slideSteer = 50f;
     [Tooltip("Shortest slide, even if crouch is released straight away")]
     [SerializeField] private float slideMinTime = 0.35f;
+    [Tooltip("Unfolding (or getting up) faster than this goes straight into a slide that carries the momentum")]
+    [SerializeField] private float carrySlideMinSpeed = 3.5f;
 
     [Header("Dodge")]
     [SerializeField] private Key dodgeKey = Key.Q;
@@ -145,6 +147,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     private bool jumpHeld;
     private float jumpStartTime = float.NegativeInfinity;
     private float lastSlideEndTime = float.NegativeInfinity;
+    private bool slideHeldWithoutCrouch;
     private bool dodgeRequested;
     private bool isDodging;
     private Vector3 dodgeDirection;
@@ -410,6 +413,26 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     // Slide
     // ----------------------------------------------------------------------------------
 
+    /// <summary>
+    /// Hands the body back moving at <paramref name="velocity"/> (unfolding or getting up from the
+    /// ragdoll mid-roll): fast enough on the ground it slides on with that speed until friction
+    /// stops it; in the air the momentum carries the jump.
+    /// </summary>
+    public void CarryMomentum(Vector3 velocity, bool onGround)
+    {
+        motor.SetVelocity(velocity);
+        Vector3 flat = new Vector3(velocity.x, 0f, velocity.z);
+        if (flat.sqrMagnitude > 1f) // moving: face that way (at rest keep facing where the head points)
+            SetFacing(Mathf.Atan2(flat.x, flat.z) * Mathf.Rad2Deg);
+        if (!onGround || flat.magnitude < carrySlideMinSpeed)
+            return;
+        isSliding = true;
+        slideHeldWithoutCrouch = true;
+        slideDirection = flat.normalized;
+        slideSpeed = Mathf.Min(flat.magnitude, slideMaxSpeed);
+        slideTime = 0f;
+    }
+
     void TryStartSlide(bool grounded)
     {
         Vector3 v = motor.Velocity;
@@ -429,6 +452,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     void EndSlide()
     {
         isSliding = false;
+        slideHeldWithoutCrouch = false;
         lastSlideEndTime = Time.time;
     }
 
@@ -459,7 +483,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
 
         motor.HorizontalVelocity = slideDirection * slideSpeed;
 
-        bool released = !crouchHeld && slideTime > slideMinTime;
+        bool released = !crouchHeld && !slideHeldWithoutCrouch && slideTime > slideMinTime;
         if (slideSpeed < slideEndSpeed || released)
         {
             EndSlide();

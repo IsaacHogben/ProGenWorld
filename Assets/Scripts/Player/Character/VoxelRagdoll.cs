@@ -543,10 +543,17 @@ public class VoxelRagdoll : MonoBehaviour
         // On the ground under the pelvis; unfolding in the air, the feet hang below the body and
         // it falls from there.
         Vector3 stand = pos[Pelvis];
-        if (VoxelPhysics.TryGetGroundHeight(pos[Pelvis] + Vector3.up * 0.5f, 1.5f, 2.2f, out float ground))
+        bool onGround = VoxelPhysics.TryGetGroundHeight(pos[Pelvis] + Vector3.up * 0.5f, 1.5f, 2.2f, out float ground);
+        if (onGround)
             stand.y = ground;
         else
             stand.y -= rig.PelvisRestPosition.y * 0.85f;
+
+        // Momentum of the whole body, kept when getting up mid-roll (unfolding early).
+        Vector3 momentum = Vector3.zero;
+        for (int i = 0; i < Count; i++) momentum += pos[i] - prev[i];
+        momentum /= Count * Time.fixedDeltaTime;
+        if (onGround && momentum.y < 0f) momentum.y = 0f;
         if (motor != null)
         {
             motor.HorizontalVelocity = Vector3.zero;
@@ -574,6 +581,11 @@ public class VoxelRagdoll : MonoBehaviour
         {
             controller.enabled = true;
             controller.SetFacing(yaw);
+            controller.CarryMomentum(momentum, onGround);
+        }
+        else if (motor != null)
+        {
+            motor.SetVelocity(momentum);
         }
         animator.ResetLayers();
 

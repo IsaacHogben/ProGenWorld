@@ -90,6 +90,13 @@ public class VoxelCharacterMotor : MonoBehaviour
             core.Velocity.y *= multiplier;
     }
 
+    /// <summary>Sets the body's velocity (e.g. carrying momentum over from the ragdoll).</summary>
+    public void SetVelocity(Vector3 velocity)
+    {
+        core.Velocity = velocity;
+        HorizontalVelocity = new Vector3(velocity.x, 0f, velocity.z);
+    }
+
     public void Teleport(Vector3 position)
     {
         core.Teleport(position);

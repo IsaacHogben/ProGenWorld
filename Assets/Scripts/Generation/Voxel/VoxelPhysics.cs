@@ -10,6 +10,12 @@ public interface IVoxelWorldSource
 
     /// <summary>Returns the chunk's block array when it exists and is safe to read on the main thread.</summary>
     bool TryGetChunkBlocks(int3 chunkCoord, out NativeArray<byte> blocks);
+
+    /// <summary>
+    /// True if the chunk has no readable blocks yet but will have (queued, generating, being
+    /// decorated). False for chunks the world never generates (open air, buried solid).
+    /// </summary>
+    bool IsChunkPending(int3 chunkCoord);
 }
 
 public struct VoxelRaycastHit
@@ -67,6 +73,28 @@ public static class VoxelPhysics
             return false;
         int3 voxel = (int3)math.floor((float3)position);
         return Source.TryGetChunkBlocks(WorldToChunk(voxel, Source.ChunkSize), out _);
+    }
+
+    /// <summary>
+    /// True when no chunk overlapping the box is still waiting for its blocks, so everything in it
+    /// can be trusted (chunks the world never generates, like open sky, count as empty).
+    /// </summary>
+    public static bool IsAreaReady(Vector3 min, Vector3 max)
+    {
+        if (Source == null)
+            return false;
+        int size = Source.ChunkSize;
+        int3 a = WorldToChunk((int3)math.floor((float3)min), size);
+        int3 b = WorldToChunk((int3)math.floor((float3)max), size);
+        for (int x = a.x; x <= b.x; x++)
+        for (int y = a.y; y <= b.y; y++)
+        for (int z = a.z; z <= b.z; z++)
+        {
+            var c = new int3(x, y, z);
+            if (!Source.TryGetChunkBlocks(c, out _) && Source.IsChunkPending(c))
+                return false;
+        }
+        return true;
     }
 
     /// <summary>True if the voxel blocks movement. Unloaded voxels use <paramref name="unloadedIsSolid"/>.</summary>

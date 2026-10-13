@@ -19,8 +19,14 @@ public struct LocomotionState
     public float RunSpeed;
     public float SprintSpeed;
     public bool Sprinting;
-    /// <summary>Sliding on the ground (crouch pressed while sprinting).</summary>
+    /// <summary>Sliding on the ground (crouch pressed while running).</summary>
     public bool Sliding;
+    /// <summary>Dodging: a quick dash along <see cref="DodgeDirection"/>.</summary>
+    public bool Dodging;
+    /// <summary>World direction of the current dodge.</summary>
+    public Vector3 DodgeDirection;
+    /// <summary>0 at the start of the dodge .. 1 at its end.</summary>
+    public float DodgeProgress;
     /// <summary>Floating in deep water.</summary>
     public bool Swimming;
     /// <summary>Height of the water surface above the feet (0 or less out of water).</summary>

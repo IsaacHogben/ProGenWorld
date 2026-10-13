@@ -11,31 +11,35 @@ public class LocomotionLayer : CharacterAnimLayer
 {
     [Header("Gait Timing")]
     [Tooltip("Steps per second when barely moving")]
-    [SerializeField] private float minCadence = 1.8f;
-    [Tooltip("Steps per second at walk speed")]
-    [SerializeField] private float walkCadence = 3.6f;
+    [SerializeField] private float minCadence = 1.4f;
+    [Tooltip("Steps per second at walk speed. Fewer = longer strides")]
+    [SerializeField] private float walkCadence = 2.7f;
     [Tooltip("Steps per second at run speed")]
-    [SerializeField] private float runCadence = 4.7f;
+    [SerializeField] private float runCadence = 3.5f;
     [Tooltip("Steps per second when shuffling the feet back under the body while standing")]
     [SerializeField] private float settleCadence = 3.4f;
     [Tooltip("Fraction of the cycle a foot is on the ground when walking")]
     [Range(0.3f, 0.8f)] [SerializeField] private float walkStanceFraction = 0.56f;
     [Tooltip("Fraction of the cycle a foot is on the ground when running (below 0.5 = both feet leave the ground)")]
     [Range(0.2f, 0.8f)] [SerializeField] private float runStanceFraction = 0.34f;
-    [Tooltip("Extra cadence on slopes (per unit of slope): shorter, quicker steps on stairs and hills")]
-    [SerializeField] private float slopeCadence = 0.3f;
     [Tooltip("Steps per second at full sprint speed. Faster still, strides only get longer")]
-    [SerializeField] private float sprintCadence = 5f;
+    [SerializeField] private float sprintCadence = 3.7f;
+    [Tooltip("On stairs and voxel hills the stride is matched to the spacing of the steps (one foot per step, or a whole number of feet per long step)")]
+    [SerializeField] private bool matchStairStride = true;
+    [Tooltip("Slope (rise per metre) where stride matching is fully on. It fades in from a third of this")]
+    [SerializeField] private float stairMatchSlope = 0.6f;
+    [Tooltip("Longest step taken from one tread to the next (along the slope, rise included). Treads further apart than this (stairs crossed at an angle) get two steps each")]
+    [SerializeField] private float maxStairStep = 1.5f;
     [Tooltip("Fraction of the cycle a foot is on the ground at full sprint")]
     [Range(0.15f, 0.5f)] [SerializeField] private float sprintStanceFraction = 0.27f;
     [Tooltip("Furthest a planted foot travels under the body (front to back). Strides longer than the legs can cover this way are made up by time in the air")]
-    [SerializeField] private float stanceReach = 1.05f;
+    [SerializeField] private float stanceReach = 1.3f;
 
     [Header("Foot Placement")]
     [Tooltip("Extra stance width added to the model's rest pose")]
     [SerializeField] private float extraStanceWidth = 0.02f;
     [Tooltip("Furthest ahead of the hip a foot lands")]
-    [SerializeField] private float maxStrideLead = 0.9f;
+    [SerializeField] private float maxStrideLead = 1f;
     [Tooltip("Standing still, a foot further than this from its rest spot steps back under the body")]
     [SerializeField] private float settleDistance = 0.14f;
     [Tooltip("Standing still, a foot turned further than this (degrees) steps to realign")]
@@ -153,6 +157,8 @@ public class LocomotionLayer : CharacterAnimLayer
     }
 
     readonly Foot[] feet = { new Foot(), new Foot() };
+    readonly Vector3[] heldFeet = new Vector3[2];
+    readonly bool[] footHeld = new bool[2];
 
     float phase;
     float duty = 0.58f;
@@ -171,6 +177,8 @@ public class LocomotionLayer : CharacterAnimLayer
     float runBlend;
     float sprintBlend;
     float gaitWeight;
+    float stairSteps = 1f;    // steps per tread
+    float stairBlend;
     float airBlend;
     float sole;
     float footToe = 0.2f;   // foot extent ahead of / behind the foot bone, measured from the mesh
@@ -181,6 +189,17 @@ public class LocomotionLayer : CharacterAnimLayer
     bool initialized;
 
     public float Phase => phase;
+
+    /// <summary>
+    /// Another layer (slide, dodge) is placing this foot at <paramref name="position"/> (world,
+    /// any height - it is put on the ground): the gait carries on from there, planted, when that
+    /// layer lets go, instead of snapping back to where it left the foot.
+    /// </summary>
+    public void HoldFoot(int foot, Vector3 position)
+    {
+        heldFeet[foot] = position;
+        footHeld[foot] = true;
+    }
 
     public override void Initialize(CharacterAnimator animator, CharacterAnimContext context)
     {
@@ -247,6 +266,7 @@ public class LocomotionLayer : CharacterAnimLayer
         if (!initialized || (ctx.Root - lastRoot).sqrMagnitude > 25f)
             ResetFeet(ctx);
         lastRoot = ctx.Root;
+        ApplyHeldFeet(ctx);
 
         Vector3 velocity = s.Velocity;
         velocity.y = 0f;
@@ -326,6 +346,22 @@ public class LocomotionLayer : CharacterAnimLayer
         return TryGround(p, ctx.State.GroundHeight, out y) && y >= ctx.State.GroundHeight - maxFootDrop;
     }
 
+    void ApplyHeldFeet(CharacterAnimContext ctx)
+    {
+        for (int i = 0; i < 2; i++)
+        {
+            if (!footHeld[i]) continue;
+            footHeld[i] = false;
+            if (inAir) continue;
+            var f = feet[i];
+            f.swinging = false;
+            f.plant = f.pos = OnGround(heldFeet[i], ctx, heldFeet[i]);
+            f.plantYaw = f.yaw = ctx.State.FacingYaw;
+            f.pitch = 0f;
+            f.landT = 1f;
+        }
+    }
+
     void ResetFeet(CharacterAnimContext ctx)
     {
         initialized = true;
@@ -360,7 +396,7 @@ public class LocomotionLayer : CharacterAnimLayer
         float cadence = speed < walkSpeed
             ? Mathf.Lerp(minCadence, walkCadence, speed / walkSpeed)
             : Mathf.Lerp(Mathf.Lerp(walkCadence, runCadence, runBlend), sprintCadence, sprintBlend);
-        cadence *= 1f + slopeCadence * Mathf.Min(Mathf.Abs(s.Slope), 1.5f);
+        cadence = MatchStairs(cadence, speed, Mathf.Abs(s.Slope), dt);
         float cycleRate = cadence * 0.5f;
 
         // Time on the ground per foot: shorter as the gait speeds up, and never longer than the
@@ -476,6 +512,27 @@ public class LocomotionLayer : CharacterAnimLayer
         }
     }
 
+    // On block stairs (and voxel hills, which are stairs too) one block of rise comes every
+    // 1/slope metres. The stride is matched to that spacing - one foot per step, or two steps on a
+    // long tread - so the feet land on the treads in a steady rhythm instead of drifting across
+    // the edges. Hysteresis keeps the count from flickering as the measured slope wobbles.
+    float MatchStairs(float cadence, float speed, float slope, float dt)
+    {
+        float target = matchStairStride && speed > 0.5f ? Smooth(Mathf.InverseLerp(stairMatchSlope / 3f, stairMatchSlope, slope)) : 0f;
+        stairBlend = Mathf.MoveTowards(stairBlend, target, dt * 3f);
+        if (stairBlend <= 0f || slope < 0.05f)
+            return cadence;
+
+        // Whole steps per tread on long treads; never more than one tread per step, and never a
+        // step longer than the legs can comfortably climb.
+        float tread = 1f / slope;
+        float ratio = Mathf.Max(tread / (speed / cadence), Mathf.Sqrt(tread * tread + 1f) / Mathf.Max(maxStairStep, 0.5f));
+        if (Mathf.Abs(Mathf.Log(Mathf.Max(ratio, 1f) / stairSteps)) > Mathf.Log(1.4f))
+            stairSteps = Mathf.Max(1f, Mathf.Round(ratio));
+        float matched = speed / (tread / stairSteps);
+        return Mathf.Lerp(cadence, matched, stairBlend);
+    }
+
     // A swinging foot reaches only as far as its leg can: reaching for lower ground it waits
     // for the body to come down to it instead of being placed out of reach.
     void KeepWithinReach(Foot f, CharacterRig.Limb leg)
@@ -496,7 +553,10 @@ public class LocomotionLayer : CharacterAnimLayer
     {
         var other = feet[1 - i];
         var leg = Animator.Rig.Legs[i];
-        if (other.swinging || p < 0.15f || !leg.Valid)
+        // The other foot must be down to stand on, or about to land (a stretched trailing leg
+        // can leave just before, rather than being dragged).
+        bool otherDown = !other.swinging || Mathf.InverseLerp(other.swingStart, 1f, other.p) > 0.8f;
+        if (!otherDown || p < 0.15f || !leg.Valid)
             return false;
         float distance = Vector3.Distance(feet[i].pos + Vector3.up * sole, leg.Upper.position);
         return distance < leg.Length * earlyLiftFold || distance > leg.Length * 0.99f;
@@ -564,6 +624,8 @@ public class LocomotionLayer : CharacterAnimLayer
         // Never plant inside a wall: fall back toward the hip.
         target = OnGround(target, ctx, Vector3.Lerp(rest, target, 0.4f));
         Vector3 dir = velocity.sqrMagnitude > 0.09f ? velocity.normalized : ctx.Forward;
+        if (stairBlend > 0.5f && cycleRate > 1e-4f)
+            target = CenterOnTread(target, dir, ctx);
         target = ClearOfEdges(target, dir, ctx);
 
         // Steps taller than a leg can comfortably split across: the trailing foot joins the
@@ -582,6 +644,23 @@ public class LocomotionLayer : CharacterAnimLayer
             }
         }
         return target;
+    }
+
+    // On stairs: moves a landing spot toward the middle of its tread (along the direction of
+    // travel), so every step lands squarely on a block instead of creeping toward an edge.
+    Vector3 CenterOnTread(Vector3 target, Vector3 dir, CharacterAnimContext ctx)
+    {
+        dir.y = 0f;
+        if (dir.sqrMagnitude < 1e-6f) return target;
+        dir.Normalize();
+        const float search = 1.6f;
+        float back = DistanceToChange(target, -dir, search, target.y);
+        float ahead = DistanceToChange(target, dir, search, target.y);
+        if (back >= search || ahead >= search)
+            return target; // open ground, not a tread
+        // A little past the middle when the toe is longer than the heel.
+        float shift = (ahead - back) * 0.5f - (footToe - footHeel) * 0.5f;
+        return OnGround(target + dir * shift, ctx, target);
     }
 
     // Moves a landing spot so the foot sits on one tread: not hanging back over a drop or jammed

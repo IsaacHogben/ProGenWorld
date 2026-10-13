@@ -1,8 +1,8 @@
 using UnityEngine;
 
 /// <summary>
-/// Slide pose: low to the ground leaning back, front leg out with the toes up, back leg tucked,
-/// arms out for balance. Blends in over the gait while <see cref="LocomotionState.Sliding"/> and
+/// Slide pose: low to the ground leaning well back, front leg out nearly straight with the toes
+/// up, back leg tucked under, one hand trailing toward the ground and the other forward for balance. Blends in over the gait while <see cref="LocomotionState.Sliding"/> and
 /// back out when the slide ends. The feet follow the ground under them.
 /// </summary>
 public class SlideLayer : CharacterAnimLayer
@@ -10,11 +10,11 @@ public class SlideLayer : CharacterAnimLayer
     [Tooltip("Pelvis height above the ground while sliding")]
     [SerializeField] private float pelvisHeight = 0.8f;
     [Tooltip("Lean back (degrees)")]
-    [SerializeField] private float leanBack = 22f;
+    [SerializeField] private float leanBack = 34f;
     [Tooltip("Chest curls forward to look where it's going (degrees)")]
-    [SerializeField] private float chestForward = 14f;
+    [SerializeField] private float chestForward = 8f;
     [Tooltip("How far ahead of the body the front foot reaches")]
-    [SerializeField] private float frontFootReach = 1.05f;
+    [SerializeField] private float frontFootReach = 1.3f;
     [Tooltip("Where the tucked foot sits (behind the hip)")]
     [SerializeField] private float backFootOffset = -0.5f;
     [Tooltip("Height of the tucked foot above the ground, so the shin rides just over it")]
@@ -25,6 +25,13 @@ public class SlideLayer : CharacterAnimLayer
     [SerializeField] private float blendOutSpeed = 5f;
 
     float amount;
+    LocomotionLayer locomotion;
+
+    public override void Initialize(CharacterAnimator animator, CharacterAnimContext context)
+    {
+        base.Initialize(animator, context);
+        locomotion = GetComponent<LocomotionLayer>();
+    }
 
     public override void ResetState() => amount = 0f;
 
@@ -66,13 +73,16 @@ public class SlideLayer : CharacterAnimLayer
             foot.Pitch = Mathf.Lerp(foot.Pitch, lead ? -25f : 60f, w);
             foot.Weight = Mathf.Max(foot.Weight, w);
             pose.Feet[i] = foot;
+            // When the slide ends the gait steps on from here rather than from where it started.
+            if (locomotion != null && w > 0.3f && ctx.State.Grounded)
+                locomotion.HoldFoot(i, new Vector3(p.x, ground, p.z));
 
-            // Arm on the tucked side reaches back toward the ground, the other is out front.
+            // Arm on the tucked side trails back toward the ground, the other reaches forward.
             var arm = pose.Arms[i];
             Quaternion shoulder = lead
-                ? Quaternion.AngleAxis(side * 25f, Vector3.forward) * Quaternion.AngleAxis(-55f, Vector3.right)
-                : Quaternion.AngleAxis(side * 35f, Vector3.forward) * Quaternion.AngleAxis(35f, Vector3.right);
-            Quaternion elbow = Quaternion.AngleAxis(lead ? -35f : -10f, Vector3.right);
+                ? Quaternion.AngleAxis(side * 15f, Vector3.forward) * Quaternion.AngleAxis(-75f, Vector3.right)
+                : Quaternion.AngleAxis(side * 30f, Vector3.forward) * Quaternion.AngleAxis(50f, Vector3.right);
+            Quaternion elbow = Quaternion.AngleAxis(lead ? -25f : -5f, Vector3.right);
             arm.Shoulder = Quaternion.Slerp(arm.Shoulder, shoulder, w);
             arm.Elbow = Quaternion.Slerp(arm.Elbow, elbow, w);
             pose.Arms[i] = arm;

@@ -1472,6 +1472,14 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         return true;
     }
 
+    // Flood fill only generates chunks the terrain surface passes through, so open sky (and solid
+    // rock) is never generated: only chunks that are known or queued will get blocks.
+    bool IVoxelWorldSource.IsChunkPending(int3 coord)
+    {
+        return chunks.ContainsKey(coord) || generatingSet.Contains(coord) || frontierSet.Contains(coord) ||
+               deferredFrontier.Contains(coord) || chunksStillDecorating.Contains(coord);
+    }
+
     // =============================
     // ===== HELPER FUNCTIONS ======
     // =============================

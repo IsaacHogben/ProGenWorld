@@ -110,7 +110,9 @@ public class VoxelBody : MonoBehaviour
         prevPosition = simPosition;
         LastStepUp = 0f;
 
-        IsSimulating = VoxelPhysics.IsReady && VoxelPhysics.IsChunkLoaded(simPosition + center);
+        // Wait for blocks still being generated; never-generated chunks (open sky) are empty.
+        Vector3 extent = size * 0.5f + Vector3.one;
+        IsSimulating = VoxelPhysics.IsReady && VoxelPhysics.IsAreaReady(simPosition + center - extent, simPosition + center + extent);
         if (!IsSimulating)
         {
             WriteTransform(simPosition);

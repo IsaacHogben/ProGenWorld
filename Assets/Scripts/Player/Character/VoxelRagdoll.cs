@@ -1,13 +1,18 @@
 using System;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 /// <summary>
 /// Ragdoll for the character, simulated against the voxel data (no Unity colliders): one particle
 /// per joint, held together by distance constraints, colliding with blocks as spheres. It takes
-/// over from the animation on a hard landing (or when <see cref="Activate"/> is called), drives
-/// the bones from the particles, and once it comes to rest the character gets up where it lies
-/// and blends back into the animated pose.
+/// over from the animation on a hard landing, on the ragdoll key, or when <see cref="Activate"/>
+/// is called, and drives the bones from the particles. The character stays down until the player
+/// gives a command (moves, jumps...), then gets up where it lies and blends back into the
+/// animated pose.
+///
+/// Folded (the fold key): the legs snap up into the body and the arms tuck in, then the whole
+/// bundle tumbles as one rigid piece.
 /// </summary>
 [DefaultExecutionOrder(60)] // after CharacterAnimator (50) poses the bones, before the camera (100)
 [RequireComponent(typeof(CharacterAnimator))]
@@ -16,6 +21,14 @@ public class VoxelRagdoll : MonoBehaviour
     [Header("Trigger")]
     [Tooltip("Landing faster than this (m/s) knocks the character over. 15 = roughly an 11 block fall")]
     [SerializeField] private float knockdownImpactSpeed = 15f;
+    [Tooltip("Go limp")]
+    [SerializeField] private Key ragdollKey = Key.G;
+    [Tooltip("Fold up (legs into the body, arms tucked) and tumble as one piece")]
+    [SerializeField] private Key foldKey = Key.F;
+
+    [Header("Fold")]
+    [Tooltip("Seconds for the limbs to snap into the folded pose")]
+    [SerializeField] private float foldTime = 0.18f;
 
     [Header("Simulation")]
     [SerializeField] private float gravityScale = 1f;
@@ -30,16 +43,21 @@ public class VoxelRagdoll : MonoBehaviour
     [Header("Recovery")]
     [Tooltip("Considered at rest when every joint moves slower than this (m/s)")]
     [SerializeField] private float restSpeed = 0.5f;
-    [Tooltip("Seconds at rest before getting up")]
-    [SerializeField] private float restTime = 0.8f;
-    [SerializeField] private float minRagdollTime = 1.5f;
-    [Tooltip("Gets up after this long even if still sliding")]
+    [Tooltip("Seconds at rest before a command gets the character up")]
+    [SerializeField] private float restTime = 0.3f;
+    [SerializeField] private float minRagdollTime = 0.8f;
+    [Tooltip("Still sliding or rolling after this long, a command gets the character up anyway")]
     [SerializeField] private float maxRagdollTime = 6f;
     [Tooltip("Seconds to blend from the fallen pose back into the animation")]
     [SerializeField] private float getUpTime = 0.8f;
+    [Tooltip("Seconds to unfold back into the animation")]
+    [SerializeField] private float unfoldTime = 0.45f;
 
     public bool IsActive => state != State.Off;
     public bool IsRagdolling => state == State.Ragdoll;
+    public bool IsFolded => state == State.Ragdoll && folded;
+    /// <summary>At rest (or down long enough) and waiting for a command to get up.</summary>
+    public bool CanGetUp => state == State.Ragdoll && stateTime > minRagdollTime && (restTimer > restTime || stateTime > maxRagdollTime);
     public event Action Started;
     public event Action Recovered;
 
@@ -79,6 +97,12 @@ public class VoxelRagdoll : MonoBehaviour
     State state;
     float stateTime;
     float restTimer;
+    bool getUpRequested;
+    bool folded;
+    float foldT;
+    readonly Vector3[] foldFrom = new Vector3[Count]; // torso frame, at the start of the fold
+    readonly Vector3[] foldTo = new Vector3[Count];
+    static readonly int[] FoldingJoints = { Head, LElbow, RElbow, LHand, RHand, LKnee, RKnee, LFoot, RFoot };
 
     Quaternion startTorso, startPelvisRotation, startChestRotation;
     Quaternion[] startEndRotation; // feet, hands follow their lower bone
@@ -113,8 +137,33 @@ public class VoxelRagdoll : MonoBehaviour
         }
     }
 
-    /// <summary>Knocks the character over, starting from the current pose moving at <paramref name="velocity"/>.</summary>
-    public void Activate(Vector3 velocity)
+    void Update()
+    {
+        var keyboard = Keyboard.current;
+        bool ragdollPressed = keyboard != null && keyboard[ragdollKey].wasPressedThisFrame;
+        bool foldPressed = keyboard != null && keyboard[foldKey].wasPressedThisFrame;
+
+        if (state == State.Off)
+        {
+            if (ragdollPressed || foldPressed)
+            {
+                if (motor != null) motor.NoClip = false;
+                Activate(motor != null ? motor.Velocity : Vector3.zero, foldPressed);
+            }
+            return;
+        }
+
+        // Down: any command (or the key again) gets up once the body has settled.
+        if (state == State.Ragdoll && stateTime > 0.25f &&
+            (ragdollPressed || foldPressed || (controller != null && controller.AnyCommandPressed())))
+            getUpRequested = true;
+    }
+
+    /// <summary>
+    /// Knocks the character over (or folds it up), starting from the current pose moving at
+    /// <paramref name="velocity"/>.
+    /// </summary>
+    public void Activate(Vector3 velocity, bool fold = false)
     {
         var rig = animator.Rig;
         if (!rig.IsValid || rig.chest == null || rig.head == null || !rig.Legs[0].Valid || !rig.Legs[1].Valid || !rig.Arms[0].Valid || !rig.Arms[1].Valid)
@@ -138,7 +187,17 @@ public class VoxelRagdoll : MonoBehaviour
             contact[i] = Vector3.zero;
         }
 
-        BuildLinks();
+        folded = fold;
+        foldT = 0f;
+        if (fold)
+        {
+            BuildTorsoLinks();
+            PlanFold();
+        }
+        else
+        {
+            BuildLinks();
+        }
 
         startTorso = TorsoFrame();
         startPelvisRotation = rig.pelvis.rotation;
@@ -157,6 +216,7 @@ public class VoxelRagdoll : MonoBehaviour
         state = State.Ragdoll;
         stateTime = 0f;
         restTimer = 0f;
+        getUpRequested = false;
         Started?.Invoke();
     }
 
@@ -197,6 +257,83 @@ public class VoxelRagdoll : MonoBehaviour
         links = list.ToArray();
     }
 
+    // While folding only the torso is simulated; the limbs are moved into place on it.
+    void BuildTorsoLinks()
+    {
+        var list = new System.Collections.Generic.List<Link>();
+        int[] torso = { Pelvis, Chest, LShoulder, RShoulder, LHip, RHip };
+        for (int i = 0; i < torso.Length; i++)
+            for (int j = i + 1; j < torso.Length; j++)
+                list.Add(new Link { a = torso[i], b = torso[j], length = Vector3.Distance(pos[torso[i]], pos[torso[j]]) });
+        links = list.ToArray();
+    }
+
+    // Folded up every joint is locked: one rigid piece.
+    void BuildRigidLinks()
+    {
+        var list = new System.Collections.Generic.List<Link>();
+        for (int i = 0; i < Count; i++)
+            for (int j = i + 1; j < Count; j++)
+                list.Add(new Link { a = i, b = j, length = Vector3.Distance(pos[i], pos[j]) });
+        links = list.ToArray();
+    }
+
+    // Folded pose in the torso frame (x right, y up the spine, z forward): thighs pulled up in
+    // front of the body with the shins folded flat under them, upper arms against the sides with
+    // the forearms across the chest, head bowed.
+    void PlanFold()
+    {
+        Quaternion inv = Quaternion.Inverse(TorsoFrame());
+        Vector3 origin = pos[Pelvis];
+        Vector3 Local(int i) => inv * (pos[i] - origin);
+        foreach (int i in FoldingJoints)
+            foldFrom[i] = Local(i);
+
+        void Leg(int hip, int knee, int foot)
+        {
+            Vector3 h = Local(hip);
+            float thigh = Vector3.Distance(pos[hip], pos[knee]), shin = Vector3.Distance(pos[knee], pos[foot]);
+            foldTo[knee] = h + thigh * new Vector3(0f, 0.55f, 0.83f).normalized;
+            foldTo[foot] = foldTo[knee] + shin * new Vector3(0f, -0.3f, -0.95f).normalized;
+        }
+        void Arm(int shoulder, int elbow, int hand)
+        {
+            Vector3 s = Local(shoulder);
+            float side = Mathf.Sign(s.x);
+            float upper = Vector3.Distance(pos[shoulder], pos[elbow]), fore = Vector3.Distance(pos[elbow], pos[hand]);
+            foldTo[elbow] = s + upper * new Vector3(0.1f * side, -0.8f, 0.4f).normalized;
+            foldTo[hand] = foldTo[elbow] + fore * new Vector3(-0.75f * side, 0.45f, 0.35f).normalized;
+        }
+        Leg(LHip, LKnee, LFoot);
+        Leg(RHip, RKnee, RFoot);
+        Arm(LShoulder, LElbow, LHand);
+        Arm(RShoulder, RElbow, RHand);
+
+        Vector3 chest = Local(Chest);
+        foldTo[Head] = chest + Vector3.Distance(pos[Chest], pos[Head]) * new Vector3(0f, 0.6f, 0.8f).normalized;
+    }
+
+    // Limbs snap into the folded pose on the (falling) torso; once there, everything locks.
+    void StepFold(float dt)
+    {
+        foldT = Mathf.Min(1f, foldT + dt / Mathf.Max(foldTime, 0.01f));
+        Simulate(dt);
+
+        Quaternion frame = TorsoFrame();
+        Vector3 origin = pos[Pelvis];
+        Vector3 carry = pos[Pelvis] - prev[Pelvis];
+        float k = foldT * foldT * (3f - 2f * foldT);
+        foreach (int i in FoldingJoints)
+        {
+            pos[i] = origin + frame * Vector3.Lerp(foldFrom[i], foldTo[i], k);
+            prev[i] = pos[i] - carry;
+            contact[i] = Vector3.zero;
+        }
+
+        if (foldT >= 1f)
+            BuildRigidLinks();
+    }
+
     // ----------------------------------------------------------------------------------
     // Simulation
     // ----------------------------------------------------------------------------------
@@ -208,7 +345,10 @@ public class VoxelRagdoll : MonoBehaviour
 
         float dt = Time.fixedDeltaTime;
         stateTime += dt;
-        Simulate(dt);
+        if (folded && foldT < 1f)
+            StepFold(dt);
+        else
+            Simulate(dt);
 
         // The body (and the camera on it) follows the pelvis, still colliding normally.
         if (motor != null)
@@ -223,7 +363,7 @@ public class VoxelRagdoll : MonoBehaviour
             fastest = Mathf.Max(fastest, (pos[i] - prev[i]).magnitude / dt);
         restTimer = fastest < restSpeed ? restTimer + dt : 0f;
 
-        if ((stateTime > minRagdollTime && restTimer > restTime) || stateTime > maxRagdollTime)
+        if (getUpRequested && CanGetUp)
             BeginGetUp();
     }
 
@@ -431,7 +571,7 @@ public class VoxelRagdoll : MonoBehaviour
     void BlendToAnimation()
     {
         stateTime += Time.deltaTime;
-        float t = Mathf.Clamp01(stateTime / Mathf.Max(getUpTime, 0.01f));
+        float t = Mathf.Clamp01(stateTime / Mathf.Max(folded ? unfoldTime : getUpTime, 0.01f));
         float w = t * t * (3f - 2f * t);
 
         // The animator has just posed the bones; ease from the fallen pose into it.

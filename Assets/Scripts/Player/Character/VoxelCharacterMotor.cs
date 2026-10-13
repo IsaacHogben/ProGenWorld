@@ -23,7 +23,18 @@ public class VoxelCharacterMotor : MonoBehaviour
     /// <summary>While swimming: +1 swims up, -1 dives.</summary>
     public float SwimVertical { get; set; }
     /// <summary>Dev fly mode: no collision or gravity, moves with <see cref="FlyVelocity"/>.</summary>
-    public bool NoClip { get; set; }
+    public bool NoClip
+    {
+        get => noClip;
+        set
+        {
+            if (noClip == value) return;
+            noClip = value;
+            FlyVelocity = Vector3.zero;
+            // Leaving fly mode starts a fresh fall from rest.
+            if (!value) core.Teleport(core.Position);
+        }
+    }
     public Vector3 FlyVelocity { get; set; }
 
     public Vector3 Velocity => core.Velocity;
@@ -34,7 +45,7 @@ public class VoxelCharacterMotor : MonoBehaviour
     public bool IsSwimming => core.Swimming;
     /// <summary>Height of the water surface above the feet (0 or less out of water).</summary>
     public float WaterDepth => core.WaterDepth;
-    /// <summary>False while the chunk around the body has no block data yet (body is frozen).</summary>
+    /// <summary>False while the chunks around the body are still being generated (body is frozen).</summary>
     public bool IsSimulating { get; private set; }
     /// <summary>Simulated position (the transform holds the interpolated one during rendering).</summary>
     public Vector3 Position => core.Position;
@@ -47,6 +58,7 @@ public class VoxelCharacterMotor : MonoBehaviour
     public event Action EnteredWater;
 
     VoxelCharacterMotorCore core;
+    bool noClip;
     float pendingJump;
     Vector3 prevPosition;
     Vector3 lastWrittenPosition;
@@ -105,7 +117,12 @@ public class VoxelCharacterMotor : MonoBehaviour
             return;
         }
 
-        IsSimulating = VoxelPhysics.IsReady && VoxelPhysics.IsChunkLoaded(core.Position + Vector3.up);
+        // Wait while the blocks around the body are still being generated. Chunks the world never
+        // generates (open sky) are empty, so the body keeps falling through them.
+        Vector3 p = core.Position;
+        float r = settings.radius + 1f;
+        IsSimulating = VoxelPhysics.IsReady &&
+                       VoxelPhysics.IsAreaReady(p - new Vector3(r, settings.maxStepDown + 1f, r), p + new Vector3(r, settings.height + 1f, r));
         if (!IsSimulating)
         {
             WriteTransform(core.Position);

@@ -1,8 +1,8 @@
 using UnityEngine;
 
 /// <summary>
-/// Arms swing against the legs in time with the gait, pump with bent elbows when running, and
-/// lift out for balance in the air.
+/// Arms swing against the legs in time with the gait, pump with bent elbows when running, swing
+/// carried forward with bent elbows when crouch walking, and lift out for balance in the air.
 /// </summary>
 public class ArmSwingLayer : CharacterAnimLayer
 {
@@ -25,6 +25,16 @@ public class ArmSwingLayer : CharacterAnimLayer
     [SerializeField] private float walkSpread = 4f;
     [SerializeField] private float runSpread = 10f;
 
+    [Header("Crouch Walk (degrees)")]
+    [Tooltip("Swing at full crouch walking speed")]
+    [SerializeField] private float crouchSwing = 30f;
+    [SerializeField] private float crouchElbow = 40f;
+    [Tooltip("Arms carried forward, in front of the leaning body")]
+    [SerializeField] private float crouchCarry = 20f;
+    [SerializeField] private float crouchSpread = 8f;
+    [Tooltip("Speed treated as full crouch walking speed (m/s)")]
+    [SerializeField] private float crouchWalkSpeed = 2f;
+
     [Header("Air (degrees)")]
     [SerializeField] private float airSpread = 35f;
     [SerializeField] private float airForward = 15f;
@@ -44,6 +54,9 @@ public class ArmSwingLayer : CharacterAnimLayer
         float run = pose.RunBlend;
         float sprint = pose.SprintBlend;
         float air = pose.Airborne;
+        float crouch = ctx.State.Crouch;
+        // Crouch walking is slower than walking, so its swing is scaled to the crouch speed.
+        float crouchGait = Mathf.Clamp01(new Vector2(ctx.State.Velocity.x, ctx.State.Velocity.z).magnitude / Mathf.Max(crouchWalkSpeed, 0.1f)) * Mathf.Min(gait * 4f, 1f);
 
         for (int i = 0; i < 2; i++)
         {
@@ -55,6 +68,10 @@ public class ArmSwingLayer : CharacterAnimLayer
             float targetSwing = Mathf.Lerp(Mathf.Lerp(walkSwing, runSwing, run), sprintSwing, sprint) * gait * armForward;
             float targetElbow = idleElbow + Mathf.Lerp(Mathf.Lerp(walkElbow, runElbow, run), sprintElbow, sprint) * gait + Mathf.Max(0f, armForward) * forwardElbow * gait;
             float targetSpread = Mathf.Lerp(walkSpread, runSpread, run) * gait;
+
+            targetSwing = Mathf.Lerp(targetSwing, crouchCarry + crouchSwing * crouchGait * armForward, crouch);
+            targetElbow = Mathf.Lerp(targetElbow, idleElbow + crouchElbow * (0.5f + 0.5f * crouchGait) + Mathf.Max(0f, armForward) * forwardElbow * crouchGait, crouch);
+            targetSpread = Mathf.Lerp(targetSpread, crouchSpread, crouch);
 
             targetSwing = Mathf.Lerp(targetSwing, airForward, air);
             targetElbow = Mathf.Lerp(targetElbow, airElbow, air);

@@ -15,11 +15,14 @@ public class CharacterAnimator : MonoBehaviour
     [SerializeField] private bool autoBindBones = true;
     [Tooltip("Turn knees outward when they would go into blocks (high steps)")]
     [SerializeField] private bool kneesAvoidTerrain = true;
+    [Tooltip("Pose updates per second for a hand-animated look (e.g. 12 = 'on twos'). The body still moves smoothly; only the limbs step. 0 = every frame")]
+    [Min(0f)] public float animationFrameRate = 0f;
 
     private readonly List<CharacterAnimLayer> layers = new List<CharacterAnimLayer>();
     private readonly CharacterPose pose = new CharacterPose();
     private readonly CharacterAnimContext context = new CharacterAnimContext();
     private ICharacterLocomotionSource source;
+    private float sinceApply;
 
     public CharacterRig Rig => rig;
     public CharacterPose Pose => pose;
@@ -94,6 +97,21 @@ public class CharacterAnimator : MonoBehaviour
                 layer.Evaluate(pose, context);
         }
 
-        rig.Apply(pose, transform, dt);
+        // Layers keep running every frame (their timing stays smooth); a limited frame rate only
+        // decides how often the result reaches the bones. In between, the bones hold their pose
+        // and ride along with the body.
+        sinceApply += dt;
+        if (animationFrameRate > 0f)
+        {
+            float interval = 1f / animationFrameRate;
+            if (sinceApply < interval)
+                return;
+            float elapsed = sinceApply;
+            sinceApply = Mathf.Min(sinceApply - interval, interval);
+            rig.Apply(pose, transform, elapsed);
+            return;
+        }
+        rig.Apply(pose, transform, sinceApply);
+        sinceApply = 0f;
     }
 }

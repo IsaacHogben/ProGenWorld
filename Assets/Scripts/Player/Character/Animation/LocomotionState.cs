@@ -6,6 +6,8 @@ public struct LocomotionState
 {
     /// <summary>World velocity of the body (horizontal part is what the feet walk with).</summary>
     public Vector3 Velocity;
+    /// <summary>Horizontal velocity the body is heading for (what the player asks for); the feet plan ahead with it.</summary>
+    public Vector3 DesiredVelocity;
     public bool Grounded;
     /// <summary>Height of the ground under the feet (last known while airborne).</summary>
     public float GroundHeight;
@@ -19,20 +21,16 @@ public struct LocomotionState
     public float RunSpeed;
     public float SprintSpeed;
     public bool Sprinting;
-    /// <summary>Sliding on the ground (crouch pressed while running).</summary>
-    public bool Sliding;
-    /// <summary>Dodging: a quick dash along <see cref="DodgeDirection"/>.</summary>
-    public bool Dodging;
-    /// <summary>World direction of the current dodge.</summary>
-    public Vector3 DodgeDirection;
-    /// <summary>0 at the start of the dodge .. 1 at its end.</summary>
-    public float DodgeProgress;
     /// <summary>Floating in deep water.</summary>
     public bool Swimming;
     /// <summary>Height of the water surface above the feet (0 or less out of water).</summary>
     public float WaterDepth;
     /// <summary>0 = standing, 1 = fully crouched.</summary>
     public float Crouch;
+    /// <summary>Lying flat, crawling.</summary>
+    public bool Crawling;
+    /// <summary>Height of the body's collision (lower when crouched or crawling, 0 = unknown).</summary>
+    public float BodyHeight;
     /// <summary>Rise per metre of the ground ahead (1 = 45 degree stairs, negative = downhill).</summary>
     public float Slope;
 }

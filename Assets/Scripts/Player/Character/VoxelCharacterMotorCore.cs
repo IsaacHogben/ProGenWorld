@@ -21,6 +21,8 @@ public class VoxelCharacterMotorCore
         public float radius;
         [Tooltip("Height from the feet to the top of the head")]
         public float height;
+        [Tooltip("Walking into a block up to this high climbs straight onto it (0 = off). For low bodies whose step clearance is under a block")]
+        public float climbHeight;
         [Tooltip("Terrain lower than this above the feet is walked over; anything higher is a wall. 1.5 = one block steps, two block walls")]
         public float stepClearance;
         [Tooltip("Half width of the area under the feet that holds the body up")]
@@ -355,17 +357,57 @@ public class VoxelCharacterMotorCore
         }
     }
 
+    /// <summary>True if the body would fit where it stands with this height and step clearance.</summary>
+    public bool Fits(float height, float stepClearance)
+    {
+        var saved = settings;
+        settings.height = height;
+        settings.stepClearance = stepClearance;
+        ConfigureTorso();
+        bool fits = !torso.Overlaps(Position);
+        settings = saved;
+        ConfigureTorso();
+        return fits;
+    }
+
     // Sweeps the torso along one axis, refusing to walk onto ground that leaves no headroom.
     bool MoveHorizontal(int axis, float amount)
     {
         Vector3 before = Position;
         torso.Sweep(ref Position, axis, amount, out bool hit);
+        if (hit && Grounded && settings.climbHeight > 0f && Mathf.Abs(amount) > 1e-5f && TryClimb(before, axis, amount))
+            return false;
         if (!HasHeadroom(Position))
         {
             Position = before;
             return true;
         }
         return hit;
+    }
+
+    // A block in the way that is no higher than climbHeight: go straight up onto it (a low body
+    // can't ride over it on its legs the way a standing one does).
+    bool TryClimb(Vector3 before, int axis, float amount)
+    {
+        Vector3 ahead = before;
+        ahead[axis] += amount + Mathf.Sign(amount) * (settings.radius + 0.05f);
+        if (!TryGetSupport(ahead, before.y + settings.climbHeight, before.y + 0.01f, out float top) || top <= before.y + 0.01f)
+            return false;
+
+        Vector3 p = before;
+        p.y = top + Skin;
+        if (torso.Overlaps(p))
+            return false;
+        torso.Sweep(ref p, axis, amount, out _);
+        if (Mathf.Abs(p[axis] - before[axis]) < 1e-4f)
+            return false;
+
+        Position = p;
+        GroundHeight = top;
+        Velocity.y = 0f;
+        hasTarget = false;
+        targetRate = 0f;
+        return true;
     }
 
     // True if the body could stand up on the ground under this point.

@@ -29,6 +29,10 @@ public class VoxelRagdoll : MonoBehaviour
     [Header("Fold")]
     [Tooltip("Seconds for the limbs to snap into the folded pose")]
     [SerializeField] private float foldTime = 0.18f;
+    [Tooltip("Folded up the body slides on blocks almost freely: share of sliding speed lost per physics step in contact (0 = ice, 1 = sticks)")]
+    [Range(0f, 1f)] [SerializeField] private float foldFriction = 0.01f;
+    [Tooltip("...and bounces off them")]
+    [Range(0f, 1f)] [SerializeField] private float foldBounce = 0.55f;
 
     [Header("Simulation")]
     [SerializeField] private float gravityScale = 1f;
@@ -404,7 +408,10 @@ public class VoxelRagdoll : MonoBehaviour
                 Collide(i);
         }
 
-        // Friction and bounce once per step, for joints touching blocks.
+        // Friction and bounce once per step, for joints touching blocks. Folded up it is a hard,
+        // slippery shell; slow contacts don't bounce so it can come to rest.
+        float mu = folded ? foldFriction : friction;
+        float restitution = folded ? foldBounce : bounce;
         for (int i = 0; i < Count; i++)
         {
             Vector3 n = contact[i];
@@ -413,8 +420,8 @@ public class VoxelRagdoll : MonoBehaviour
             Vector3 v = pos[i] - prev[i];
             float vn = Vector3.Dot(v, n);
             Vector3 tangent = v - n * vn;
-            if (vn < 0f) vn = -vn * bounce;
-            prev[i] = pos[i] - (tangent * (1f - friction) + n * vn);
+            if (vn < 0f) vn = vn < -dt ? -vn * restitution : 0f;
+            prev[i] = pos[i] - (tangent * (1f - mu) + n * vn);
         }
     }
 
@@ -581,7 +588,7 @@ public class VoxelRagdoll : MonoBehaviour
         {
             controller.enabled = true;
             controller.SetFacing(yaw);
-            controller.CarryMomentum(momentum, onGround);
+            controller.CarryMomentum(momentum);
         }
         else if (motor != null)
         {

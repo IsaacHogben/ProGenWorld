@@ -12,8 +12,8 @@ public class LocomotionLayer : CharacterAnimLayer
     [Header("Gait Timing")]
     [Tooltip("Steps per second when barely moving")]
     [SerializeField] private float minCadence = 1.4f;
-    [Tooltip("Steps per second at walk speed. Fewer = longer strides")]
-    [SerializeField] private float walkCadence = 2.7f;
+    [Tooltip("Steps per second at walk speed. Fewer = longer strides (3.33 at 4 m/s = 1.2 m steps)")]
+    [SerializeField] private float walkCadence = 3.33f;
     [Tooltip("Steps per second at run speed")]
     [SerializeField] private float runCadence = 3.5f;
     [Tooltip("Steps per second when shuffling the feet back under the body while standing")]
@@ -34,6 +34,17 @@ public class LocomotionLayer : CharacterAnimLayer
     [Range(0.15f, 0.5f)] [SerializeField] private float sprintStanceFraction = 0.27f;
     [Tooltip("Furthest a planted foot travels under the body (front to back). Strides longer than the legs can cover this way are made up by time in the air")]
     [SerializeField] private float stanceReach = 1.3f;
+    [Tooltip("Extra cadence while turning hard (1 = twice as many, half as long steps at the full turn rate)")]
+    [SerializeField] private float turnCadence = 1.2f;
+    [Tooltip("Turn rate (degrees per second) where steps start to shorten, and where they are shortest")]
+    [SerializeField] private float turnRateStart = 60f;
+    [SerializeField] private float turnRateFull = 300f;
+    [Tooltip("Rate the body changes velocity (m/s^2), used to plan where feet land while it speeds up, stops or turns")]
+    [SerializeField] private float plannedAcceleration = 32f;
+    [Tooltip("Only plan with the asked-for velocity when it differs from the actual one by more than this (m/s): turns, stops and reversals, not the small mismatch on hills")]
+    [SerializeField] private float planThreshold = 1.5f;
+    [Tooltip("A swing whose landing spot has already been picked picks again if the body's course turns by more than this (degrees) or its speed changes by more than planThreshold")]
+    [SerializeField] private float retargetAngle = 35f;
 
     [Header("Foot Placement")]
     [Tooltip("Extra stance width added to the model's rest pose")]
@@ -111,8 +122,13 @@ public class LocomotionLayer : CharacterAnimLayer
     [SerializeField] private float walkCrouch = 0.02f;
     [SerializeField] private float runCrouch = 0.04f;
     [SerializeField] private float sprintCrouch = 0.06f;
-    [Tooltip("How far the pelvis lowers when fully crouched")]
-    [SerializeField] private float crouchDepth = 0.5f;
+    [Tooltip("How far the pelvis lowers when fully crouched (more is added if the body still doesn't fit under its crouched height)")]
+    [SerializeField] private float crouchDrop = 0.5f;
+    [Tooltip("Forward lean of the hips / chest when crouched (degrees)")]
+    [SerializeField] private float crouchHipLean = 18f;
+    [SerializeField] private float crouchChestLean = 22f;
+    [Tooltip("Gap kept between the top of the head and the crouched body height")]
+    [SerializeField] private float crouchHeadroom = 0.06f;
 
     [Header("Landing")]
     [Tooltip("Pelvis compression per m/s of landing speed")]
@@ -153,12 +169,11 @@ public class LocomotionLayer : CharacterAnimLayer
         public Vector3 target;       // world, where the current swing lands
         public float liftPitch;
         public bool targetLocked;
+        public Vector3 lockCourse;   // where the body was heading when the landing spot was locked
         public float landLead;       // horizontal distance from the hip to the landing spot at touchdown
     }
 
     readonly Foot[] feet = { new Foot(), new Foot() };
-    readonly Vector3[] heldFeet = new Vector3[2];
-    readonly bool[] footHeld = new bool[2];
 
     float phase;
     float duty = 0.58f;
@@ -179,6 +194,9 @@ public class LocomotionLayer : CharacterAnimLayer
     float gaitWeight;
     float stairSteps = 1f;    // steps per tread
     float stairBlend;
+    float turnRate, lastHeading, lastFacing;
+    float crouchFit;          // extra crouch so the head fits under the crouched body height
+    Renderer[] renderers;
     float airBlend;
     float sole;
     float footToe = 0.2f;   // foot extent ahead of / behind the foot bone, measured from the mesh
@@ -189,17 +207,6 @@ public class LocomotionLayer : CharacterAnimLayer
     bool initialized;
 
     public float Phase => phase;
-
-    /// <summary>
-    /// Another layer (slide, dodge) is placing this foot at <paramref name="position"/> (world,
-    /// any height - it is put on the ground): the gait carries on from there, planted, when that
-    /// layer lets go, instead of snapping back to where it left the foot.
-    /// </summary>
-    public void HoldFoot(int foot, Vector3 position)
-    {
-        heldFeet[foot] = position;
-        footHeld[foot] = true;
-    }
 
     public override void Initialize(CharacterAnimator animator, CharacterAnimContext context)
     {
@@ -216,6 +223,7 @@ public class LocomotionLayer : CharacterAnimLayer
         }
 
         MeasureFoot(rig, context);
+        renderers = animator.GetComponentsInChildren<Renderer>();
 
         if (context.Source != null)
         {
@@ -266,7 +274,6 @@ public class LocomotionLayer : CharacterAnimLayer
         if (!initialized || (ctx.Root - lastRoot).sqrMagnitude > 25f)
             ResetFeet(ctx);
         lastRoot = ctx.Root;
-        ApplyHeldFeet(ctx);
 
         Vector3 velocity = s.Velocity;
         velocity.y = 0f;
@@ -346,22 +353,6 @@ public class LocomotionLayer : CharacterAnimLayer
         return TryGround(p, ctx.State.GroundHeight, out y) && y >= ctx.State.GroundHeight - maxFootDrop;
     }
 
-    void ApplyHeldFeet(CharacterAnimContext ctx)
-    {
-        for (int i = 0; i < 2; i++)
-        {
-            if (!footHeld[i]) continue;
-            footHeld[i] = false;
-            if (inAir) continue;
-            var f = feet[i];
-            f.swinging = false;
-            f.plant = f.pos = OnGround(heldFeet[i], ctx, heldFeet[i]);
-            f.plantYaw = f.yaw = ctx.State.FacingYaw;
-            f.pitch = 0f;
-            f.landT = 1f;
-        }
-    }
-
     void ResetFeet(CharacterAnimContext ctx)
     {
         initialized = true;
@@ -397,6 +388,14 @@ public class LocomotionLayer : CharacterAnimLayer
             ? Mathf.Lerp(minCadence, walkCadence, speed / walkSpeed)
             : Mathf.Lerp(Mathf.Lerp(walkCadence, runCadence, runBlend), sprintCadence, sprintBlend);
         cadence = MatchStairs(cadence, speed, Mathf.Abs(s.Slope), dt);
+
+        // Turning hard (or reversing): short quick steps, so the feet keep up with the new course.
+        float heading = speed > 0.5f ? Mathf.Atan2(velocity.x, velocity.z) * Mathf.Rad2Deg : lastHeading;
+        float rate = Mathf.Max(Mathf.Abs(Mathf.DeltaAngle(lastHeading, heading)), Mathf.Abs(Mathf.DeltaAngle(lastFacing, s.FacingYaw))) / Mathf.Max(dt, 1e-4f);
+        lastHeading = heading;
+        lastFacing = s.FacingYaw;
+        turnRate = Mathf.Lerp(turnRate, rate, Damp(rate > turnRate ? 20f : 5f, dt));
+        cadence *= 1f + turnCadence * Smooth(Mathf.InverseLerp(turnRateStart, turnRateFull, turnRate));
         float cycleRate = cadence * 0.5f;
 
         // Time on the ground per foot: shorter as the gait speeds up, and never longer than the
@@ -435,7 +434,19 @@ public class LocomotionLayer : CharacterAnimLayer
                 if (!f.targetLocked)
                 {
                     f.target = SwingTarget(f, feet[1 - i], ctx, velocity, wrapped ? 1f : p, cycleRate);
-                    if (swingT >= 0.7f) f.targetLocked = true;
+                    if (swingT >= 0.7f) { f.targetLocked = true; f.lockCourse = Course(velocity, s.DesiredVelocity); }
+                }
+                else if (!wrapped && swingT < 0.92f)
+                {
+                    // The course changed a lot since the spot was picked (turned, reversed,
+                    // stopped): land where the body is going, not where it was going.
+                    Vector3 course = Course(velocity, s.DesiredVelocity);
+                    bool turned = course.sqrMagnitude > 0.25f && f.lockCourse.sqrMagnitude > 0.25f && Vector3.Angle(course, f.lockCourse) > retargetAngle;
+                    if (turned || Mathf.Abs(course.magnitude - f.lockCourse.magnitude) > planThreshold)
+                    {
+                        f.target = SwingTarget(f, feet[1 - i], ctx, velocity, p, cycleRate);
+                        f.lockCourse = course;
+                    }
                 }
                 Vector3 target = f.target;
                 Vector3 rolledTarget = Rolled(target, s.FacingYaw, contactPitch);
@@ -616,8 +627,11 @@ public class LocomotionLayer : CharacterAnimLayer
         float stanceTime = cycleRate > 1e-4f ? duty / cycleRate : 0f;
 
         Vector3 rest = RestTarget(f, ctx);
-        Vector3 lead = Vector3.ClampMagnitude(velocity * (stanceTime * 0.5f), maxStrideLead);
-        Vector3 target = rest + velocity * timeToLand + lead;
+        // Where the body will be at touchdown: heading from its velocity toward the one asked for
+        // (so the first step after a turn or a stop lands where the body is going).
+        Vector3 travel = PlanTravel(velocity, ctx.State.DesiredVelocity, timeToLand, out Vector3 landingVelocity);
+        Vector3 lead = Vector3.ClampMagnitude(landingVelocity * (stanceTime * 0.5f), maxStrideLead);
+        Vector3 target = rest + travel + lead;
         Vector3 restFromHip = rest - (ctx.Root + ctx.Facing * new Vector3(f.rest.x * 0.8f, 0f, 0f));
         f.landLead = new Vector2(lead.x + restFromHip.x, lead.z + restFromHip.z).magnitude;
 
@@ -661,6 +675,34 @@ public class LocomotionLayer : CharacterAnimLayer
         // A little past the middle when the toe is longer than the heel.
         float shift = (ahead - back) * 0.5f - (footToe - footHeel) * 0.5f;
         return OnGround(target + dir * shift, ctx, target);
+    }
+
+    // The velocity the body is heading for: the one asked for when it differs a lot from the actual one.
+    Vector3 Course(Vector3 v, Vector3 desired)
+    {
+        desired.y = 0f;
+        return (desired - v).sqrMagnitude < planThreshold * planThreshold ? v : desired;
+    }
+
+    // Distance the body covers in time t going from velocity v toward desired at plannedAcceleration.
+    Vector3 PlanTravel(Vector3 v, Vector3 desired, float t, out Vector3 vEnd)
+    {
+        desired.y = 0f;
+        vEnd = v;
+        if (t <= 0f) return Vector3.zero;
+        if ((desired - v).sqrMagnitude < planThreshold * planThreshold)
+            return v * t;
+        Vector3 dv = desired - v;
+        float change = dv.magnitude;
+        float accel = Mathf.Max(plannedAcceleration, 0.1f);
+        float tChange = change / accel;
+        if (tChange >= t)
+        {
+            vEnd = v + dv * (t / Mathf.Max(tChange, 1e-5f));
+            return (v + vEnd) * (0.5f * t);
+        }
+        vEnd = desired;
+        return (v + desired) * (0.5f * tChange) + desired * (t - tChange);
     }
 
     // Moves a landing spot so the foot sits on one tread: not hanging back over a drop or jammed
@@ -915,7 +957,14 @@ public class LocomotionLayer : CharacterAnimLayer
         if (inAir) bob = sway = 0f;
 
         float gaitCrouch = inAir ? 0f : Mathf.Lerp(Mathf.Lerp(walkCrouch, runCrouch, runBlend), sprintCrouch, sprintBlend) * gaitWeight;
-        Vector3 offset = new Vector3(feet[0].rest.x < 0f ? -sway : sway, bob - gaitCrouch - ctx.State.Crouch * crouchDepth, 0f);
+        float crouch = ctx.State.Crouch;
+        UpdateCrouchFit(ctx, dt);
+        Vector3 offset = new Vector3(feet[0].rest.x < 0f ? -sway : sway, bob - gaitCrouch - crouch * crouchDrop - crouchFit, 0f);
+        if (crouch > 0f)
+        {
+            pose.PelvisRotation = Quaternion.Euler(crouchHipLean * crouch, 0f, 0f) * pose.PelvisRotation;
+            pose.ChestRotation = Quaternion.Euler(crouchChestLean * crouch, 0f, 0f) * pose.ChestRotation;
+        }
 
         // Height: ride on the ground under the feet that carry the weight, so on stairs the body
         // rises as each step is taken rather than ahead of the legs.
@@ -972,7 +1021,7 @@ public class LocomotionLayer : CharacterAnimLayer
                 if (weight <= 0f) continue;
                 Vector3 hip = ctx.Root + ctx.Facing * (rig.PelvisRestPosition + offset + leg.RestUpperFromPelvis);
                 Vector3 foot = f.pos + Vector3.up * (sole + footHeightAdjust);
-                float minDistance = leg.Length * minLegFold;
+                float minDistance = leg.Length * Mathf.Lerp(minLegFold, 0.3f, crouch);
                 float horizontal = HorizontalDistance(hip, foot);
                 if (horizontal >= minDistance) continue;
                 float needed = Mathf.Sqrt(minDistance * minDistance - horizontal * horizontal) - (hip.y - foot.y);
@@ -1027,6 +1076,31 @@ public class LocomotionLayer : CharacterAnimLayer
 
         offset.y += compression - pelvisDrop;
         pose.PelvisOffset += offset * weight;
+    }
+
+    // Crouched under a low ceiling the whole model must fit under the body's crouched height: the
+    // top of the posed model (last frame) is compared with it and the crouch deepens until it fits.
+    void UpdateCrouchFit(CharacterAnimContext ctx, float dt)
+    {
+        var s = ctx.State;
+        float limit = s.BodyHeight - crouchHeadroom;
+        if (s.Crouch <= 0.01f || s.Crawling || s.BodyHeight <= 0f || renderers == null)
+        {
+            crouchFit = Mathf.MoveTowards(crouchFit, 0f, dt);
+            return;
+        }
+
+        float top = float.NegativeInfinity;
+        foreach (var r in renderers)
+            if (r != null && r.enabled) top = Mathf.Max(top, r.bounds.max.y);
+        if (float.IsInfinity(top)) return;
+        top -= ctx.Root.y;
+
+        float over = top - limit * Mathf.Lerp(2f, 1f, s.Crouch); // only enforced once fully down
+        crouchFit = over > 0f
+            ? crouchFit + over * Damp(12f, dt)
+            : Mathf.MoveTowards(crouchFit, 0f, Mathf.Min(-over, 0.3f * dt));
+        crouchFit = Mathf.Clamp(crouchFit, 0f, 0.9f);
     }
 
     // ----------------------------------------------------------------------------------

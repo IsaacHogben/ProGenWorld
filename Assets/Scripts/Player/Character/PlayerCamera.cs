@@ -155,7 +155,11 @@ public class PlayerCamera : MonoBehaviour
     {
         Quaternion rotation = Quaternion.Euler(pitch, yaw, 0f);
 
-        float pivotY = transform.position.y + pivotHeight;
+        // Lower with the body when crouched or crawling, so the camera stays out of low ceilings.
+        float bodyScale = 1f;
+        if (controller != null && controller.Motor != null)
+            bodyScale = Mathf.Clamp(controller.Motor.BodyHeight / Mathf.Max(controller.Motor.Settings.height, 0.1f), 0.35f, 1f);
+        float pivotY = transform.position.y + pivotHeight * bodyScale;
         smoothPivotY = Mathf.SmoothDamp(smoothPivotY, pivotY, ref pivotYVelocity, verticalSmoothTime);
         Vector3 pivot = new Vector3(transform.position.x, smoothPivotY, transform.position.z);
 

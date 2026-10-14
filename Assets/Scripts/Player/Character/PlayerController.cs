@@ -3,9 +3,9 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
-/// Player input to character movement: camera relative walk/sprint/crouch, slide and dodge, slope
-/// aware speed (slower climbing hills), variable height jump with coyote time and input
-/// buffering, and which way the body faces. Physics is done by <see cref="VoxelCharacterMotor"/>; animation reads
+/// Player input to character movement: camera relative walk/sprint, crouch and crawl, slope aware
+/// speed (slower climbing hills), variable height jump with coyote time and input buffering, and
+/// which way the body faces. Physics is done by <see cref="VoxelCharacterMotor"/>; animation reads
 /// this through <see cref="ICharacterLocomotionSource"/>.
 /// </summary>
 [DefaultExecutionOrder(-60)]
@@ -17,6 +17,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     [Tooltip("Speed when the sprint key is first held (a run)")]
     [SerializeField] private float sprintSpeed = 7.5f;
     [SerializeField] private float crouchSpeed = 2f;
+    [SerializeField] private float crawlSpeed = 1.3f;
 
     [Header("Sprint Momentum")]
     [Tooltip("Top speed reached by sprinting without interruption")]
@@ -59,42 +60,21 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     [Tooltip("Time to turn toward the movement direction")]
     [SerializeField] private float turnSmoothTime = 0.1f;
     [SerializeField] private float sprintTurnSmoothTime = 0.16f;
+    [SerializeField] private float crawlTurnSmoothTime = 0.3f;
     [Tooltip("First person, standing still: the body turns to follow the camera once the look angle passes this")]
     [SerializeField] private float idleTurnAngle = 70f;
 
-    [Header("Crouch")]
+    [Header("Crouch and Crawl")]
     [SerializeField] private float crouchTransitionSpeed = 6f;
-
-    [Header("Slide (crouch while running)")]
-    [Tooltip("Pressing crouch while moving at least this fast slides (walk speed and up). Slower, it crouches")]
-    [SerializeField] private float slideMinSpeed = 3.5f;
-    [Tooltip("Speed added when the slide starts")]
-    [SerializeField] private float slideBoost = 2f;
-    [Tooltip("A slide starts at least this fast, so sliding out of a run carries you")]
-    [SerializeField] private float slideStartSpeed = 8f;
-    [Tooltip("Seconds after a slide before the next one gets the start boost again")]
-    [SerializeField] private float slideBoostCooldown = 1f;
-    [Tooltip("Slowing on flat ground (m/s^2)")]
-    [SerializeField] private float slideFriction = 3.5f;
-    [Tooltip("How strongly slopes speed up (downhill) or slow (uphill) a slide. 1 = full gravity along the slope")]
-    [SerializeField] private float slideGravity = 0.85f;
-    [SerializeField] private float slideMaxSpeed = 16f;
-    [Tooltip("The slide ends below this speed")]
-    [SerializeField] private float slideEndSpeed = 2.5f;
-    [Tooltip("Steering while sliding (degrees per second)")]
-    [SerializeField] private float slideSteer = 50f;
-    [Tooltip("Shortest slide, even if crouch is released straight away")]
-    [SerializeField] private float slideMinTime = 0.35f;
-    [Tooltip("Unfolding (or getting up) faster than this goes straight into a slide that carries the momentum")]
-    [SerializeField] private float carrySlideMinSpeed = 3.5f;
-
-    [Header("Dodge")]
-    [SerializeField] private Key dodgeKey = Key.Q;
-    [Tooltip("Distance covered by a dodge")]
-    [SerializeField] private float dodgeDistance = 4f;
-    [SerializeField] private float dodgeDuration = 0.4f;
-    [Tooltip("Seconds after a dodge before the next one")]
-    [SerializeField] private float dodgeCooldown = 0.4f;
+    [Tooltip("Body height crouched: under 2 fits through two block high gaps")]
+    [SerializeField] private float crouchHeight = 1.9f;
+    [Tooltip("Toggles crawling (lying flat)")]
+    [SerializeField] private Key crawlKey = Key.Z;
+    [Tooltip("Body height crawling: under 1 fits through one block high gaps")]
+    [SerializeField] private float crawlHeight = 0.95f;
+    [Tooltip("Crawling, anything lower than this is crawled over; higher blocks (up to one) are climbed onto")]
+    [SerializeField] private float crawlStepClearance = 0.5f;
+    [SerializeField] private float crawlClimbHeight = 1.05f;
 
     [Header("Water")]
     [SerializeField] private float swimSpeed = 2.5f;
@@ -118,6 +98,8 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     public event Action<float> Landed;
     public event Action Jumped;
 
+    public enum Posture { Standing, Crouching, Crawling }
+
     private VoxelCharacterMotor motor;
     private InputAction moveAction, jumpAction, sprintAction, crouchAction;
 
@@ -125,11 +107,15 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     private Vector2 moveInput;
     private bool sprintHeld;
     private bool crouchHeld;
+    private bool jumpHeld;
+    private bool crawlToggled;
     private float lastJumpPressedTime = float.NegativeInfinity;
 
     // State
     private Vector3 wishDirection;
+    private Vector3 desiredVelocity;
     private bool isJumping;
+    private float jumpStartTime = float.NegativeInfinity;
     private float lastGroundedTime = float.NegativeInfinity;
     private float facingYaw;
     private float facingVelocity;
@@ -139,31 +125,17 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     private float sprintMomentum;
     private float lastGroundHeight;
     private float lastWishYaw;
-    private bool slideRequested;
-    private bool isSliding;
-    private Vector3 slideDirection;
-    private float slideSpeed;
-    private float slideTime;
-    private bool jumpHeld;
-    private float jumpStartTime = float.NegativeInfinity;
-    private float lastSlideEndTime = float.NegativeInfinity;
-    private bool slideHeldWithoutCrouch;
-    private bool dodgeRequested;
-    private bool isDodging;
-    private Vector3 dodgeDirection;
-    private float dodgeTime;
-    private float dodgeExitSpeed;
-    private float lastDodgeEndTime = float.NegativeInfinity;
 
     public VoxelCharacterMotor Motor => motor;
-    public bool IsSprinting => !isSliding && !isDodging && sprintHeld && moveInput.sqrMagnitude > 0.09f && crouch < 0.5f && (IsThirdPerson || moveInput.y > 0.3f);
-    public bool IsSliding => isSliding;
-    public bool IsDodging => isDodging;
+    public bool IsSprinting => posture == Posture.Standing && sprintHeld && moveInput.sqrMagnitude > 0.09f && crouch < 0.5f && (IsThirdPerson || moveInput.y > 0.3f);
     public bool IsNoClip => motor != null && motor.NoClip;
     public float FacingYaw => facingYaw;
     /// <summary>0 = sprint just started .. 1 = at top sprint speed.</summary>
     public float SprintMomentum => sprintMomentum;
+    /// <summary>The posture the body is actually in (a low ceiling can keep it down).</summary>
+    public Posture CurrentPosture => posture;
 
+    Posture posture;
     bool IsThirdPerson => playerCamera == null || playerCamera.IsThirdPerson;
 
     void Awake()
@@ -192,10 +164,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
 
     void OnDisable()
     {
-        isSliding = false;
-        isDodging = false;
         isJumping = false;
-        slideRequested = dodgeRequested = false;
         motor.HorizontalVelocity = Vector3.zero;
         motor.Landed -= OnMotorLanded;
         motor.Jumped -= OnMotorJumped;
@@ -218,14 +187,13 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         ReadInput();
         UpdateWishDirection();
         UpdateFacing(Time.deltaTime);
-        bool crouchPose = crouchHeld && !isSliding && !motor.IsSwimming && !motor.NoClip;
-        crouch = Mathf.MoveTowards(crouch, crouchPose ? 1f : 0f, crouchTransitionSpeed * Time.deltaTime);
+        UpdatePosture();
+        crouch = Mathf.MoveTowards(crouch, posture == Posture.Crouching ? 1f : 0f, crouchTransitionSpeed * Time.deltaTime);
 
         if ((Application.isEditor || Debug.isDebugBuild) && Keyboard.current != null && Keyboard.current[noclipKey].wasPressedThisFrame)
         {
             motor.NoClip = !motor.NoClip;
             motor.FlyVelocity = Vector3.zero;
-            isSliding = false;
         }
     }
 
@@ -236,30 +204,57 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         crouchHeld = crouchAction != null && crouchAction.IsPressed();
         jumpHeld = jumpAction != null && jumpAction.IsPressed();
 
-        // Crouch pressed while running slides instead (checked against speed in FixedUpdate).
-        if (crouchAction != null && crouchAction.WasPressedThisFrame() && moveInput.sqrMagnitude > 0.09f)
-            slideRequested = true;
-        if (Keyboard.current != null && Keyboard.current[dodgeKey].wasPressedThisFrame)
-            dodgeRequested = true;
+        if (Keyboard.current != null && Keyboard.current[crawlKey].wasPressedThisFrame)
+            crawlToggled = !crawlToggled;
 
         if (jumpAction != null)
         {
             if (jumpAction.WasPressedThisFrame())
-                lastJumpPressedTime = Time.time;
+            {
+                // Jump gets up from crawling instead of jumping.
+                if (crawlToggled || posture == Posture.Crawling) crawlToggled = false;
+                else lastJumpPressedTime = Time.time;
+            }
             if (jumpAction.WasReleasedThisFrame() && isJumping)
                 motor.ScaleUpwardVelocity(jumpCutMultiplier);
         }
+        // Crouch while crawling gets up into a crouch.
+        if (crawlToggled && crouchAction != null && crouchAction.WasPressedThisFrame())
+            crawlToggled = false;
+    }
+
+    // Asks the body for the size of the wanted posture; it only grows when there is room, so a
+    // low ceiling keeps the character crouched or crawling until it is clear.
+    void UpdatePosture()
+    {
+        if (motor.IsSwimming || motor.NoClip)
+            crawlToggled = false;
+
+        var s = motor.Settings;
+        Posture wanted = crawlToggled ? Posture.Crawling : crouchHeld && !motor.IsSwimming && !motor.NoClip ? Posture.Crouching : Posture.Standing;
+        // Getting up from a crawl under a low ceiling: at least come up to a crouch if that fits.
+        if (wanted == Posture.Standing && posture == Posture.Crawling && !motor.CanFit(s.height, s.stepClearance))
+            wanted = Posture.Crouching;
+        switch (wanted)
+        {
+            case Posture.Crawling: motor.RequestShape(crawlHeight, crawlStepClearance, crawlClimbHeight); break;
+            case Posture.Crouching: motor.RequestShape(crouchHeight, s.stepClearance, 0f); break;
+            default: motor.RequestShape(s.height, s.stepClearance, 0f); break;
+        }
+
+        float h = motor.BodyHeight;
+        posture = h <= crawlHeight + 0.01f ? Posture.Crawling : h < s.height - 0.01f ? Posture.Crouching : Posture.Standing;
     }
 
     /// <summary>
-    /// True on the frame any movement command is pressed (move, jump, crouch, sprint, dodge).
+    /// True on the frame any movement command is pressed (move, jump, crouch, sprint, crawl).
     /// Works while this component is disabled, e.g. to get up from the ragdoll.
     /// </summary>
     public bool AnyCommandPressed()
     {
         bool Pressed(InputAction a) => a != null && a.WasPressedThisFrame();
         return Pressed(moveAction) || Pressed(jumpAction) || Pressed(crouchAction) || Pressed(sprintAction) ||
-               (Keyboard.current != null && Keyboard.current[dodgeKey].wasPressedThisFrame);
+               (Keyboard.current != null && Keyboard.current[crawlKey].wasPressedThisFrame);
     }
 
     float CameraYaw => playerCamera != null ? playerCamera.Yaw : transform.eulerAngles.y;
@@ -277,16 +272,11 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
 
         if (motor.NoClip)
         {
-            isDodging = false;
-            slideRequested = dodgeRequested = false;
             UpdateNoClip();
             return;
         }
         if (motor.IsSwimming)
         {
-            isSliding = false;
-            isDodging = false;
-            slideRequested = dodgeRequested = false; // crouch dives here
             UpdateSwimming(dt);
             return;
         }
@@ -307,40 +297,17 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             ? Mathf.Max(0.3f, Mathf.LerpUnclamped(1f, uphillSpeedMultiplier, Mathf.Min(slope, 1.5f)))
             : Mathf.Lerp(1f, downhillSpeedMultiplier, -slope);
 
-        if (dodgeRequested)
-        {
-            dodgeRequested = false;
-            TryStartDodge(grounded);
-        }
-        if (isDodging)
-        {
-            slideRequested = false;
-            UpdateDodge(dt);
-            HandleJump(grounded);
-            return;
-        }
-
-        if (slideRequested)
-        {
-            slideRequested = false;
-            TryStartSlide(grounded);
-        }
-        if (isSliding)
-        {
-            UpdateSlide(dt, grounded);
-            HandleJump(grounded);
-            return;
-        }
-
         UpdateSprintMomentum(dt, grounded);
 
-        float maxSpeed = crouch > 0.5f ? crouchSpeed
+        float maxSpeed = posture == Posture.Crawling ? crawlSpeed
+            : crouch > 0.5f ? crouchSpeed
             : IsSprinting ? Mathf.Lerp(sprintSpeed, Mathf.Max(sprintSpeed, topSprintSpeed), sprintMomentum)
             : walkSpeed;
         // Wading: slower the deeper the water.
         if (grounded && motor.WaterDepth > 0f)
             maxSpeed *= Mathf.Lerp(1f, wadeSpeedMultiplier, Mathf.Clamp01(motor.WaterDepth / motor.Settings.swimDepth));
         Vector3 target = wishDirection * (maxSpeed * slopeMultiplier);
+        desiredVelocity = target;
 
         // Start from what the body actually did, so walls don't store phantom speed.
         Vector3 current = motor.Velocity;
@@ -361,18 +328,27 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     void HandleJump(bool grounded)
     {
         bool jumpBuffered = Time.time - lastJumpPressedTime <= jumpBufferTime;
-        bool canJump = !isJumping && crouch < 0.5f && (grounded || Time.time - lastGroundedTime <= coyoteTime);
+        bool canJump = !isJumping && posture == Posture.Standing && crouch < 0.5f && (grounded || Time.time - lastGroundedTime <= coyoteTime);
         if (jumpBuffered && canJump)
         {
-            // Jumping out of a slide or dodge keeps its speed.
-            if (isSliding) EndSlide();
-            isDodging = false;
             motor.Jump(Mathf.Sqrt(2f * -Physics.gravity.y * jumpHeight));
             isJumping = true;
             jumpStartTime = Time.time;
             lastJumpPressedTime = float.NegativeInfinity;
             lastGroundedTime = float.NegativeInfinity;
         }
+    }
+
+    /// <summary>
+    /// Hands the body back moving at <paramref name="velocity"/> (unfolding or getting up from the
+    /// ragdoll mid-roll), facing the way it is going.
+    /// </summary>
+    public void CarryMomentum(Vector3 velocity)
+    {
+        motor.SetVelocity(velocity);
+        Vector3 flat = new Vector3(velocity.x, 0f, velocity.z);
+        if (flat.sqrMagnitude > 1f) // moving: face that way (at rest keep facing where the head points)
+            SetFacing(Mathf.Atan2(flat.x, flat.z) * Mathf.Rad2Deg);
     }
 
     // ----------------------------------------------------------------------------------
@@ -385,7 +361,8 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         float speed = sprintHeld ? swimSprintSpeed : swimSpeed;
         Vector3 current = motor.Velocity;
         current.y = 0f;
-        motor.HorizontalVelocity = Vector3.MoveTowards(current, wishDirection * speed, waterAcceleration * dt);
+        desiredVelocity = wishDirection * speed;
+        motor.HorizontalVelocity = Vector3.MoveTowards(current, desiredVelocity, waterAcceleration * dt);
         motor.SwimVertical = (jumpHeld ? 1f : 0f) - (crouchHeld ? 1f : 0f);
 
         bool jumpBuffered = Time.time - lastJumpPressedTime <= jumpBufferTime;
@@ -405,134 +382,9 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         Quaternion look = playerCamera != null ? Quaternion.Euler(playerCamera.Pitch, playerCamera.Yaw, 0f) : Quaternion.Euler(0f, CameraYaw, 0f);
         Vector3 move = look * new Vector3(moveInput.x, 0f, moveInput.y) + Vector3.up * ((jumpHeld ? 1f : 0f) - (crouchHeld ? 1f : 0f));
         motor.FlyVelocity = Vector3.ClampMagnitude(move, 1f) * flySpeed * (sprintHeld ? flyFastMultiplier : 1f);
+        desiredVelocity = motor.FlyVelocity;
         lastJumpPressedTime = float.NegativeInfinity;
         isJumping = false;
-    }
-
-    // ----------------------------------------------------------------------------------
-    // Slide
-    // ----------------------------------------------------------------------------------
-
-    /// <summary>
-    /// Hands the body back moving at <paramref name="velocity"/> (unfolding or getting up from the
-    /// ragdoll mid-roll): fast enough on the ground it slides on with that speed until friction
-    /// stops it; in the air the momentum carries the jump.
-    /// </summary>
-    public void CarryMomentum(Vector3 velocity, bool onGround)
-    {
-        motor.SetVelocity(velocity);
-        Vector3 flat = new Vector3(velocity.x, 0f, velocity.z);
-        if (flat.sqrMagnitude > 1f) // moving: face that way (at rest keep facing where the head points)
-            SetFacing(Mathf.Atan2(flat.x, flat.z) * Mathf.Rad2Deg);
-        if (!onGround || flat.magnitude < carrySlideMinSpeed)
-            return;
-        isSliding = true;
-        slideHeldWithoutCrouch = true;
-        slideDirection = flat.normalized;
-        slideSpeed = Mathf.Min(flat.magnitude, slideMaxSpeed);
-        slideTime = 0f;
-    }
-
-    void TryStartSlide(bool grounded)
-    {
-        Vector3 v = motor.Velocity;
-        v.y = 0f;
-        if (!grounded || v.magnitude < slideMinSpeed || crouch > 0.5f)
-            return;
-        isSliding = true;
-        slideDirection = v.normalized;
-        // A fresh slide kicks off fast; chaining slides doesn't keep adding speed.
-        float start = v.magnitude;
-        if (Time.time - lastSlideEndTime > slideBoostCooldown)
-            start = Mathf.Max(start + slideBoost, slideStartSpeed);
-        slideSpeed = Mathf.Min(start, slideMaxSpeed);
-        slideTime = 0f;
-    }
-
-    void EndSlide()
-    {
-        isSliding = false;
-        slideHeldWithoutCrouch = false;
-        lastSlideEndTime = Time.time;
-    }
-
-    // Friction slows the slide; gravity along the slope speeds it up downhill and slows it uphill,
-    // so a steep surface carries the character down. Steering is gentle.
-    void UpdateSlide(float dt, bool grounded)
-    {
-        slideTime += dt;
-
-        if (motor.HitWall)
-        {
-            Vector3 kept = motor.Velocity;
-            kept.y = 0f;
-            slideSpeed = kept.magnitude;
-            if (slideSpeed > 0.1f) slideDirection = kept / slideSpeed;
-        }
-
-        if (grounded)
-        {
-            float rise = motor.MeasureSlope(slideDirection);
-            float downhill = -rise / Mathf.Sqrt(1f + rise * rise); // sine of the downhill angle
-            slideSpeed += (-Physics.gravity.y * slideGravity * downhill - slideFriction) * dt;
-        }
-        slideSpeed = Mathf.Clamp(slideSpeed, 0f, slideMaxSpeed);
-
-        if (wishDirection.sqrMagnitude > 0.01f)
-            slideDirection = Vector3.RotateTowards(slideDirection, wishDirection.normalized, slideSteer * Mathf.Deg2Rad * dt, 0f);
-
-        motor.HorizontalVelocity = slideDirection * slideSpeed;
-
-        bool released = !crouchHeld && !slideHeldWithoutCrouch && slideTime > slideMinTime;
-        if (slideSpeed < slideEndSpeed || released)
-        {
-            EndSlide();
-            // Still holding crouch: end up crouched, already slowed to crouch speed.
-            if (crouchHeld) crouch = Mathf.Max(crouch, 0.6f);
-        }
-    }
-
-    // ----------------------------------------------------------------------------------
-    // Dodge
-    // ----------------------------------------------------------------------------------
-
-    // A quick dash the way the player is steering (straight back when not steering). The body
-    // keeps facing the same way, so it is a sidestep or a hop back in first person.
-    void TryStartDodge(bool grounded)
-    {
-        bool canDodge = (grounded || Time.time - lastGroundedTime <= coyoteTime) &&
-                        Time.time - lastDodgeEndTime > dodgeCooldown && crouch < 0.5f;
-        if (!canDodge)
-            return;
-
-        Vector3 dir = wishDirection.sqrMagnitude > 0.01f
-            ? wishDirection.normalized
-            : Quaternion.Euler(0f, facingYaw, 0f) * Vector3.back;
-        if (isSliding) EndSlide();
-        isDodging = true;
-        dodgeDirection = dir;
-        dodgeTime = 0f;
-        // Come out of it at the speed the player is asking for, so a dodge flows into a run.
-        dodgeExitSpeed = wishDirection.sqrMagnitude > 0.01f ? (sprintHeld ? sprintSpeed : walkSpeed) * Mathf.Clamp01(wishDirection.magnitude) : 0f;
-        sprintMomentum *= 0.5f;
-    }
-
-    // Fast at the start, easing to the exit speed. The peak is set so the dash covers dodgeDistance.
-    void UpdateDodge(float dt)
-    {
-        dodgeTime += dt;
-        float duration = Mathf.Max(dodgeDuration, 0.05f);
-        float t = Mathf.Clamp01(dodgeTime / duration);
-        // Speed curve exit + (peak - exit) * (1 - t)^2 averages exit + (peak - exit) / 3.
-        float peak = Mathf.Max(dodgeExitSpeed, 3f * (dodgeDistance / duration) - 2f * dodgeExitSpeed);
-        float speed = dodgeExitSpeed + (peak - dodgeExitSpeed) * (1f - t) * (1f - t);
-        motor.HorizontalVelocity = dodgeDirection * speed;
-
-        if (t >= 1f || motor.HitWall)
-        {
-            isDodging = false;
-            lastDodgeEndTime = Time.time;
-        }
     }
 
     // Holding sprint on open ground builds momentum toward top speed; stepping up or down blocks,
@@ -576,16 +428,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         bool moving = wishDirection.sqrMagnitude > 0.01f;
         float target = facingYaw;
 
-        if (isSliding)
-        {
-            idleTurning = false;
-            target = Mathf.Atan2(slideDirection.x, slideDirection.z) * Mathf.Rad2Deg;
-        }
-        else if (isDodging)
-        {
-            idleTurning = false;
-        }
-        else if (motor.NoClip)
+        if (motor.NoClip)
         {
             idleTurning = false;
             target = cameraYaw;
@@ -610,7 +453,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             idleTurning = false;
         }
 
-        float smoothTime = IsSprinting ? sprintTurnSmoothTime : turnSmoothTime;
+        float smoothTime = posture == Posture.Crawling ? crawlTurnSmoothTime : IsSprinting ? sprintTurnSmoothTime : turnSmoothTime;
         facingYaw = Mathf.SmoothDampAngle(facingYaw, target, ref facingVelocity, smoothTime, Mathf.Infinity, dt);
     }
 
@@ -620,6 +463,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         return new LocomotionState
         {
             Velocity = motor.Velocity,
+            DesiredVelocity = desiredVelocity,
             Grounded = motor.IsGrounded,
             GroundHeight = motor.GroundHeight,
             AirTime = motor.AirTime,
@@ -629,13 +473,11 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
             RunSpeed = sprintSpeed,
             SprintSpeed = Mathf.Max(sprintSpeed, topSprintSpeed),
             Sprinting = IsSprinting,
-            Sliding = isSliding,
-            Dodging = isDodging,
-            DodgeDirection = dodgeDirection,
-            DodgeProgress = isDodging ? Mathf.Clamp01(dodgeTime / Mathf.Max(dodgeDuration, 0.05f)) : 1f,
             Swimming = motor.IsSwimming,
             WaterDepth = motor.WaterDepth,
             Crouch = crouch,
+            Crawling = posture == Posture.Crawling,
+            BodyHeight = motor.BodyHeight,
             Slope = slope,
         };
     }

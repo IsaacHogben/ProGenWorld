@@ -37,6 +37,23 @@ public class VoxelCharacterMotor : MonoBehaviour
     }
     public Vector3 FlyVelocity { get; set; }
 
+    /// <summary>Current collision height (lower while crouched or crawling).</summary>
+    public float BodyHeight => shapeHeight > 0f ? shapeHeight : settings.height;
+
+    /// <summary>
+    /// Asks for a body size (crouching, crawling). Shrinking happens at once; growing waits until
+    /// there is room, so a low ceiling keeps the body small.
+    /// </summary>
+    public void RequestShape(float height, float stepClearance, float climbHeight)
+    {
+        wantedHeight = height;
+        wantedClearance = stepClearance;
+        wantedClimb = climbHeight;
+    }
+
+    /// <summary>True if a body of this size would fit where it stands now.</summary>
+    public bool CanFit(float height, float stepClearance) => core.Fits(height, stepClearance);
+
     public Vector3 Velocity => core.Velocity;
     public bool IsGrounded => core.Grounded;
     public float GroundHeight => core.GroundHeight;
@@ -59,6 +76,8 @@ public class VoxelCharacterMotor : MonoBehaviour
 
     VoxelCharacterMotorCore core;
     bool noClip;
+    float wantedHeight, wantedClearance, wantedClimb;
+    float shapeHeight, shapeClearance, shapeClimb;
     float pendingJump;
     Vector3 prevPosition;
     Vector3 lastWrittenPosition;
@@ -138,6 +157,7 @@ public class VoxelCharacterMotor : MonoBehaviour
 
         core.settings = settings;
         core.settings.gravity = Physics.gravity.y * gravityScale;
+        UpdateShape();
 
         var result = core.Step(HorizontalVelocity, pendingJump, Time.fixedDeltaTime, SwimVertical);
         pendingJump = 0f;
@@ -147,6 +167,30 @@ public class VoxelCharacterMotor : MonoBehaviour
         if (result.Jumped) Jumped?.Invoke();
         if (result.Landed) Landed?.Invoke(result.ImpactSpeed);
         if (result.EnteredWater) EnteredWater?.Invoke();
+    }
+
+    void UpdateShape()
+    {
+        if (shapeHeight <= 0f) { shapeHeight = settings.height; shapeClearance = settings.stepClearance; }
+        if (wantedHeight <= 0f) { wantedHeight = settings.height; wantedClearance = settings.stepClearance; }
+
+        if (wantedHeight != shapeHeight || wantedClearance != shapeClearance)
+        {
+            core.settings.height = shapeHeight;
+            core.settings.stepClearance = shapeClearance;
+            // Getting lower is always allowed (anything the lower box touches lifts it out).
+            bool shrinking = wantedHeight <= shapeHeight;
+            if (shrinking || core.Fits(wantedHeight, wantedClearance))
+            {
+                shapeHeight = wantedHeight;
+                shapeClearance = wantedClearance;
+            }
+        }
+        shapeClimb = shapeHeight == wantedHeight ? wantedClimb : 0f;
+
+        core.settings.height = shapeHeight;
+        core.settings.stepClearance = shapeClearance;
+        core.settings.climbHeight = shapeClimb;
     }
 
     void Update()

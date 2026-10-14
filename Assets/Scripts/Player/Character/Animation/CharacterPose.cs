@@ -11,6 +11,8 @@ public struct FootPose
     public float Pitch;
     /// <summary>0 = leg follows the body (rest pose), 1 = foot reaches Position (IK).</summary>
     public float Weight;
+    /// <summary>Direction this knee points, facing frame (zero = the pose's KneeDirection).</summary>
+    public Vector3 Knee;
 }
 
 /// <summary>How an arm should be posed this frame.</summary>

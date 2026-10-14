@@ -206,8 +206,9 @@ public class CharacterRig
                 continue;
 
             var foot = pose.Feet[i];
-            UpdateKneeSplay(leg, facing, foot.Position, knee, deltaTime);
-            SolveLimb(leg, facing, foot.Position, knee, foot.Weight, leg.Splay);
+            Vector3 legKnee = foot.Knee.sqrMagnitude > 1e-6f ? facing * foot.Knee : knee;
+            UpdateKneeSplay(leg, facing, foot.Position, legKnee, deltaTime);
+            SolveLimb(leg, facing, foot.Position, legKnee, foot.Weight, leg.Splay);
 
             Quaternion footRotation = Quaternion.Euler(0f, foot.Yaw, 0f) * Quaternion.AngleAxis(foot.Pitch, Vector3.right) * leg.RestEndRotation;
             Quaternion followRotation = leg.Lower.rotation * Quaternion.Inverse(facing * leg.RestLowerRotation) * (facing * leg.RestEndRotation);

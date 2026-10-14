@@ -233,14 +233,18 @@ float2 VoxelFaceUV(int axis, float3 p)
     return frac(uv);
 }
 
-bool VoxelMaskPass(uint id, int axis, float3 p)
+#include "VoxelWind.hlsl"
+
+// p: position in voxels of chunk c at the given detail level. Leaf masks flutter in the wind.
+bool VoxelMaskPass(VoxelChunk c, uint level, uint id, int axis, float3 p)
 {
     uint mask = VoxelBlockMask(id);
     if (mask == 0u)
         return true;
 
     // Slice index == BlockDatabase alphaMaskIndex (0 = opaque, 1 = LeafAlpha, 2 = LeafAlpha2)
-    float2 uv = VoxelFaceUV(axis, p);
+    float vs = c.originSize.w * VoxelLevelScale(level);
+    float2 uv = frac(VoxelFaceUV(axis, p) + VoxelWindLeafOffset(c.originSize.xyz + p * vs, axis, vs));
     return SAMPLE_TEXTURE2D_ARRAY_LOD(_AlphaMasks, sampler_AlphaMasks, uv, mask, 0).r > 0.5;
 }
 
@@ -436,14 +440,14 @@ bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
             return true;
         }
 
-        if (vis == VOXEL_VIS_OPAQUE || (vis == VOXEL_VIS_STACKED && !startsInMasked && VoxelMaskPass(id, faceAxis, pos)))
+        if (vis == VOXEL_VIS_OPAQUE || (vis == VOXEL_VIS_STACKED && !startsInMasked && VoxelMaskPass(c, level, id, faceAxis, pos)))
         {
             hit.t = cur.t; hit.id = id; hit.axis = faceAxis; hit.posVoxel = pos;
             return true;
         }
 
         // Far side of a masked block (they render double sided) - only towards open space.
-        if (prevVis == VOXEL_VIS_STACKED && (vis == VOXEL_VIS_INVISIBLE || vis == VOXEL_VIS_TRANSLUCENT) && VoxelMaskPass(prevId, faceAxis, pos))
+        if (prevVis == VOXEL_VIS_STACKED && (vis == VOXEL_VIS_INVISIBLE || vis == VOXEL_VIS_TRANSLUCENT) && VoxelMaskPass(c, level, prevId, faceAxis, pos))
         {
             hit.t = cur.t; hit.id = prevId; hit.axis = faceAxis; hit.posVoxel = pos;
             return true;
@@ -477,7 +481,7 @@ bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
             {
                 uint nextVis = VoxelBlockVisibility(VoxelFetchAny(c, level, cur.p));
                 pos = o + d * cur.t;
-                if ((nextVis == VOXEL_VIS_INVISIBLE || nextVis == VOXEL_VIS_TRANSLUCENT) && VoxelMaskPass(id, cur.axis, pos))
+                if ((nextVis == VOXEL_VIS_INVISIBLE || nextVis == VOXEL_VIS_TRANSLUCENT) && VoxelMaskPass(c, level, id, cur.axis, pos))
                 {
                     hit.t = cur.t; hit.id = id; hit.axis = cur.axis; hit.posVoxel = pos;
                     return true;

@@ -155,7 +155,7 @@ bool VoxelReliefSolid(VoxelChunk c, inout VoxelReliefCell cell, float3 centerWS,
             int a = f >> 1;
             float d = (f & 1) ? (vs - local[a]) : local[a];
             float k = floor(d / rp.ts);
-            if (k < rp.leafTexels && k < nearest && VoxelMaskPass(cell.id, a, pv))
+            if (k < rp.leafTexels && k < nearest && VoxelMaskPass(c, 0u, cell.id, a, pv))
             {
                 nearest = k;
                 texAxis = a;

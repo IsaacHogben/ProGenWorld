@@ -96,6 +96,22 @@ public class VoxelRenderSettings : MonoBehaviour
     [Tooltip("Past Grass Distance, grass tops are darkened where their patch would grow blades, so patches still show far away and the blade cutoff blends in. 0 = off.")]
     [Range(0f, 1f)] public float grassFarShade = 0.25f;
 
+    [Header("Wind (grass and leaves)")]
+    [Tooltip("How hard the wind moves grass and leaves at a wind of length 1. The wind itself is Wind Direction under Water: it blows along that vector and its length scales this. 0 = still.")]
+    [Range(0f, 1f)] public float windStrength = 0.6f;
+    [Tooltip("Size of the gusts drifting across the world (blocks).")]
+    [Min(0.5f)] public float gustSize = 12f;
+    [Tooltip("How fast gusts drift downwind (blocks per second).")]
+    [Min(0f)] public float gustSpeed = 4f;
+    [Tooltip("Wind animation updates per second: low values move in visible pixel steps. 0 = smooth.")]
+    [Range(0f, 30f)] public float windStepRate = 8f;
+    [Tooltip("Most a grass blade tip bends in full wind (texels).")]
+    [Range(0f, 4f)] public float grassSway = 2f;
+    [Tooltip("Most leaf clusters shift in full wind (alpha mask texels).")]
+    [Range(0f, 3f)] public float leafFlutter = 1f;
+    [Tooltip("Leaves closer to the camera than this (world units) flutter. Farther, the motion is below a pixel and only costs time (every leaf a ray or shadow ray passes tests it).")]
+    [Min(0f)] public float leafFlutterDistance = 48f;
+
     [Header("Shadows")]
     [Tooltip("Screen resolution the voxel sun shadow rays are traced at. Half traces a quarter of the rays; the result is upsampled along depth (and texel edges with Pixelated Shadows).")]
     public ShadowResolution shadowResolution = ShadowResolution.Half;
@@ -183,6 +199,9 @@ public class VoxelRenderSettings : MonoBehaviour
         public static readonly int GrassShadows = Shader.PropertyToID("_VoxelGrassShadows");
         public static readonly int GrassPatchHeight = Shader.PropertyToID("_VoxelGrassPatchHeight");
         public static readonly int GrassFar = Shader.PropertyToID("_VoxelGrassFar");
+        public static readonly int Wind = Shader.PropertyToID("_VoxelWind");
+        public static readonly int WindAnim = Shader.PropertyToID("_VoxelWindAnim");
+        public static readonly int LeafFlutterDistance = Shader.PropertyToID("_VoxelLeafFlutterDistance");
         public static readonly int GrassBlades = Shader.PropertyToID("_VoxelGrassBlades");
         public static readonly int GrassTexels = Shader.PropertyToID("_VoxelGrassTexels");
         public static readonly int TexelCount = Shader.PropertyToID("_VoxelTexelCount");
@@ -246,6 +265,12 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalFloat(Ids.GrassShadows, grassShadows ? 1f : 0f);
         Shader.SetGlobalFloat(Ids.GrassPatchHeight, grassPatchHeight);
         Shader.SetGlobalFloat(Ids.GrassFar, grassFarShade);
+        // Same wind as the water (ApplyWind): direction of windDirection, strength scaled by its length.
+        float windLength = windDirection.magnitude;
+        Vector2 windDir = windLength > 1e-4f ? windDirection / windLength : Vector2.right;
+        Shader.SetGlobalVector(Ids.Wind, new Vector4(windDir.x, windDir.y, gustSize, gustSpeed));
+        Shader.SetGlobalVector(Ids.WindAnim, new Vector4(windStrength * Mathf.Min(windLength, 2f), windStepRate, grassSway, leafFlutter));
+        Shader.SetGlobalFloat(Ids.LeafFlutterDistance, leafFlutterDistance);
         ApplyGrassBlades();
         Shader.SetGlobalFloat(Ids.SolidLeavesFromLevel, solidLeavesFromLod);
         Shader.SetGlobalFloat(Ids.AmbientOcclusion, ambientOcclusion);

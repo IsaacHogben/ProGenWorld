@@ -37,6 +37,7 @@ struct VoxelGrassBlade
     int width;   // root width in texels
     int height;  // in texels
     int lean;    // texels the tip is shifted along the card (signed)
+    float bend;  // texels the wind adds to the lean at the tip
 };
 
 bool VoxelGrassEnabled()
@@ -143,7 +144,8 @@ uint VoxelGrassLoadBlade(uint set, uint i)
     return VoxelGrassPickBlade(_VoxelGrassBlades[set * 4u + (i >> 2)], i & 3u);
 }
 
-VoxelGrassBlade VoxelGrassBladeShape(uint data, int axis, int plane, int texels, float fade, float heightScale)
+// bend: the wind bend of the block (VoxelWindGrassBend); taller blades bend further.
+VoxelGrassBlade VoxelGrassBladeShape(uint data, int axis, int plane, int texels, float fade, float heightScale, float2 bend)
 {
     VoxelGrassBlade b;
     b.axis = axis;
@@ -153,6 +155,7 @@ VoxelGrassBlade VoxelGrassBladeShape(uint data, int axis, int plane, int texels,
     b.lean = (int)((data >> 16) & 15u) - 8;
     float heightRandom = (float)((data >> 20) & 255u) / 255.0;
     b.height = min((int)floor(_VoxelGrass.x * heightScale * texels * fade * lerp(0.45, 1.0, heightRandom) + 0.5), texels);
+    b.bend = (axis == 0 ? bend.x : bend.y) * lerp(0.6, 1.0, heightRandom);
     return b;
 }
 
@@ -165,9 +168,10 @@ bool VoxelGrassCovers(VoxelGrassBlade b, int3 p, float3 q, int texels, out int r
     if (row < 0 || row >= b.height)
         return false;
 
-    // Narrows from the root width to one texel; leans along a quadratic curve.
+    // Narrows from the root width to one texel; leans (and bends in the wind) along a quadratic
+    // curve, by whole texels. Texels bent out of the block are cut off.
     float f = ((float)row + 0.5) / (float)b.height;
-    int shift = (int)(sign((float)b.lean) * floor(abs((float)b.lean) * f * f + 0.5));
+    int shift = (int)round(((float)b.lean + b.bend) * f * f);
     int w = max(1, b.width - (int)floor((float)b.width * row / (float)b.height));
     int start = b.along + shift;
     return along >= start && along < start + w;
@@ -205,6 +209,7 @@ bool VoxelGrassTrace(VoxelChunk c, int3 p, float3 o, float3 d, float3 invD, floa
     int3 block = VoxelGrassBlock(c, p);
     float heightScale; uint set;
     int count = VoxelGrassBladeCount(block, heightScale, set);
+    float2 bend = VoxelWindGrassBend((float2)block.xz);
     if (count <= 0)
         return false;
 
@@ -266,7 +271,7 @@ bool VoxelGrassTrace(VoxelChunk c, int3 p, float3 o, float3 d, float3 invD, floa
         if (t < tIn || t >= tHit)
             continue;
 
-        VoxelGrassBlade bl = VoxelGrassBladeShape(data, axis, plane, texels, fade, heightScale);
+        VoxelGrassBlade bl = VoxelGrassBladeShape(data, axis, plane, texels, fade, heightScale, bend);
         int r, al;
         if (VoxelGrassCovers(bl, p, o + d * t, texels, r, al))
         {
@@ -294,6 +299,7 @@ bool VoxelGrassResolve(VoxelChunk c, int3 p, float3 pv, int axis, float distWS, 
     int3 block = VoxelGrassBlock(c, p);
     float heightScale; uint set;
     int count = VoxelGrassBladeCount(block, heightScale, set);
+    float2 bend = VoxelWindGrassBend((float2)block.xz);
     bool onX = axis == 0;
 
     // The shown cards on plane k only.
@@ -304,7 +310,7 @@ bool VoxelGrassResolve(VoxelChunk c, int3 p, float3 pv, int axis, float distWS, 
         if (VoxelGrassOnX(data) != onX || VoxelGrassPlane(data) != k || VoxelGrassRank(data) >= count)
             continue;
 
-        VoxelGrassBlade b = VoxelGrassBladeShape(data, axis, k, texels, fade, heightScale);
+        VoxelGrassBlade b = VoxelGrassBladeShape(data, axis, k, texels, fade, heightScale, bend);
         int r, a;
         if (VoxelGrassCovers(b, p, pv, texels, r, a))
         {

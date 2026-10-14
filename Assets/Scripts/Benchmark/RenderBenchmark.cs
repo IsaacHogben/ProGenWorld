@@ -172,6 +172,9 @@ public class RenderBenchmark : MonoBehaviour
         configs["flatPatches"] = () => settings.grassPatchHeight = 0f;
         configs["grass64"] = () => { settings.grassDistance = 64f; settings.grassShadows = false; };
         configs["noFarShade"] = () => { settings.grassFarShade = 0f; settings.grassShadows = false; settings.grassDistance = 64f; };
+        configs["noWind"] = () => settings.windStrength = 0f;
+        configs["noLeafFlutter"] = () => settings.leafFlutter = 0f;
+        configs["noGrassSway"] = () => settings.grassSway = 0f;
         configs["grass1Blade"] = () => { settings.grassBladesPerBlock = 1f; settings.grassShadows = false; };
         configs["grass8Blades"] = () => { settings.grassBladesPerBlock = 8f; settings.grassShadows = false; };
         configs["native"] = () => settings.renderScale = 1f;

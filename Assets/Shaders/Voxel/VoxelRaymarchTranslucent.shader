@@ -355,7 +355,7 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                     float3 pos = o + d * cur.t;
 
                     // Opaque content was already drawn by the opaque pass.
-                    if (vis == VOXEL_VIS_OPAQUE || (vis == VOXEL_VIS_STACKED && VoxelMaskPass(id, faceAxis, pos)))
+                    if (vis == VOXEL_VIS_OPAQUE || (vis == VOXEL_VIS_STACKED && VoxelMaskPass(c, level, id, faceAxis, pos)))
                         break;
 
                     uint prevVis = VoxelBlockVisibility(prevId);

@@ -16,6 +16,7 @@ public class NoiseSystem
         public int maxConcurrentNoiseTasks;
         public BiomeDataManager biomeDataManager;
         public Func<LODLevel, int> GetSampleRes;   // blocks per noise sample at a LOD (null = 1)
+        public HybridDensity hybridDensity;        // region generator: used for chunks whose BiomeData has column data
     }
 
     private NoiseConfig config;
@@ -88,15 +89,18 @@ public class NoiseSystem
 
                 Profiler.StartNoise();
 
-                noiseGenerator.FillDensity(
-                    density,
-                    coord,
-                    config.chunkSize,
-                    config.frequency,
-                    sampleRes,
-                    biome,
-                    config.biomeDataManager.terrainTypes
-                );
+                if (biome.columns.IsCreated && config.hybridDensity != null)
+                    config.hybridDensity.Fill(density, coord, config.chunkSize, sampleRes, biome.columns);
+                else
+                    noiseGenerator.FillDensity(
+                        density,
+                        coord,
+                        config.chunkSize,
+                        config.frequency,
+                        sampleRes,
+                        biome,
+                        config.biomeDataManager.terrainTypes
+                    );
 
                 Profiler.EndNoise();
 

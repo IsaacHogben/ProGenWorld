@@ -32,6 +32,17 @@ public static class ChunkSizeBenchmarkBuild
             var scene = EditorSceneManager.OpenScene(BenchScene, OpenSceneMode.Single);
             new GameObject("Chunk Size Benchmark").AddComponent<ChunkSizeBenchmark>();
             new GameObject("Render Benchmark").AddComponent<RenderBenchmark>();
+
+            // Ship the region generator settings so -benchRegionGen can switch it on
+            var chunkManager = UnityEngine.Object.FindFirstObjectByType<ChunkManager>();
+            if (chunkManager != null)
+            {
+                var so = new SerializedObject(chunkManager);
+                var prop = so.FindProperty("regionGenSettings");
+                if (prop.objectReferenceValue == null)
+                    prop.objectReferenceValue = AssetDatabase.LoadAssetAtPath<RegionGenSettingsSO>("Assets/ScriptableObjects/RegionGenSettings.asset");
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
             EditorSceneManager.SaveScene(scene);
 
             PlayerSettings.enableFrameTimingStats = true; // GPU frame times in the player

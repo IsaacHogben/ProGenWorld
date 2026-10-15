@@ -72,6 +72,15 @@ public struct BiomeData
     //For BiomeSystem compatibility
     public int resolution;
     public NativeArray<BiomeHint> grid;
+
+    // Region generator only: the chunk's 2D column data, (chunkSize + 1)^2 at full resolution
+    public NativeArray<ColumnSample> columns;
+
+    public void Dispose()
+    {
+        if (grid.IsCreated) grid.Dispose();
+        if (columns.IsCreated) columns.Dispose();
+    }
 }
 
 // Job-safe biome definition(no nested containers)

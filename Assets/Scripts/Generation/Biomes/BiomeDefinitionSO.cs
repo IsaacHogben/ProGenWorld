@@ -44,6 +44,9 @@ public class BiomeDefinitionSO : ScriptableObject
     [Range(0f, 0.1f)]
     public float gradientThreshold2 = 0.002f;
 
+    [Header("Region Shape (Region Gen only)")]
+    public RegionShape regionShape = new RegionShape();
+
     [Header("LSystem Decorations")]
     public LSystemDecoration[] LSystemDecorations = new LSystemDecoration[0];
     [Header("Tree Decorations")]

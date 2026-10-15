@@ -123,6 +123,21 @@ public class RenderBenchmark : MonoBehaviour
             Log($"view distance {view.viewDistance}, trim gpu detail {view.trimGpuDetail}, lowest detail range {view.lowestDetailRange}, low res horizon {view.lowResHorizon}");
         }
 
+        // Region generator (-benchRegionGen 1); -benchRegionDetail <terrain index> gives every
+        // biome that terrain type's tree as its 3D shape, for this run only
+        if (int.TryParse(Arg("-benchRegionGen"), out int regionGen))
+            chunkManager.UseRegionGen = regionGen != 0;
+        if (int.TryParse(Arg("-benchRegionDetail"), out int detail) && chunkManager.biomeDataManager != null)
+        {
+            var bdm = chunkManager.biomeDataManager;
+            if (detail >= 0 && detail < bdm.terrainTypes.Length)
+                foreach (var biome in bdm.biomes)
+                    if (biome != null && biome.regionShape != null)
+                        biome.regionShape.detailTerrain = bdm.terrainTypes[detail];
+            Log($"region detail terrain {(detail >= 0 && detail < bdm.terrainTypes.Length ? bdm.terrainTypes[detail].terrainTypeName : "none")}");
+        }
+        Log($"region gen {chunkManager.UseRegionGen}");
+
         foreach (var p in FindObjectsByType<ChunkProfiler>(FindObjectsSortMode.None))
             p.enabled = false;
         foreach (var pc in FindObjectsByType<PlayerCamera>(FindObjectsSortMode.None))

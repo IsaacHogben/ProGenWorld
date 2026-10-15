@@ -255,6 +255,19 @@ class FastNoise
         return new OutputMinMax(minMax);
     }
 
+    [ThreadStatic] static float[] tlsMinMax;
+
+    /// <summary>GenPositionArray3D over the first count entries only, so callers can reuse larger buffers.</summary>
+    public void GenPositionArray3D(float[] noiseOut, int count,
+                                   float[] xPosArray, float[] yPosArray, float[] zPosArray,
+                                   int seed)
+    {
+        if (count > noiseOut.Length || count > xPosArray.Length || count > yPosArray.Length || count > zPosArray.Length)
+            throw new ArgumentOutOfRangeException(nameof(count));
+        var minMax = tlsMinMax ??= new float[2];
+        fnGenPositionArray3D(mNodeHandle, noiseOut, count, xPosArray, yPosArray, zPosArray, 0f, 0f, 0f, seed, minMax);
+    }
+
     public OutputMinMax GenPositionArray4D(float[] noiseOut,
                                          float[] xPosArray, float[] yPosArray, float[] zPosArray, float[] wPosArray,
                                          float xOffset, float yOffset, float zOffset, float wOffset,

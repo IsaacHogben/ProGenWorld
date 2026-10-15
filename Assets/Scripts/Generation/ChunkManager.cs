@@ -43,6 +43,14 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     [SerializeField] public BiomeSystem biomeSystem;
     [SerializeField] public BiomeDataManager biomeDataManager;
 
+    [Header("Region Gen")]
+    [Tooltip("Generate terrain with the region generator: large biome regions blended over wide borders, a height surface per biome with optional FastNoise 3D shapes, and only the chunks each column's terrain passes through. Off = BiomeSystem terrain types and the flood fill. Fixed at start.")]
+    [SerializeField] bool useRegionGen = false;
+    [SerializeField] RegionGenSettingsSO regionGenSettings;
+
+    /// <summary>Region generator on / off. Read once in Awake.</summary>
+    public bool UseRegionGen { get => useRegionGen; set => useRegionGen = value; }
+
     [SerializeField] private BlockDatabase blockDatabase;
     [SerializeField] public BlockTextureArrayBuilder textureArrayBuilder;
 
@@ -244,6 +252,10 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     private VoxelPackSystem packSystem;
     private VoxelWorldRenderer voxelRenderer;
     private HorizonSystem horizonSystem;
+    private RegionSystem regionSystem;          // region generator (null = BiomeSystem and flood fill)
+    private ColumnScheduler columnScheduler;
+    private HybridDensity hybridDensity;
+    bool RegionGen => regionSystem != null;
 
     public VoxelWorldRenderer VoxelRenderer => voxelRenderer;
     public ChunkBlockStore BlockStore => blockStore;
@@ -297,8 +309,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         Application.targetFrameRate = -1;
         QualitySettings.vSyncCount = 0;
 
-        // Seed frontier at the player's current chunk
-        InitFloodFrontier(player.transform.position, nearRange/2, 4);
+        // Seed frontier at the player's current chunk (the region generator queues chunks by column instead)
+        if (!RegionGen)
+            InitFloodFrontier(player.transform.position, nearRange/2, 4);
     }
 
     void Update()
@@ -325,6 +338,14 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: BiomeSystem.Updater");
         biomeSystem.Updater();
         UnityEngine.Profiling.Profiler.EndSample();
+
+        if (RegionGen)
+        {
+            UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: RegionSystem");
+            regionSystem.Update();
+            columnScheduler.Tick(WorldToChunkCoord(currentPlayerPos).xz, viewDistance, 64, EnqueueFrontier);
+            UnityEngine.Profiling.Profiler.EndSample();
+        }
 
         // Periodic scheduling (throttled)
         UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: InjectChunkRequestIntoPipeline, Throttled");
@@ -442,7 +463,10 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             case 0:
                 CleanupDeferred(playerPos);
                 PromoteDeferredToFrontier(playerPos);
-                ReseedFloodNearPlayer(playerPos);
+                if (RegionGen)
+                    columnScheduler.Prune(WorldToChunkCoord(playerPos).xz, unloadDistance + 1);
+                else
+                    ReseedFloodNearPlayer(playerPos);
                 Profiler.EndMovePhase0();
                 break;
             case 1:
@@ -787,6 +811,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
 
             bool worldDone =
                 frontier.Count == 0 &&
+                (!RegionGen || !columnScheduler.Busy) &&
                 activeNoise == 0 &&
                 activeMesh == 0 &&
                 activeDeco == 0;
@@ -992,6 +1017,19 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         }
         biomeDataManager.Initialize();
 
+        if (useRegionGen)
+        {
+            if (regionGenSettings == null)
+                Debug.LogError("[ChunkManager] Use Region Gen is on but no Region Gen Settings are assigned; using BiomeSystem terrain.");
+            else
+            {
+                regionSystem = new RegionSystem(regionGenSettings, biomeDataManager, seed, chunkSize);
+                regionSystem.OnChunkReady += HandleBiomeCompleted;
+                columnScheduler = new ColumnScheduler(regionSystem, chunkSize);
+                hybridDensity = new HybridDensity(biomeDataManager, regionGenSettings, seed, frequency);
+            }
+        }
+
         if (biomeSystem == null)
         {
             Debug.LogError("biomeSystem not assigned!");
@@ -1011,7 +1049,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 chunkSize = chunkSize,
                 maxConcurrentNoiseTasks = NoiseThreadCount,
                 biomeDataManager = biomeDataManager,
-                GetSampleRes = lod => lodConfigs[lod].sampleRes
+                GetSampleRes = lod => lodConfigs[lod].sampleRes,
+                hybridDensity = hybridDensity
             },
             lod => RentDensityArray(lod),
             (lod, arr) => ReturnDensityArray(lod, arr)
@@ -1091,8 +1130,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
 
         if (biomeDataByChunk.TryGetValue(coord, out var biome))
         {
-            if (biome.grid.IsCreated)
-                biome.grid.Dispose();
+            biome.Dispose();
             biomeDataByChunk.Remove(coord);
         }
     }
@@ -1185,8 +1223,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         // Done with the biome data
         if (biomeDataByChunk.TryGetValue(coord, out var biome))
         {
-            if (biome.grid.IsCreated)
-                biome.grid.Dispose();
+            biome.Dispose();
 
             biomeDataByChunk.Remove(coord);
         }
@@ -1199,7 +1236,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             terrainMinY = Math.Min(terrainMinY, coord.y);
             terrainMaxY = Math.Max(terrainMaxY, coord.y);
         }
-        ExpandFrontierFromFaces(coord, player.transform.position, faces);
+        if (!RegionGen)
+            ExpandFrontierFromFaces(coord, player.transform.position, faces);
     }
     private void HandleDecorationStarted(int3 coord)
     {
@@ -1254,10 +1292,11 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 terrainMinY = Math.Min(terrainMinY, coord.y);
                 terrainMaxY = Math.Max(terrainMaxY, coord.y);
             }
-            ExpandFrontierFromFaces(coord, lastPlayerPos, faces);
+            if (!RegionGen)
+                ExpandFrontierFromFaces(coord, lastPlayerPos, faces);
 
-            if (biomeDataByChunk.Remove(coord, out var biome) && biome.grid.IsCreated)
-                biome.grid.Dispose();
+            if (biomeDataByChunk.Remove(coord, out var biome))
+                biome.Dispose();
 
             packSystem.RequestPack(coord, blockIds, lod, takeOwnership: true);
         }
@@ -1356,6 +1395,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 frequency = frequency,
                 biomeSystem = biomeSystem,
                 biomeDataManager = biomeDataManager,
+                regionSystem = regionSystem,
+                hybridDensity = hybridDensity,
                 blockDb = nativeBlockDatabase,
                 renderer = voxelRenderer,
                 settings = viewSettings
@@ -1368,6 +1409,11 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         {
             minY = Mathf.Min(minY, (terrainMinY - 1) * chunkSize);
             maxY = Mathf.Max(maxY, (terrainMaxY + 2) * chunkSize);
+        }
+        if (RegionGen && columnScheduler.MaxChunkY >= columnScheduler.MinChunkY)
+        {
+            minY = Mathf.Min(minY, columnScheduler.MinChunkY * chunkSize);
+            maxY = Mathf.Max(maxY, (columnScheduler.MaxChunkY + 1) * chunkSize);
         }
 
         // Chunks are loaded around lastPlayerPos out to the view distance (to chunk centres)
@@ -1477,7 +1523,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     bool IVoxelWorldSource.IsChunkPending(int3 coord)
     {
         return chunks.ContainsKey(coord) || generatingSet.Contains(coord) || frontierSet.Contains(coord) ||
-               deferredFrontier.Contains(coord) || chunksStillDecorating.Contains(coord);
+               deferredFrontier.Contains(coord) || chunksStillDecorating.Contains(coord) ||
+               (RegionGen && !columnScheduler.IsColumnKnown(coord.xz));
     }
 
     // =============================
@@ -1491,7 +1538,10 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         if (pendingBiome.Contains(coord))
             return;
 
-        biomeSystem.RequestBiome(coord, chunkSize);
+        if (RegionGen)
+            regionSystem.RequestChunk(coord);
+        else
+            biomeSystem.RequestBiome(coord, chunkSize);
         pendingBiome.Add(coord);
     }
     public void MarkChunkForRemesh(int3 coord)
@@ -1660,14 +1710,16 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         // Biome cleanup
         if (pendingBiome.Contains(coord))
         {
-            biomeSystem.CancelBiome(coord);
+            if (RegionGen)
+                regionSystem.CancelChunk(coord);
+            else
+                biomeSystem.CancelBiome(coord);
             pendingBiome.Remove(coord);
         }
 
         if (biomeDataByChunk.TryGetValue(coord, out var biome))
         {
-            if (biome.grid.IsCreated)
-                biome.grid.Dispose();
+            biome.Dispose();
             biomeDataByChunk.Remove(coord);
         }
 
@@ -1821,6 +1873,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         // Pending pack jobs read the block arrays disposed below
         packSystem?.Dispose();
         horizonSystem?.Dispose();
+        regionSystem?.Dispose();
         voxelRenderer?.Dispose();
         if (ReferenceEquals(VoxelPhysics.Source, this))
             VoxelPhysics.Source = null;

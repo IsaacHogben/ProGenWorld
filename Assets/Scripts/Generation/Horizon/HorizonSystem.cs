@@ -24,6 +24,8 @@ public sealed class HorizonSystem : IDisposable
         public float frequency;
         public BiomeSystem biomeSystem;
         public BiomeDataManager biomeDataManager;
+        public RegionSystem regionSystem;     // region generator (null = BiomeSystem terrain types)
+        public HybridDensity hybridDensity;
         public NativeArray<BlockDatabase.BlockInfoUnmanaged> blockDb;
         public VoxelWorldRenderer renderer;
         public ViewDistanceSettings settings;
@@ -59,6 +61,7 @@ public sealed class HorizonSystem : IDisposable
     JobHandle biomeHandle;
     NativeArray<float> terrainGrid, humidityGrid, temperatureGrid;
     NativeArray<BiomeHint> hintGrid;
+    NativeArray<ColumnSample> columnGrid;   // region generator
     Task<List<(int layer, byte[] blocks)>> heightTask;
     readonly List<(int layer, NativeArray<byte> blocks, VoxelPackResult result, JobHandle handle)> packs = new();
 
@@ -203,12 +206,15 @@ public sealed class HorizonSystem : IDisposable
                     return;
                 biomeHandle.Complete();
                 var hints = hintGrid.ToArray();
+                var columns = columnGrid.IsCreated ? columnGrid.ToArray() : null;
                 DisposeBiomeArrays();
 
                 int ring = workKey.x;
                 int2 tile = workKey.yz;
                 float lo = minY, hi = maxY;
-                heightTask = Task.Run(() => BuildLayers(ring, tile, hints, lo, hi));
+                heightTask = columns != null
+                    ? Task.Run(() => BuildRegionLayers(ring, tile, columns))
+                    : Task.Run(() => BuildLayers(ring, tile, hints, lo, hi));
                 stage = Stage.Heights;
                 return;
             }
@@ -285,10 +291,19 @@ public sealed class HorizonSystem : IDisposable
     void StartBiome(int3 key)
     {
         int count = side * side;
+        hintGrid = new NativeArray<BiomeHint>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+        if (cfg.regionSystem != null)
+        {
+            // Column data at the voxel centres of the tile
+            float v = VoxelSize(key.x);
+            float2 origin = new float2(key.y, key.z) * TileSize(key.x) + v * 0.5f;
+            columnGrid = new NativeArray<ColumnSample>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            biomeHandle = cfg.regionSystem.ScheduleColumns(origin, v, side, columnGrid, hintGrid);
+            return;
+        }
         terrainGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
         humidityGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
         temperatureGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-        hintGrid = new NativeArray<BiomeHint>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
         biomeHandle = cfg.biomeSystem.ScheduleHints(new int3(key.y, 0, key.z), TileSize(key.x), res,
             terrainGrid, humidityGrid, temperatureGrid, hintGrid);
     }
@@ -299,6 +314,7 @@ public sealed class HorizonSystem : IDisposable
         if (humidityGrid.IsCreated) humidityGrid.Dispose();
         if (temperatureGrid.IsCreated) temperatureGrid.Dispose();
         if (hintGrid.IsCreated) hintGrid.Dispose();
+        if (columnGrid.IsCreated) columnGrid.Dispose();
     }
 
     void RemoveTile(int3 key)
@@ -340,10 +356,7 @@ public sealed class HorizonSystem : IDisposable
     // Worker thread: surface heights and block arrays
     // ------------------------------------------------------------------------------------
 
-    // Surface height (top of the highest solid voxel) of every column of a tile, then one block
-    // array per vertical layer (res voxels tall) that holds terrain. Columns are solid from the
-    // surface down to a little below the tile's lowest surface; deeper voxels are left as air
-    // since they are never seen.
+    // Surface height (top of the highest solid voxel) of every column of a tile, then its block arrays.
     List<(int layer, byte[] blocks)> BuildLayers(int ring, int2 tile, BiomeHint[] hints, float minY, float maxY)
     {
         float v = VoxelSize(ring);
@@ -381,7 +394,6 @@ public sealed class HorizonSystem : IDisposable
         // Refine between the solid coarse sample and the open one above it
         var fine = SampleColumns(hints, ox, oz, v, columns, fineSteps - 1,
             (col, j) => firstSolid[col] > 0 ? coarseY[firstSolid[col]] + (fineSteps - 1 - j) * v : float.NaN);
-        float minH = float.MaxValue, maxH = float.MinValue;
         for (int col = 0; col < columns; col++)
         {
             int k = firstSolid[col];
@@ -402,13 +414,83 @@ public sealed class HorizonSystem : IDisposable
                     }
                 }
             }
-            float h = centre + v * 0.5f;
-            heights[col] = h;
-            minH = math.min(minH, h);
-            maxH = math.max(maxH, math.max(h, waterLevel + 1f));
+            heights[col] = centre + v * 0.5f;
         }
 
-        // Block arrays
+        var palette = new byte[columns];
+        for (int col = 0; col < columns; col++)
+            palette[col] = hints[col].primaryBiome;
+        return BuildBlockArrays(v, size, heights, palette);
+    }
+
+    // Region generator: the surface height is known per column; only columns with 3D shapes are
+    // searched, voxel by voxel from the top of their band.
+    List<(int layer, byte[] blocks)> BuildRegionLayers(int ring, int2 tile, ColumnSample[] cols)
+    {
+        float v = VoxelSize(ring);
+        float size = TileSize(ring);
+        float ox = tile.x * size, oz = tile.y * size;
+        int columns = side * side;
+
+        var heights = new float[columns];
+        var palette = new byte[columns];
+        var wx = new float[columns];
+        var wz = new float[columns];
+        var top = new float[columns];   // centre of the highest voxel searched
+        int steps = 1;
+        for (int col = 0; col < columns; col++)
+        {
+            var c = cols[col];
+            heights[col] = c.height;
+            palette[col] = c.palette;
+            wx[col] = ox + (col % side + 0.5f) * v;
+            wz[col] = oz + (col / side + 0.5f) * v;
+            if (!c.HasDetail)
+                continue;
+            top[col] = (math.floor(c.bandMax / v) + 0.5f) * v;
+            steps = math.max(steps, (int)math.ceil((top[col] - c.bandMin) / v) + 1);
+        }
+
+        var density = cfg.hybridDensity.Sample(cols, wx, wz, steps, (col, k) =>
+        {
+            if (!cols[col].HasDetail)
+                return float.NaN;
+            float y = top[col] - k * v;
+            return y >= cols[col].bandMin - v ? y : float.NaN;
+        });
+
+        for (int col = 0; col < columns; col++)
+        {
+            var c = cols[col];
+            if (!c.HasDetail)
+                continue;
+            for (int k = 0; k < steps; k++)
+            {
+                float y = top[col] - k * v;
+                if (y < c.bandMin - v)
+                    break;
+                if (density[col * steps + k] <= 0f)
+                {
+                    heights[col] = y + v * 0.5f;
+                    break;
+                }
+            }
+        }
+        return BuildBlockArrays(v, size, heights, palette);
+    }
+
+    // One block array per vertical layer (res voxels tall) that holds terrain. Columns are solid
+    // from their surface height down to a little below the tile's lowest surface; deeper voxels
+    // are left as air since they are never seen.
+    List<(int layer, byte[] blocks)> BuildBlockArrays(float v, float size, float[] heights, byte[] palette)
+    {
+        float minH = float.MaxValue, maxH = float.MinValue;
+        for (int col = 0; col < heights.Length; col++)
+        {
+            minH = math.min(minH, heights[col]);
+            maxH = math.max(maxH, math.max(heights[col], waterLevel + 1f));
+        }
+
         var layersOut = new List<(int, byte[])>();
         float fillBottom = minH - 2f * v;
         int l0 = (int)math.floor(fillBottom / size);
@@ -425,8 +507,7 @@ public sealed class HorizonSystem : IDisposable
             {
                 int col = x + z * side;
                 float h = heights[col];
-                var hint = hints[col];
-                var biome = hint.primaryBiome < biomes.Length ? biomes[hint.primaryBiome] : default;
+                var biome = palette[col] < biomes.Length ? biomes[palette[col]] : default;
                 bool underwater = h <= waterLevel + 1f;
 
                 for (int y = 0; y < side; y++)

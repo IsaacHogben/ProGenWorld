@@ -593,7 +593,10 @@ public class BiomeDataManager : MonoBehaviour
         }
     }
 
-    private void OnDestroy()
+    private void OnDestroy() => Dispose();
+
+    /// <summary>Frees the native data (OnDestroy does this; edit mode tools call it themselves).</summary>
+    public void Dispose()
     {
         if (isInitialized)
         {
@@ -609,6 +612,7 @@ public class BiomeDataManager : MonoBehaviour
             if (biomeRarityWeights.IsCreated) biomeRarityWeights.Dispose();
             if (biomePriority.IsCreated) biomePriority.Dispose();
             if (lsystemTreeData.IsCreated) lsystemTreeData.Dispose();
+            isInitialized = false;
         }
     }
 }

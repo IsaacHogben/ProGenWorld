@@ -96,6 +96,16 @@ public class VoxelRenderSettings : MonoBehaviour
     [Tooltip("Past Grass Distance, grass tops are darkened where their patch would grow blades, so patches still show far away and the blade cutoff blends in. 0 = off.")]
     [Range(0f, 1f)] public float grassFarShade = 0.25f;
 
+    [Header("Pixel Art Distance")]
+    [Tooltip("Voxels render in bands by distance, each band as square pixels of its own size with one ray per pixel (far fewer rays) and its own anti-aliasing. Voxels nearer than the first band, and all objects, stay at full resolution. Play mode only. The main camera's TAA / STP still run over the result and soften it: Anti Aliasing None or FXAA and Render Scale 1 keep the bands as set.")]
+    public bool pixelArtDistance = true;
+    [Tooltip("Pixel art bands (up to 4): each from its distance on until the next band's, with its own pixel size and anti-aliasing. A band at distance 0 pixelates the voxels right around the player (objects' shadows on those voxels are lost).")]
+    public VoxelFarLayer.BandSettings[] pixelBands =
+    {
+        new() { distance = 48f, pixelSize = 2, antiAliasing = VoxelFarLayer.AntiAliasing.None, filter = VoxelFarLayer.Filter.Sharp, snap = true },
+        new() { distance = 112f, pixelSize = 4, antiAliasing = VoxelFarLayer.AntiAliasing.None, filter = VoxelFarLayer.Filter.Sharp, snap = true },
+    };
+
     [Header("Wind (grass and leaves)")]
     [Tooltip("How hard the wind moves grass and leaves at a wind of length 1. The wind itself is Wind Direction under Water: it blows along that vector and its length scales this. 0 = still.")]
     [Range(0f, 1f)] public float windStrength = 0.6f;
@@ -227,6 +237,8 @@ public class VoxelRenderSettings : MonoBehaviour
     void OnEnable() => Apply();
     void OnDisable()
     {
+        farLayer?.Dispose();
+        farLayer = null;
         RestorePipeline();
         grassBlades?.Release();
         grassBlades = null;
@@ -237,6 +249,24 @@ public class VoxelRenderSettings : MonoBehaviour
     {
         // Cheap; keeps globals correct after domain reloads and when values are animated.
         Apply();
+        ApplyFarLayer();
+    }
+
+    VoxelFarLayer farLayer;
+
+    // Not from OnValidate: it creates a camera.
+    void ApplyFarLayer()
+    {
+        var main = Application.isPlaying && pixelArtDistance ? (targetCamera != null ? targetCamera : Camera.main) : null;
+        if (farLayer != null && farLayer.Main != main)
+        {
+            farLayer.Dispose();
+            farLayer = null;
+        }
+        if (main == null)
+            return;
+        farLayer ??= new VoxelFarLayer(main);
+        farLayer.Configure(pixelBands);
     }
 
     public void Apply()

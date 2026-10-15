@@ -272,7 +272,6 @@ bool VoxelReliefRefine(VoxelChunk c, float3 bmin, float3 bmax, float3 ro, float3
                        inout VoxelHit hit, inout float3 hitWS, inout float3 normalWS)
 {
     float stopMasked = VoxelReliefMaskedStop(vs);
-    float stopGrass = VoxelGrassStop(vs);
 
     [loop]
     for (int attempt = 0; attempt < VOXEL_RELIEF_ATTEMPTS; attempt++)
@@ -313,7 +312,9 @@ bool VoxelReliefRefine(VoxelChunk c, float3 bmin, float3 bmax, float3 ro, float3
         // Slipped through a carved edge or a leaf hole into open space: find the next surface
         // behind it. (Starts a hair past the boundary so rounding cannot put it back in the voxel.)
         VoxelHit next;
-        if (!VoxelMarchOpaque(c, 0u, bmin, bmax, o, rd, hit.t + r.t / vs + 1e-3, next, false, stopMasked, stopGrass))
+        // No grass here (rarely matters behind a carved edge): keeps the grass code out of this
+        // inlined copy of the march, which costs a lot of shader compile time.
+        if (!VoxelMarchOpaque(c, 0u, bmin, bmax, o, rd, hit.t + r.t / vs + 1e-3, next, false, stopMasked))
             return false;
         hit = next;
         hitWS = ro + rd * (hit.t * vs);

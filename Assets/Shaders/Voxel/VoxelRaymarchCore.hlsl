@@ -454,7 +454,8 @@ bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
         }
 
         // Air above grass where the ray dips below the blade tips: part of the grass stretch.
-        if (id == VOXEL_ID_GRASS && cur.t < stopAtGrassBefore)
+        // (stopAtGrassBefore > 0 first: call sites passing a constant 0 compile without the grass code.)
+        if (stopAtGrassBefore > 0.0 && id == VOXEL_ID_GRASS && cur.t < stopAtGrassBefore)
         {
             float3 tExit3 = ((float3)cur.p + (float3)(stepDir > 0) - o) * invD;
             float tExit = min(tExit3.x, min(tExit3.y, tExit3.z));
@@ -544,7 +545,7 @@ bool VoxelMarchOpaque(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
 {
     float2 grassSpan = float2(-1.0, -1.0);
     bool found = VoxelMarchVoxels(c, level, bmin, bmax, o, d, tMin, hit, skipStartSolid, stopAtMaskedBefore, stopAtGrassBefore, grassSpan);
-    if (grassSpan.x >= 0.0)
+    if (stopAtGrassBefore > 0.0 && grassSpan.x >= 0.0)
     {
         float tTo = found ? min(grassSpan.y, hit.t) : grassSpan.y;
         if (VoxelGrassSegment(c, bmin, bmax, o, d, grassSpan.x, tTo, hit))
@@ -1072,6 +1073,14 @@ VoxelVaryings VoxelVert(VoxelAttributes input)
     return o;
 }
 
+// Part of each camera ray this camera draws (world units from the camera): x start, y end
+// (0 = no end). Distance based pixel art (VoxelFarLayer.cs) splits the rays between a full
+// resolution near camera and a low resolution far camera.
+float4 _VoxelRayRange;
+
+float VoxelRayStart(float tMinWS) { return max(tMinWS, _VoxelRayRange.x); }
+float VoxelRayEnd()               { return _VoxelRayRange.y > 0.0 ? _VoxelRayRange.y : 1e30; }
+
 // Marches a camera ray through the draw cell of this fragment. Returns false when nothing was hit.
 bool VoxelTraceCamera(VoxelVaryings input, out VoxelHit hit, out float3 hitWS, out float3 normalWS, out float3 rayDirWS)
 {
@@ -1088,7 +1097,7 @@ bool VoxelTraceCamera(VoxelVaryings input, out VoxelHit hit, out float3 hitWS, o
     // above grass so it can grow the blades.
     float stopMasked = input.level == 0u ? VoxelReliefMaskedStop(vs) : 0.0;
     float stopGrass = input.level == 0u ? VoxelGrassStop(vs) : 0.0;
-    bool found = VoxelMarchOpaque(c, input.level, bmin, bmax, o, rayDirWS, tMinWS / vs, hit, false, stopMasked, stopGrass);
+    bool found = VoxelMarchOpaque(c, input.level, bmin, bmax, o, rayDirWS, VoxelRayStart(tMinWS) / vs, hit, false, stopMasked, stopGrass);
 
     hitWS = ro + rayDirWS * (hit.t * vs);
     normalWS = VoxelFaceNormal(hit.axis, rayDirWS);
@@ -1097,7 +1106,7 @@ bool VoxelTraceCamera(VoxelVaryings input, out VoxelHit hit, out float3 hitWS, o
     // so their depths agree.
     if (found && input.level == 0u)
         found = VoxelReliefRefine(c, bmin, bmax, ro, o, rayDirWS, vs, hit, hitWS, normalWS);
-    return found;
+    return found && hit.t * vs <= VoxelRayEnd();
 }
 
 #endif

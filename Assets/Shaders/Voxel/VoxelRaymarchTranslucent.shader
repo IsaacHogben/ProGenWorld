@@ -11,6 +11,9 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
         // Water look settings live on the VoxelRenderSettings component.
         [HideInInspector][Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 2
         [HideInInspector][Enum(UnityEngine.Rendering.CompareFunction)] _ZTest ("ZTest", Float) = 4
+        // 1 on pixel art band cameras (VoxelFarLayer.cs): water marks its pixels in the depth so the
+        // composite knows the band has something there, even with its bottom in a farther band.
+        [HideInInspector] _VoxelZWrite ("ZWrite", Float) = 0
     }
 
     SubShader
@@ -23,7 +26,7 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
             Tags { "LightMode" = "UniversalForward" }
 
             Cull [_Cull]
-            ZWrite Off
+            ZWrite [_VoxelZWrite]
             ZTest [_ZTest]
             Blend One OneMinusSrcAlpha
 
@@ -415,7 +418,8 @@ Shader "ProGenWorld/VoxelRaymarchTranslucent"
                 float tMaxWS = 1e20;
                 if (unity_OrthoParams.w < 0.5)
                     tMaxWS = SceneEyeDepth(GetNormalizedScreenSpaceUV(input.positionCS)) / max(dot(rd, -UNITY_MATRIX_V[2].xyz), 1e-4);
-                float4 result = MarchTranslucent(c, input.level, bmin, bmax, o, rd, tMinWS / vs, tMaxWS / vs, ro, rd, rayDiff);
+                tMaxWS = min(tMaxWS, VoxelRayEnd());   // this camera's part of the ray (VoxelFarLayer.cs)
+                float4 result = MarchTranslucent(c, input.level, bmin, bmax, o, rd, VoxelRayStart(tMinWS) / vs, tMaxWS / vs, ro, rd, rayDiff);
                 if (result.a <= 0.0)
                     discard;
 

@@ -159,6 +159,7 @@ public sealed class VoxelWorldRenderer : IDisposable
 
     // Materials
     readonly Material opaqueOutside, opaqueInside, translucentOutside, translucentInside;
+    readonly Material translucentOutsideBand, translucentInsideBand;   // write depth (VoxelFarLayer band cameras)
 
     // Per camera draw lists
     readonly Dictionary<Camera, CameraDraws> cameraDraws = new();
@@ -281,6 +282,10 @@ public sealed class VoxelWorldRenderer : IDisposable
         translucentInside.SetFloat(Ids.Cull, (float)CullMode.Front);
         translucentInside.SetFloat(Ids.ZTest, (float)CompareFunction.Always);
         translucentInside.renderQueue = translucentOutside.renderQueue + 1;
+        translucentOutsideBand = new Material(translucentOutside) { name = "VoxelTranslucent (outside, band)" };
+        translucentInsideBand = new Material(translucentInside) { name = "VoxelTranslucent (inside, band)" };
+        translucentOutsideBand.SetFloat("_VoxelZWrite", 1f);
+        translucentInsideBand.SetFloat("_VoxelZWrite", 1f);
 
         SetBlockTextures(s.blockTextures, s.blockHeights, s.alphaMasks);
 
@@ -823,7 +828,7 @@ public sealed class VoxelWorldRenderer : IDisposable
 
     public void SetBlockTextures(Texture textures, Texture heights, Texture alphaMasks)
     {
-        foreach (var m in new[] { opaqueOutside, opaqueInside, translucentOutside, translucentInside })
+        foreach (var m in new[] { opaqueOutside, opaqueInside, translucentOutside, translucentInside, translucentOutsideBand, translucentInsideBand })
         {
             if (textures != null)
                 m.SetTexture(Ids.Textures, textures);
@@ -998,6 +1003,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         public int slotCount;
         public int cellsPerChunk;
         public float3 cameraPos;
+        public float cullNearest, cullFarthest;   // radial distance range a cell must overlap (VoxelFarLayer)
         public float insideMargin;
         public bool skipBuried;
         public float2 horizonCenter;
@@ -1046,6 +1052,8 @@ public sealed class VoxelWorldRenderer : IDisposable
             bool opaque = (c.flags & VoxelGpuFormat.FlagHasOpaque) != 0;
             bool translucent = (c.flags & VoxelGpuFormat.FlagHasTranslucent) != 0;
             float dist = math.distance(cameraPos, math.clamp(cameraPos, c.min, c.max));
+            if (cullFarthest < 0f || dist > cullFarthest || math.length(math.max(math.abs(cameraPos - c.min), math.abs(cameraPos - c.max))) < cullNearest)
+                return;
 
             bool inside = math.all(cameraPos >= c.min - insideMargin) && math.all(cameraPos <= c.max + insideMargin);
             if (!inside && !InFrustum(c.min, c.max))
@@ -1104,8 +1112,11 @@ public sealed class VoxelWorldRenderer : IDisposable
         for (int i = 0; i < 6; i++)
             planes[i] = new float4(frustumPlanes[i].normal, frustumPlanes[i].distance);
 
+        VoxelFarLayer.CullRange(cam, out float cullNearest, out float cullFarthest);
         var job = new CullJob
         {
+            cullNearest = cullNearest,
+            cullFarthest = cullFarthest,
             cells = cellCull,
             chunks = chunkCull,
             planes = planes,
@@ -1128,6 +1139,9 @@ public sealed class VoxelWorldRenderer : IDisposable
 
         if (!cameraDraws.TryGetValue(cam, out var draws))
         {
+            // Release the buffers of destroyed cameras (e.g. VoxelFarLayer's, recreated on toggle).
+            foreach (var dead in new List<Camera>(cameraDraws.Keys))
+                if (dead == null) { cameraDraws[dead].Dispose(); cameraDraws.Remove(dead); }
             draws = new CameraDraws();
             cameraDraws[cam] = draws;
         }
@@ -1142,8 +1156,9 @@ public sealed class VoxelWorldRenderer : IDisposable
 
         Draw(cam, bounds, opaqueOutside, draws.opaqueOut, ShadowCastingMode.Off);
         Draw(cam, bounds, opaqueInside, draws.opaqueIn, ShadowCastingMode.Off);
-        Draw(cam, bounds, translucentOutside, draws.translucentOut, ShadowCastingMode.Off);
-        Draw(cam, bounds, translucentInside, draws.translucentIn, ShadowCastingMode.Off);
+        bool band = VoxelFarLayer.IsBandCamera(cam);
+        Draw(cam, bounds, band ? translucentOutsideBand : translucentOutside, draws.translucentOut, ShadowCastingMode.Off);
+        Draw(cam, bounds, band ? translucentInsideBand : translucentInside, draws.translucentIn, ShadowCastingMode.Off);
 
         if (screenPass != null)
         {
@@ -1163,7 +1178,7 @@ public sealed class VoxelWorldRenderer : IDisposable
         var rp = new RenderParams(material)
         {
             camera = cam,
-            layer = settings.layer,
+            layer = VoxelFarLayer.DrawLayer(cam, settings.layer),
             worldBounds = bounds,
             matProps = list.props,
             shadowCastingMode = shadows,
@@ -1214,6 +1229,8 @@ public sealed class VoxelWorldRenderer : IDisposable
         UnityEngine.Object.Destroy(opaqueInside);
         UnityEngine.Object.Destroy(translucentOutside);
         UnityEngine.Object.Destroy(translucentInside);
+        UnityEngine.Object.Destroy(translucentOutsideBand);
+        UnityEngine.Object.Destroy(translucentInsideBand);
         if (screenMaterial != null) UnityEngine.Object.Destroy(screenMaterial);
     }
 }

@@ -49,6 +49,7 @@ Shader "Custom/AtmosphericFogURP"
             // Colors
             float4 _FogColor;
             float4 _SkyColor;
+            float _FogKeepBackground;   // 1 on the near camera of distance based pixel art (VoxelFarLayer.cs)
             float4 _SunColor;
             float3 _SunDirection;
 
@@ -120,6 +121,10 @@ Shader "Custom/AtmosphericFogURP"
                 float3 worldPos;
                 float3 cameraPos = _WorldSpaceCameraPos;
                 
+                // Distance based pixel art: the background is the far camera's image, already fogged.
+                if (isSkybox > 0.5 && _FogKeepBackground > 0.5)
+                    return half4(sceneColor.rgb, 1.0);
+
                 if (isSkybox > 0.5)
                 {
                     // For skybox, calculate view direction from UV

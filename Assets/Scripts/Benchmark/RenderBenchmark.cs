@@ -172,6 +172,24 @@ public class RenderBenchmark : MonoBehaviour
         configs["flatPatches"] = () => settings.grassPatchHeight = 0f;
         configs["grass64"] = () => { settings.grassDistance = 64f; settings.grassShadows = false; };
         configs["noFarShade"] = () => { settings.grassFarShade = 0f; settings.grassShadows = false; settings.grassDistance = 64f; };
+        configs["noPixelFar"] = () => settings.pixelArtDistance = false;
+        configs["oneBand"] = () => settings.pixelBands = new[] { new VoxelFarLayer.BandSettings { distance = 48f, pixelSize = 3, filter = VoxelFarLayer.Filter.Sharp, snap = true } };
+        configs["noSnap"] = () =>
+        {
+            var bands = (VoxelFarLayer.BandSettings[])settings.pixelBands.Clone();
+            for (int i = 0; i < bands.Length; i++) bands[i].snap = false;
+            settings.pixelBands = bands;
+        };
+        configs["nearBand"] = () => settings.pixelBands = new[]
+        {
+            new VoxelFarLayer.BandSettings { distance = 0f, pixelSize = 2, antiAliasing = VoxelFarLayer.AntiAliasing.Temporal, filter = VoxelFarLayer.Filter.Sharp, snap = false },
+            new VoxelFarLayer.BandSettings { distance = 48f, pixelSize = 4, antiAliasing = VoxelFarLayer.AntiAliasing.None, filter = VoxelFarLayer.Filter.Nearest, snap = true },
+        };
+        configs["bandTaa"] = () => settings.pixelBands = new[]
+        {
+            new VoxelFarLayer.BandSettings { distance = 48f, pixelSize = 4, antiAliasing = VoxelFarLayer.AntiAliasing.Temporal, filter = VoxelFarLayer.Filter.Sharp, snap = true },
+            new VoxelFarLayer.BandSettings { distance = 112f, pixelSize = 2, antiAliasing = VoxelFarLayer.AntiAliasing.Fxaa, filter = VoxelFarLayer.Filter.Nearest, supersample = true, snap = false },
+        };
         configs["noWind"] = () => settings.windStrength = 0f;
         configs["noLeafFlutter"] = () => settings.leafFlutter = 0f;
         configs["noGrassSway"] = () => settings.grassSway = 0f;

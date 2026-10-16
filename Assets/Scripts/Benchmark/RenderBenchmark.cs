@@ -140,6 +140,29 @@ public class RenderBenchmark : MonoBehaviour
                         biome.regionShape.detailTerrain = bdm.terrainTypes[detail];
             Log($"region detail terrain {(detail >= 0 && detail < bdm.terrainTypes.Length ? bdm.terrainTypes[detail].terrainTypeName : "none")}");
         }
+        // -benchLayerDetail <terrain index>: every biome gets a patchy sub-biome layer with that
+        // terrain type's tree as its own 3D shape, for this run only
+        if (int.TryParse(Arg("-benchLayerDetail"), out int layerDetail) && chunkManager.biomeDataManager != null)
+        {
+            var bdm = chunkManager.biomeDataManager;
+            if (layerDetail >= 0 && layerDetail < bdm.terrainTypes.Length)
+                foreach (var biome in bdm.biomes)
+                    if (biome != null && biome.regionShape != null)
+                    {
+                        var layers = new System.Collections.Generic.List<SubBiomeLayer>(biome.regionShape.subBiomes ?? new SubBiomeLayer[0]);
+                        layers.Add(new SubBiomeLayer
+                        {
+                            name = "Bench shapes",
+                            kind = SubBiomeKind.Patches,
+                            scale = 400f,
+                            coverage = 0.5f,
+                            softness = 0.4f,
+                            detailTerrain = bdm.terrainTypes[layerDetail]
+                        });
+                        biome.regionShape.subBiomes = layers.ToArray();
+                    }
+            Log($"sub-biome layer detail terrain {(layerDetail >= 0 && layerDetail < bdm.terrainTypes.Length ? bdm.terrainTypes[layerDetail].terrainTypeName : "none")}");
+        }
         Log($"region gen {chunkManager.UseRegionGen}");
 
         if (Arg("-benchLogStreams") != null)

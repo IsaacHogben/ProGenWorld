@@ -98,7 +98,7 @@ public class SubBiomeLayer
     [Tooltip("Multiplier on the biome's hill height: 0 = flat plains, 2 = twice as hilly.")]
     [Range(0f, 4f)] public float hillMultiplier = 1f;
 
-    [Tooltip("Multiplier on the biome's 3D shape strength.")]
+    [Tooltip("Multiplier on the 3D shape strength (the layer's own shape, or the biome's).")]
     [Range(0f, 2f)] public float detailMultiplier = 1f;
 
     [Tooltip("Multiplier on decoration spawn chances: 0 = clearings, 3 = thickets.")]
@@ -106,6 +106,70 @@ public class SubBiomeLayer
 
     [Tooltip("Block for gentle surfaces where this layer dominates (Air = keep the biome's).")]
     public BlockType surfaceBlock = BlockType.Air;
+
+    [Header("3D Shape (optional)")]
+    [Tooltip("This layer's own FastNoise tree for 3D shapes; where the layer is, it takes over from the biome's shape by the layer's mask. None = the biome's shape. Must be in BiomeDataManager's terrain types.")]
+    public TerrainTypeDefinitionSO detailTerrain;
+
+    [Tooltip("How much this layer's 3D shape replaces the height surface where the layer is at full mask.")]
+    [Range(0f, 1f)] public float detailStrength = 1f;
+
+    [Tooltip("Measure the tree at start: where its ground sits and how far its shapes reach. Off = use the three values below.")]
+    public bool autoCalibrate = true;
+
+    [Tooltip("Height in the tree's own coordinates where its ground sits. (Auto Calibrate measures it.)")]
+    public float detailSurfaceOffset = 0f;
+
+    [Tooltip("Highest the 3D shape reaches above the surface, in blocks. (Auto Calibrate measures it.)")]
+    [Min(0f)] public float detailRangeUp = 64f;
+
+    [Tooltip("Deepest the 3D shape reaches below the surface, in blocks. (Auto Calibrate measures it.)")]
+    [Min(0f)] public float detailRangeDown = 32f;
+
+    [Tooltip("Multiplier on the tree's output so its density per block matches the world's density scale.")]
+    [Min(0.001f)] public float detailDensityScale = 1f;
+}
+
+/// <summary>
+/// 3D shape trees are numbered as detail sources: a biome's own tree is its biome ID, a sub-biome
+/// layer's own tree comes after all biome IDs, in the order Layers lists the layers.
+/// </summary>
+public static class RegionDetailSources
+{
+    public const byte None = 255;
+
+    /// <summary>Every sub-biome layer with its index (null biomes and layers skipped).</summary>
+    public static System.Collections.Generic.IEnumerable<(BiomeDefinitionSO biome, SubBiomeLayer layer, int index)> Layers(BiomeDataManager biomeDataManager)
+    {
+        int n = 0;
+        foreach (var biome in biomeDataManager.biomes)
+        {
+            var subs = biome != null ? biome.regionShape?.subBiomes : null;
+            if (subs == null)
+                continue;
+            foreach (var layer in subs)
+                if (layer != null)
+                    yield return (biome, layer, n++);
+        }
+    }
+
+    /// <summary>The source of a layer's own tree, or None when it has none (or too many sources exist).</summary>
+    public static byte LayerSource(int biomeCount, SubBiomeLayer layer, int index)
+    {
+        if (layer.detailTerrain == null || layer.detailStrength <= 0f)
+            return None;
+        int id = biomeCount + index;
+        return id < None ? (byte)id : None;
+    }
+}
+
+/// <summary>Job safe settings of one detail source (a biome's or a sub-biome layer's 3D shape tree).</summary>
+public struct DetailSourceData
+{
+    public byte hasDetail;
+    public float strength;
+    public float rangeUp;
+    public float rangeDown;
 }
 
 /// <summary>Job safe copy of a SubBiomeLayer.</summary>
@@ -123,6 +187,7 @@ public struct SubBiomeData
     public float detailMultiplier;
     public float decorationMultiplier;
     public byte surfaceBlock;
+    public byte detailSource;      // the layer's own 3D shape (RegionDetailSources.None = the biome's)
 }
 
 /// <summary>Job safe copy of a biome's RegionShape, indexed by biome ID.</summary>
@@ -158,7 +223,7 @@ public struct ColumnSample
     public float bandMin;    // world y range where 3D shapes can differ from the height surface
     public float bandMax;
     public byte palette;     // biome ID for blocks and decoration
-    public byte detail0, detail1, detail2;   // biome IDs with 3D shapes here (255 = none)
+    public byte detail0, detail1, detail2;   // detail sources (RegionDetailSources) with 3D shapes here (255 = none)
     public float detailW0, detailW1, detailW2;   // their weight * strength
     public float waterY;     // water fills air at or below this world y (rivers, lakes, the water level)
     public float decoScale;  // decoration chance multiplier from sub-biomes

@@ -19,11 +19,13 @@ public sealed class RegionSystem : IDisposable
     RegionParams rp;
     NativeArray<BiomeShapeData> shapes;
     NativeArray<SubBiomeData> subBiomes;
+    NativeArray<DetailSourceData> detailSources;
     readonly RiverNetwork rivers;
 
     public RegionParams Params => rp;
     public NativeArray<BiomeShapeData> Shapes => shapes;
     public NativeArray<SubBiomeData> SubBiomes => subBiomes;
+    public NativeArray<DetailSourceData> DetailSources => detailSources;
     public RiverNetwork Rivers => rivers;
 
     // Column jobs scheduled per frame (chunks and column bands together)
@@ -62,6 +64,24 @@ public sealed class RegionSystem : IDisposable
 
         var defs = biomeDataManager.GetBiomeDefinitions();
         shapes = new NativeArray<BiomeShapeData>(defs.Length, Allocator.Persistent);
+        detailSources = new NativeArray<DetailSourceData>(256, Allocator.Persistent);
+
+        // A 3D shape tree's strength and reach (measured when Auto Calibrate is on)
+        DetailSourceData Source(TerrainTypeDefinitionSO terrain, float strength, bool autoCalibrate, float up, float down)
+        {
+            if (terrain == null || strength <= 0f)
+                return default;
+            if (autoCalibrate)
+            {
+                var cal = DetailCalibration.Get(terrain, frequency, seed);
+                if (cal.valid)
+                {
+                    up = cal.up;
+                    down = cal.down;
+                }
+            }
+            return new DetailSourceData { hasDetail = 1, strength = strength, rangeUp = up, rangeDown = down };
+        }
 
         var layers = new List<SubBiomeData>();
         int fallback = -1;
@@ -98,21 +118,19 @@ public sealed class RegionSystem : IDisposable
                         hillMultiplier = layer.hillMultiplier,
                         detailMultiplier = layer.detailMultiplier,
                         decorationMultiplier = layer.decorationMultiplier,
-                        surfaceBlock = (byte)layer.surfaceBlock
+                        surfaceBlock = (byte)layer.surfaceBlock,
+                        detailSource = RegionDetailSources.LayerSource(defs.Length, layer, n)
                     });
+                    byte source = RegionDetailSources.LayerSource(defs.Length, layer, n);
+                    if (source != RegionDetailSources.None)
+                        detailSources[source] = Source(layer.detailTerrain, layer.detailStrength, layer.autoCalibrate,
+                            layer.detailRangeUp, layer.detailRangeDown);
+                    else if (layer.detailTerrain != null && defs.Length + n >= RegionDetailSources.None)
+                        Debug.LogWarning($"[RegionGen] Too many sub-biome layers: the 3D shape of '{layer.name}' in {biome.biomeType} is ignored.");
                 }
 
-            bool hasDetail = s.detailTerrain != null && s.detailStrength > 0f;
-            float rangeUp = s.detailRangeUp, rangeDown = s.detailRangeDown;
-            if (hasDetail && s.autoCalibrate)
-            {
-                var cal = DetailCalibration.Get(s.detailTerrain, frequency, seed);
-                if (cal.valid)
-                {
-                    rangeUp = cal.up;
-                    rangeDown = cal.down;
-                }
-            }
+            var detail = Source(s.detailTerrain, s.detailStrength, s.autoCalibrate, s.detailRangeUp, s.detailRangeDown);
+            detailSources[id] = detail;
 
             shapes[id] = new BiomeShapeData
             {
@@ -124,10 +142,10 @@ public sealed class RegionSystem : IDisposable
                 terraceExponent = 1f + s.terraceSharpness * 15f,
                 hillNoise = FbmSimplexNoise2D.Create(seed + 7001, hillFrequency, Mathf.Clamp(s.hillOctaves, 1, 8)),
                 ridgeNoise = FbmSimplexNoise2D.Create(seed + 7002, hillFrequency, Mathf.Clamp(s.hillOctaves, 1, 8)),
-                hasDetail = (byte)(hasDetail ? 1 : 0),
+                hasDetail = detail.hasDetail,
                 detailStrength = s.detailStrength,
-                detailRangeUp = rangeUp,
-                detailRangeDown = rangeDown,
+                detailRangeUp = detail.rangeUp,
+                detailRangeDown = detail.rangeDown,
                 rainfall = s.rainfall,
                 sedimentBlock = (byte)biome.sedimentBlock,
                 subStart = subStart,
@@ -243,6 +261,7 @@ public sealed class RegionSystem : IDisposable
             side = side,
             rp = rp,
             shapes = shapes,
+            sources = detailSources,
             raw = raw,
             columns = columns,
             hints = hints
@@ -392,5 +411,7 @@ public sealed class RegionSystem : IDisposable
             shapes.Dispose();
         if (subBiomes.IsCreated)
             subBiomes.Dispose();
+        if (detailSources.IsCreated)
+            detailSources.Dispose();
     }
 }

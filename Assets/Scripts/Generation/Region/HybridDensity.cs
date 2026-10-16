@@ -16,7 +16,7 @@ public sealed class HybridDensity
     readonly int seed;
     readonly float densityScale;
 
-    // Per biome ID
+    // Per detail source (RegionDetailSources: biome IDs, then sub-biome layers)
     readonly FastNoise[] noiseByBiome = new FastNoise[256];
     readonly float[] frequencyByBiome = new float[256];
     readonly float[] surfaceOffsetByBiome = new float[256];
@@ -33,13 +33,8 @@ public sealed class HybridDensity
         densityScale = settings.densityScale;
 
         var byTerrain = new Dictionary<TerrainTypeDefinitionSO, FastNoise>();
-        foreach (var biome in biomeDataManager.biomes)
+        void Register(int id, string owner, TerrainTypeDefinitionSO terrain, bool autoCalibrate, float surfaceOffset, float densityScale)
         {
-            var shape = biome != null ? biome.regionShape : null;
-            var terrain = shape?.detailTerrain;
-            if (terrain == null || shape.detailStrength <= 0f)
-                continue;
-
             if (!byTerrain.TryGetValue(terrain, out var noise))
             {
                 try
@@ -51,21 +46,37 @@ public sealed class HybridDensity
                     Debug.LogError($"[RegionGen] 3D shape tree of '{terrain.terrainTypeName}' failed: {e.Message}");
                 }
                 if (noise == null)
-                    Debug.LogError($"[RegionGen] Biome {biome.biomeType}: 3D shape '{terrain.terrainTypeName}' has no usable noise tree; it is ignored.");
+                    Debug.LogError($"[RegionGen] {owner}: 3D shape '{terrain.terrainTypeName}' has no usable noise tree; it is ignored.");
                 byTerrain[terrain] = noise;
             }
 
-            int id = biome.BiomeID;
             noiseByBiome[id] = noise;
             frequencyByBiome[id] = frequency / 100f * terrain.frequencyMultiplier;
-            surfaceOffsetByBiome[id] = shape.detailSurfaceOffset;
-            if (shape.autoCalibrate)
+            surfaceOffsetByBiome[id] = surfaceOffset;
+            if (autoCalibrate)
             {
                 var cal = DetailCalibration.Get(terrain, frequency, seed);
                 if (cal.valid)
                     surfaceOffsetByBiome[id] = cal.ground;
             }
-            scaleByBiome[id] = shape.detailDensityScale;
+            scaleByBiome[id] = densityScale;
+        }
+
+        foreach (var biome in biomeDataManager.biomes)
+        {
+            var shape = biome != null ? biome.regionShape : null;
+            if (shape?.detailTerrain != null && shape.detailStrength > 0f)
+                Register(biome.BiomeID, $"Biome {biome.biomeType}", shape.detailTerrain, shape.autoCalibrate,
+                    shape.detailSurfaceOffset, shape.detailDensityScale);
+        }
+
+        int biomeCount = biomeDataManager.GetBiomeDefinitions().Length;
+        foreach (var (biome, layer, index) in RegionDetailSources.Layers(biomeDataManager))
+        {
+            byte source = RegionDetailSources.LayerSource(biomeCount, layer, index);
+            if (source != RegionDetailSources.None)
+                Register(source, $"Biome {biome.biomeType}, layer '{layer.name}'", layer.detailTerrain, layer.autoCalibrate,
+                    layer.detailSurfaceOffset, layer.detailDensityScale);
         }
     }
 

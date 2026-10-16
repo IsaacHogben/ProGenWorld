@@ -48,6 +48,11 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     [SerializeField] bool useRegionGen = false;
     [SerializeField] RegionGenSettingsSO regionGenSettings;
 
+    [Tooltip("Log to the console where and why each stream ends (stream decoration).")]
+    [SerializeField] bool logStreamEnds = false;
+
+    public bool LogStreamEnds { get => logStreamEnds; set => logStreamEnds = value; }
+
     /// <summary>Region generator on / off. Read once in Awake.</summary>
     public bool UseRegionGen { get => useRegionGen; set => useRegionGen = value; }
 
@@ -248,6 +253,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     private NoiseSystem noiseSystem;
     private BlockGenSystem blockGenSystem;
     private DecorationSystem decorationSystem;
+    private StreamSystem streamSystem;
     private WriteSystem writeSystem;
     private VoxelPackSystem packSystem;
     private VoxelWorldRenderer voxelRenderer;
@@ -343,7 +349,9 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         {
             UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: RegionSystem");
             regionSystem.Update();
-            columnScheduler.Tick(WorldToChunkCoord(currentPlayerPos).xz, viewDistance, 64, EnqueueFrontier);
+            columnScheduler.Tick(WorldToChunkCoord(currentPlayerPos).xz, viewDistance, 64, EnqueueFrontier,
+                c => !chunks.ContainsKey(c) && !generatingSet.Contains(c) && !frontierSet.Contains(c) &&
+                     !deferredFrontier.Contains(c) && IsChunkWithinRange(c, currentPlayerPos, viewDistance));
             UnityEngine.Profiling.Profiler.EndSample();
         }
 
@@ -398,6 +406,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
 
         UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: DecorationSystem.Update");
         decorationSystem.Update();
+        streamSystem.Update();
         UnityEngine.Profiling.Profiler.EndSample();
 
         UnityEngine.Profiling.Profiler.BeginSample("ChunkManager: FlushAllPendingWrites");
@@ -1023,7 +1032,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 Debug.LogError("[ChunkManager] Use Region Gen is on but no Region Gen Settings are assigned; using BiomeSystem terrain.");
             else
             {
-                regionSystem = new RegionSystem(regionGenSettings, biomeDataManager, seed, chunkSize);
+                regionSystem = new RegionSystem(regionGenSettings, biomeDataManager, seed, chunkSize, frequency);
                 regionSystem.OnChunkReady += HandleBiomeCompleted;
                 columnScheduler = new ColumnScheduler(regionSystem, chunkSize);
                 hybridDensity = new HybridDensity(biomeDataManager, regionGenSettings, seed, frequency);
@@ -1072,6 +1081,26 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         // When blocks are ready
         blockGenSystem.OnBlockGenCompleted += HandleBlockGenCompleted;
 
+        // Streams: run after each chunk's decoration and hand on to neighbouring chunks
+        streamSystem = new StreamSystem(new StreamSystem.Config
+        {
+            chunkSize = chunkSize,
+            seed = seed,
+            waterLevel = biomeDataManager.GetWaterLevel(),
+            biomeDataManager = biomeDataManager,
+            canRunNow = c => decoratedChunks.Contains(c) && !chunksStillDecorating.Contains(c) && blockStore.Has(c)
+                             && !packSystem.IsPackInProgress(c),
+            getBlocks = c => blockStore.TryGetFull(c, Time.time, out var b) ? b : default,
+            onStarted = c => chunksStillDecorating.Add(c),
+            logEnds = () => logStreamEnds,
+            onFinished = (c, writes) =>
+            {
+                chunksStillDecorating.Remove(c);
+                writeSystem.EnqueueExtraWrites(c, writes);
+                MarkChunkForRemesh(c);
+            }
+        });
+
         // DecorationSystem set-up
         decorationSystem = new DecorationSystem();
         decorationSystem.Initialize(new DecorationSystem.DecorationConfig
@@ -1081,7 +1110,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             seed = seed,
             GetBootstrapMode = () => bootstrapMode,
             GetCompleteBudgetMs = () => decorationBudgetMs,
-            biomeDataManager = biomeDataManager
+            biomeDataManager = biomeDataManager,
+            streams = streamSystem
         });
         decorationSystem.OnDecorationStarted += HandleDecorationStarted;
         decorationSystem.OnDecorationCompleted += HandleDecorationCompleted;
@@ -1551,6 +1581,10 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     }
     bool CanMeshNow(int3 coord)
     {
+        // A decoration or stream job is writing the blocks
+        if (chunksStillDecorating.Contains(coord))
+            return false;
+
         if (!lastMeshFrame.TryGetValue(coord, out int last))
             return true;
 
@@ -1701,6 +1735,10 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     }
     void ReleaseChunk(int3 coord)
     {
+        if (streamSystem.IsRunning(coord))
+            chunksStillDecorating.Remove(coord);
+        streamSystem.OnChunkUnloaded(coord);
+
         deferredFrontier.Add(coord); // If a chunk is removed it must then become a new frontier for terrain generation
         surfaceChunks.Remove(coord);
 
@@ -1872,6 +1910,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
 
         // Pending pack jobs read the block arrays disposed below
         packSystem?.Dispose();
+        streamSystem?.Dispose();
         horizonSystem?.Dispose();
         regionSystem?.Dispose();
         voxelRenderer?.Dispose();

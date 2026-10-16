@@ -39,17 +39,90 @@ public class RegionShape
     [Tooltip("How much the 3D shape replaces the height surface at the heart of the biome (it fades out towards the border).")]
     [Range(0f, 1f)] public float detailStrength = 1f;
 
-    [Tooltip("Height in the tree's own coordinates where its ground sits; it is placed on this biome's surface.")]
+    [Tooltip("Measure the tree at start: where its ground sits and how far its shapes reach. Off = use the three values below.")]
+    public bool autoCalibrate = true;
+
+    [Tooltip("Height in the tree's own coordinates where its ground sits; it is placed on this biome's surface. (Auto Calibrate measures it.)")]
     public float detailSurfaceOffset = 0f;
 
-    [Tooltip("Highest the 3D shape reaches above the surface, in blocks. Nothing is generated above this: too low cuts shapes off flat.")]
+    [Tooltip("Highest the 3D shape reaches above the surface, in blocks. Nothing is generated above this: too low cuts shapes off flat. (Auto Calibrate measures it.)")]
     [Min(0f)] public float detailRangeUp = 64f;
 
-    [Tooltip("Deepest the 3D shape reaches below the surface, in blocks (caves, undercuts).")]
+    [Tooltip("Deepest the 3D shape reaches below the surface, in blocks (caves, undercuts). (Auto Calibrate measures it.)")]
     [Min(0f)] public float detailRangeDown = 32f;
 
     [Tooltip("Multiplier on the tree's output so its density per block matches the world's density scale.")]
     [Min(0.001f)] public float detailDensityScale = 1f;
+
+    [Header("Water")]
+    [Tooltip("How much rain this biome feeds into rivers and lakes (1 = normal, 0 = none: deserts).")]
+    [Range(0f, 3f)] public float rainfall = 1f;
+
+    [Header("Sub-Biomes")]
+    [Tooltip("Layers that vary the biome inside its region: forest thickets, rocky patches, plains, raised hills. They overlap freely; each one's effects scale with its mask.")]
+    public SubBiomeLayer[] subBiomes = new SubBiomeLayer[0];
+}
+
+public enum SubBiomeKind : byte
+{
+    [Tooltip("Smooth noise: wandering bands and blobs that cover a share of the biome.")]
+    Continuous,
+    [Tooltip("Separate rounded patches, one per cell at most.")]
+    Patches
+}
+
+/// <summary>
+/// A variation inside a biome. Its mask (0..1) comes from noise (Continuous) or scattered
+/// rounded patches (Patches); everything it changes scales with that mask and with the biome's
+/// own weight, so layers fade out at biome borders and blend where they overlap.
+/// </summary>
+[Serializable]
+public class SubBiomeLayer
+{
+    public string name = "Layer";
+    public SubBiomeKind kind = SubBiomeKind.Continuous;
+
+    [Tooltip("Continuous: size of the noise features in blocks. Patches: spacing of patch cells in blocks (patches are up to about this wide).")]
+    [Min(8f)] public float scale = 800f;
+
+    [Tooltip("Share of the biome covered (Continuous), or share of cells holding a patch (Patches).")]
+    [Range(0f, 1f)] public float coverage = 0.3f;
+
+    [Tooltip("How soft the edges are: 0 = sharp, 1 = very gradual.")]
+    [Range(0.01f, 1f)] public float softness = 0.3f;
+
+    [Header("Effects (at full mask)")]
+    [Tooltip("Blocks added to the ground height (negative = basins).")]
+    public float heightOffset = 0f;
+
+    [Tooltip("Multiplier on the biome's hill height: 0 = flat plains, 2 = twice as hilly.")]
+    [Range(0f, 4f)] public float hillMultiplier = 1f;
+
+    [Tooltip("Multiplier on the biome's 3D shape strength.")]
+    [Range(0f, 2f)] public float detailMultiplier = 1f;
+
+    [Tooltip("Multiplier on decoration spawn chances: 0 = clearings, 3 = thickets.")]
+    [Range(0f, 5f)] public float decorationMultiplier = 1f;
+
+    [Tooltip("Block for gentle surfaces where this layer dominates (Air = keep the biome's).")]
+    public BlockType surfaceBlock = BlockType.Air;
+}
+
+/// <summary>Job safe copy of a SubBiomeLayer.</summary>
+public struct SubBiomeData
+{
+    public byte kind;
+    public uint seed;
+    public float invScale;
+    public float threshold;        // Continuous: noise value at the middle of the edge
+    public float coverage;         // Patches: chance a cell holds a patch
+    public float softness;
+    public FbmSimplexNoise2D noise;   // Continuous mask, or patch outline wobble
+    public float heightOffset;
+    public float hillMultiplier;
+    public float detailMultiplier;
+    public float decorationMultiplier;
+    public byte surfaceBlock;
 }
 
 /// <summary>Job safe copy of a biome's RegionShape, indexed by biome ID.</summary>
@@ -68,6 +141,10 @@ public struct BiomeShapeData
     public float detailStrength;
     public float detailRangeUp;
     public float detailRangeDown;
+
+    public float rainfall;
+    public byte sedimentBlock;
+    public int subStart, subCount;  // range in RegionSystem's SubBiomeData array
 }
 
 /// <summary>
@@ -83,6 +160,9 @@ public struct ColumnSample
     public byte palette;     // biome ID for blocks and decoration
     public byte detail0, detail1, detail2;   // biome IDs with 3D shapes here (255 = none)
     public float detailW0, detailW1, detailW2;   // their weight * strength
+    public float waterY;     // water fills air at or below this world y (rivers, lakes, the water level)
+    public float decoScale;  // decoration chance multiplier from sub-biomes
+    public byte surfaceOverride;   // gentle surface block (0 = biome palette)
 
     public const byte None = 255;
 

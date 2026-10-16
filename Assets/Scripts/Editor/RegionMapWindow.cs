@@ -19,7 +19,8 @@ public class RegionMapWindow : EditorWindow
     Vector2 center;
     float extent = 100000f;
     int resolution = 512;
-    bool showDetail = true;
+    public enum Overlay { None, Shapes3D, Decoration }
+    Overlay overlay = Overlay.Shapes3D;
 
     Texture2D map;
     string stats = "";
@@ -59,7 +60,7 @@ public class RegionMapWindow : EditorWindow
         center = EditorGUILayout.Vector2Field("Centre (x, z)", center);
         extent = Mathf.Max(64f, EditorGUILayout.FloatField("Width (blocks)", extent));
         resolution = Mathf.Clamp(EditorGUILayout.IntField("Pixels", resolution), 32, 2048);
-        showDetail = EditorGUILayout.Toggle("Show 3D Shape Weight", showDetail);
+        overlay = (Overlay)EditorGUILayout.EnumPopup("Overlay", overlay);
 
         using (new EditorGUILayout.HorizontalScope())
         {
@@ -102,7 +103,7 @@ public class RegionMapWindow : EditorWindow
     {
         if (map != null)
             DestroyImmediate(map);
-        map = Render(settings, biomeDataManager, seed, center, extent, resolution, showDetail, out stats);
+        map = Render(settings, biomeDataManager, seed, center, extent, resolution, overlay, out stats);
     }
 
     static RegionGenSettingsSO CreateSettingsAsset()
@@ -121,7 +122,7 @@ public class RegionMapWindow : EditorWindow
 
     /// <summary>Renders the map with a temporary copy of the BiomeDataManager (edit mode safe).</summary>
     public static Texture2D Render(RegionGenSettingsSO settings, BiomeDataManager source, int seed,
-        Vector2 center, float extent, int resolution, bool showDetail, out string stats)
+        Vector2 center, float extent, int resolution, Overlay overlay, out string stats)
     {
         var go = new GameObject("Region Map Biome Data") { hideFlags = HideFlags.HideAndDontSave };
         var data = go.AddComponent<BiomeDataManager>();
@@ -132,15 +133,18 @@ public class RegionMapWindow : EditorWindow
         try
         {
             data.Initialize();
-            regions = new RegionSystem(settings, data, seed, 64);
+            var cm = FindFirstObjectByType<ChunkManager>();
+            regions = new RegionSystem(settings, data, seed, 64, cm != null ? cm.frequency : 1f);
 
             float spacing = extent / resolution;
             float2 origin = new float2(center.x, center.y) - extent * 0.5f + spacing * 0.5f;
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            regions.ScheduleColumns(origin, spacing, resolution, columns, hints).Complete();
-            double ms = watch.Elapsed.TotalMilliseconds;
+            regions.CompleteArea(origin, spacing, resolution);
+            double riverMs = watch.Elapsed.TotalMilliseconds;
+            regions.TryScheduleColumns(origin, spacing, resolution, columns, hints, out var handle);
+            handle.Complete();
+            double ms = watch.Elapsed.TotalMilliseconds - riverMs;
 
-            int water = data.GetWaterLevel();
             var pixels = new Color32[resolution * resolution];
             float minH = float.MaxValue, maxH = float.MinValue;
             int detailCount = 0, waterCount = 0;
@@ -163,20 +167,54 @@ public class RegionMapWindow : EditorWindow
                 float shade = math.saturate(0.55f + 0.6f * math.dot(n, light));
 
                 Color col = BiomeColour(c.palette) * shade;
-                if (c.height <= water)
+                if (c.height < c.waterY)
                 {
-                    float depth = math.saturate((water - c.height) / 40f);
+                    float depth = math.saturate((c.waterY - c.height) / 40f);
                     col = Color.Lerp(col, new Color(0.1f, 0.25f, 0.55f), 0.55f + 0.35f * depth);
                     waterCount++;
                 }
                 if (c.HasDetail)
                 {
                     detailCount++;
-                    if (showDetail)
+                    if (overlay == Overlay.Shapes3D)
                         col = Color.Lerp(col, new Color(0.9f, 0.1f, 0.1f), 0.5f * math.min(1f, c.DetailWeight));
+                }
+                if (overlay == Overlay.Decoration)
+                {
+                    // Grey = normal, green = thicker, red = sparser
+                    float d = c.decoScale;
+                    var tint = d >= 1f ? Color.Lerp(Color.grey, Color.green, math.saturate((d - 1f) / 2f)) : Color.Lerp(new Color(0.8f, 0.1f, 0.1f), Color.grey, d);
+                    col = Color.Lerp(col, tint * shade, 0.75f);
                 }
                 col.a = 1f;
                 pixels[i] = col;
+            }
+
+            // Rivers are far narrower than a pixel at map scale: draw them as lines
+            int riverEdges = 0, lakes = 0;
+            float2 min = origin - spacing * 0.5f, max = min + extent;
+            using (var q = regions.Rivers.Query(min, max, Allocator.Temp))
+            {
+                riverEdges = q.edges.Length;
+                lakes = q.lakes.Length;
+                var river = new Color32(40, 90, 200, 255);
+                foreach (var e in q.edges)
+                {
+                    float2 a = (e.a - min) / spacing, b = (e.b - min) / spacing;
+                    int steps = (int)math.ceil(math.distance(a, b)) + 1;
+                    int thick = math.max(0, (int)(e.halfWidth / spacing));
+                    for (int k = 0; k <= steps; k++)
+                    {
+                        int2 p = (int2)math.lerp(a, b, k / (float)steps);
+                        for (int dz = -thick; dz <= thick; dz++)
+                        for (int dx = -thick; dx <= thick; dx++)
+                        {
+                            int px = p.x + dx, pz = p.y + dz;
+                            if (px >= 0 && pz >= 0 && px < resolution && pz < resolution)
+                                pixels[px + pz * resolution] = river;
+                        }
+                    }
+                }
             }
 
             var tex = new Texture2D(resolution, resolution, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point, hideFlags = HideFlags.HideAndDontSave };
@@ -184,7 +222,7 @@ public class RegionMapWindow : EditorWindow
             tex.Apply();
 
             var sb = new System.Text.StringBuilder();
-            sb.Append($"{resolution}x{resolution} columns in {ms:F0} ms, {spacing:F1} blocks per pixel. Height {minH:F0} .. {maxH:F0}, water {100f * waterCount / pixels.Length:F0}%, 3D shapes {100f * detailCount / pixels.Length:F0}%.\n");
+            sb.Append($"{resolution}x{resolution} columns in {ms:F0} ms (rivers planned in {riverMs:F0} ms), {spacing:F1} blocks per pixel. Height {minH:F0} .. {maxH:F0}, water {100f * waterCount / pixels.Length:F0}%, 3D shapes {100f * detailCount / pixels.Length:F0}%, {riverEdges / 6} river reaches, {lakes} lakes.\n");
             foreach (var biome in data.biomes)
                 if (biome != null && biomeCount[biome.BiomeID] > 0)
                     sb.Append($"{biome.biomeType} {100f * biomeCount[biome.BiomeID] / pixels.Length:F0}%  ");
@@ -227,7 +265,31 @@ public class RegionMapWindow : EditorWindow
         if (w.settings == null)
             w.settings = CreateSettingsAsset();
 
-        var tex = Render(w.settings, w.biomeDataManager, w.seed, new Vector2(cx, cz), extent, res, true, out var stats);
+        var overlay = Enum.TryParse(Arg("-regionMapOverlay", "Shapes3D"), true, out Overlay o) ? o : Overlay.Shapes3D;
+        // -regionMapTestLayers 1: every biome without sub-biomes gets two sample layers for this render
+        var borrowedLayers = new System.Collections.Generic.List<BiomeDefinitionSO>();
+        if (Arg("-regionMapTestLayers", "0") == "1")
+            foreach (var b in w.biomeDataManager.biomes)
+                if (b != null && b.regionShape != null && (b.regionShape.subBiomes == null || b.regionShape.subBiomes.Length == 0))
+                {
+                    b.regionShape.subBiomes = new[]
+                    {
+                        new SubBiomeLayer { name = "Plains + thickets", kind = SubBiomeKind.Continuous, scale = 900f, coverage = 0.35f, softness = 0.3f, hillMultiplier = 0.1f, decorationMultiplier = 3f },
+                        new SubBiomeLayer { name = "Gravel rises", kind = SubBiomeKind.Patches, scale = 500f, coverage = 0.3f, softness = 0.4f, heightOffset = 12f, decorationMultiplier = 0.2f, surfaceBlock = BlockType.Stone }
+                    };
+                    borrowedLayers.Add(b);
+                }
+        Texture2D tex;
+        string stats;
+        try
+        {
+            tex = Render(w.settings, w.biomeDataManager, w.seed, new Vector2(cx, cz), extent, res, overlay, out stats);
+        }
+        finally
+        {
+            foreach (var b in borrowedLayers)
+                b.regionShape.subBiomes = new SubBiomeLayer[0];
+        }
         File.WriteAllBytes(outPath, tex.EncodeToPNG());
         Debug.Log($"[RegionMap] Wrote {outPath}\n{stats}");
         DestroyImmediate(tex);
@@ -268,11 +330,13 @@ public class RegionMapWindow : EditorWindow
         try
         {
             data.Initialize();
-            regions = new RegionSystem(settings, data, seed, chunkSize);
+            regions = new RegionSystem(settings, data, seed, chunkSize, frequency);
             var hybrid = new HybridDensity(data, settings, seed, frequency);
 
             int2 column = (int2)math.floor(new float2(at.x, at.y) / chunkSize);
-            regions.ScheduleColumns((float2)(column * chunkSize), 1f, side, columns, hints).Complete();
+            regions.CompleteArea((float2)(column * chunkSize), 1f, side);
+            regions.TryScheduleColumns((float2)(column * chunkSize), 1f, side, columns, hints, out var handle);
+            handle.Complete();
 
             float lo = float.MaxValue, hi = float.MinValue;
             int detailColumns = 0;

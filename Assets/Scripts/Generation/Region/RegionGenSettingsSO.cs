@@ -48,6 +48,54 @@ public class RegionGenSettingsSO : ScriptableObject
     [Tooltip("Size in blocks of the bends in the palette edge.")]
     [Min(4f)] public float paletteEdgeScale = 48f;
 
+    [Header("Rivers")]
+    [Tooltip("Carve rivers and lakes. Rivers run between drainage nodes, each draining to its lowest neighbour; a node with no lower neighbour collects a lake.")]
+    public bool rivers = false;
+
+    [Tooltip("Spacing of drainage nodes in blocks. Smaller follows the terrain more closely but bends rivers more often.")]
+    [Range(64f, 1024f)] public float riverNodeSpacing = 256f;
+
+    [Tooltip("Drainage nodes per river tile side (tiles are planned one at a time, in the background).")]
+    [Range(16, 128)] public int riverTileNodes = 64;
+
+    [Tooltip("How far upstream (in nodes) rainfall is gathered. Larger lets rivers grow further; width stops growing past this catchment.")]
+    [Range(4, 48)] public int riverCatchmentRadius = 24;
+
+    [Tooltip("Rainfall a node must gather before a river forms (each node adds 0.3 to 1.5 by humidity and biome rainfall). Lower = more, smaller rivers.")]
+    [Min(1f)] public float riverThreshold = 14f;
+
+    [Tooltip("River width growth: width = min width + this * sqrt(rainfall over the threshold).")]
+    [Min(0f)] public float riverWidthScale = 1.6f;
+
+    [Min(1f)] public float riverMinWidth = 3f;
+    [Min(1f)] public float riverMaxWidth = 40f;
+
+    [Tooltip("Channel depth below the water surface per block of width (plus 1).")]
+    [Range(0f, 0.5f)] public float riverDepthPerWidth = 0.12f;
+
+    [Tooltip("Width of the valley carved beside a river, in blocks: this plus Valley Per Width times the river width.")]
+    [Min(0f)] public float valleyBase = 24f;
+    [Min(0f)] public float valleyPerWidth = 4f;
+
+    [Tooltip("How far rivers wander from the straight line between nodes, as a fraction of the node spacing.")]
+    [Range(0f, 0.5f)] public float riverMeander = 0.2f;
+
+    [Tooltip("Width in blocks of the sediment (sand / gravel) banks either side of the water.")]
+    [Range(0f, 12f)] public float riverBankWidth = 3f;
+
+    [Header("Lakes")]
+    [Tooltip("Rainfall a basin must gather to hold a lake. Drier basins stay dry.")]
+    [Min(0f)] public float lakeMinRainfall = 6f;
+
+    [Tooltip("Lake radius per square root of gathered rainfall, as a fraction of the node spacing.")]
+    [Range(0.01f, 1f)] public float lakeSize = 0.12f;
+
+    [Tooltip("Largest lake radius, as a fraction of the node spacing.")]
+    [Range(0.1f, 1.5f)] public float lakeMaxRadius = 0.9f;
+
+    [Tooltip("Width in blocks of the shore raised around a lake so its water cannot spill over low ground.")]
+    [Range(2f, 64f)] public float lakeShore = 16f;
+
     [Header("Density")]
     [Tooltip("Density change per block of height for flat ground. Biome gradient thresholds (0.005 / 0.002) were tuned on FastNoise trees of about 0.01 per block; at 0.01 they switch palette at about 60 and 78 degree slopes.")]
     [Min(0.0001f)] public float densityScale = 0.01f;

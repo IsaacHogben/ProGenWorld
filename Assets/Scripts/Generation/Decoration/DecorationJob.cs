@@ -88,8 +88,8 @@ public struct DecorationJob : IJob
             if (!CanSpawnOn(decoration, currentBlock))
                 continue;
 
-            // Check spawn chance
-            float adjustedChance = decoration.spawnChance;
+            // Check spawn chance (scaled by the column's sub-biome layers under the region generator)
+            float adjustedChance = decoration.spawnChance * SampleBiome(x, z).decoScale;
             if (rng.NextFloat() > adjustedChance)
                 continue;
 

@@ -195,7 +195,8 @@ public sealed class HorizonSystem : IDisposable
                     if (missing[i].dist < missing[best].dist)
                         best = i;
                 workKey = missing[best].key;
-                StartBiome(workKey);
+                if (!StartBiome(workKey))
+                    return;   // rivers there are still being planned
                 stage = Stage.Biome;
                 return;
             }
@@ -288,7 +289,7 @@ public sealed class HorizonSystem : IDisposable
         }
     }
 
-    void StartBiome(int3 key)
+    bool StartBiome(int3 key)
     {
         int count = side * side;
         hintGrid = new NativeArray<BiomeHint>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
@@ -298,14 +299,17 @@ public sealed class HorizonSystem : IDisposable
             float v = VoxelSize(key.x);
             float2 origin = new float2(key.y, key.z) * TileSize(key.x) + v * 0.5f;
             columnGrid = new NativeArray<ColumnSample>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-            biomeHandle = cfg.regionSystem.ScheduleColumns(origin, v, side, columnGrid, hintGrid);
-            return;
+            if (cfg.regionSystem.TryScheduleColumns(origin, v, side, columnGrid, hintGrid, out biomeHandle))
+                return true;
+            DisposeBiomeArrays();
+            return false;
         }
         terrainGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
         humidityGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
         temperatureGrid = new NativeArray<float>(count, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
         biomeHandle = cfg.biomeSystem.ScheduleHints(new int3(key.y, 0, key.z), TileSize(key.x), res,
             terrainGrid, humidityGrid, temperatureGrid, hintGrid);
+        return true;
     }
 
     void DisposeBiomeArrays()
@@ -420,7 +424,7 @@ public sealed class HorizonSystem : IDisposable
         var palette = new byte[columns];
         for (int col = 0; col < columns; col++)
             palette[col] = hints[col].primaryBiome;
-        return BuildBlockArrays(v, size, heights, palette);
+        return BuildBlockArrays(v, size, heights, palette, null, null);
     }
 
     // Region generator: the surface height is known per column; only columns with 3D shapes are
@@ -434,6 +438,8 @@ public sealed class HorizonSystem : IDisposable
 
         var heights = new float[columns];
         var palette = new byte[columns];
+        var water = new float[columns];
+        var surface = new byte[columns];
         var wx = new float[columns];
         var wz = new float[columns];
         var top = new float[columns];   // centre of the highest voxel searched
@@ -443,6 +449,8 @@ public sealed class HorizonSystem : IDisposable
             var c = cols[col];
             heights[col] = c.height;
             palette[col] = c.palette;
+            water[col] = c.waterY;
+            surface[col] = c.surfaceOverride;
             wx[col] = ox + (col % side + 0.5f) * v;
             wz[col] = oz + (col / side + 0.5f) * v;
             if (!c.HasDetail)
@@ -476,26 +484,28 @@ public sealed class HorizonSystem : IDisposable
                 }
             }
         }
-        return BuildBlockArrays(v, size, heights, palette);
+        return BuildBlockArrays(v, size, heights, palette, water, surface);
     }
 
     // One block array per vertical layer (res voxels tall) that holds terrain. Columns are solid
     // from their surface height down to a little below the tile's lowest surface; deeper voxels
-    // are left as air since they are never seen.
-    List<(int layer, byte[] blocks)> BuildBlockArrays(float v, float size, float[] heights, byte[] palette)
+    // are left as air since they are never seen. water / surface: per column water surface and
+    // surface block override (null = the world water level, the biome's surface block).
+    List<(int layer, byte[] blocks)> BuildBlockArrays(float v, float size, float[] heights, byte[] palette, float[] water, byte[] surface)
     {
         float minH = float.MaxValue, maxH = float.MinValue;
         for (int col = 0; col < heights.Length; col++)
         {
+            float w = water != null ? water[col] : waterLevel;
             minH = math.min(minH, heights[col]);
-            maxH = math.max(maxH, math.max(heights[col], waterLevel + 1f));
+            maxH = math.max(maxH, math.max(heights[col], w + 1f));
         }
 
         var layersOut = new List<(int, byte[])>();
         float fillBottom = minH - 2f * v;
         int l0 = (int)math.floor(fillBottom / size);
         int l1 = (int)math.floor((maxH - 0.001f) / size);
-        byte water = (byte)BlockType.Water;
+        byte waterBlock = (byte)BlockType.Water;
 
         for (int layer = l0; layer <= l1; layer++)
         {
@@ -508,7 +518,9 @@ public sealed class HorizonSystem : IDisposable
                 int col = x + z * side;
                 float h = heights[col];
                 var biome = palette[col] < biomes.Length ? biomes[palette[col]] : default;
-                bool underwater = h <= waterLevel + 1f;
+                float w = water != null ? water[col] : waterLevel;
+                bool underwater = h <= w + 1f;
+                byte top = surface != null && surface[col] != 0 ? surface[col] : biome.surfaceBlock;
 
                 for (int y = 0; y < side; y++)
                 {
@@ -517,9 +529,9 @@ public sealed class HorizonSystem : IDisposable
                     if (wy >= fillBottom)
                     {
                         if (wy < h)
-                            id = wy >= h - v ? (underwater ? biome.sedimentBlock : biome.surfaceBlock) : biome.deepBlock;
-                        else if (wy < waterLevel + 1f)
-                            id = water;
+                            id = wy >= h - v ? (underwater ? biome.sedimentBlock : top) : biome.deepBlock;
+                        else if (wy < w + 1f)
+                            id = waterBlock;
                     }
                     if (id != 0)
                     {

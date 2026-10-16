@@ -47,6 +47,10 @@ public class BiomeDefinitionSO : ScriptableObject
     [Header("Region Shape (Region Gen only)")]
     public RegionShape regionShape = new RegionShape();
 
+    [Header("Streams")]
+    [Tooltip("Small streams that start on high ground, run downhill over the terrain and fill ponds where they get stuck.")]
+    public StreamSettings streams = new StreamSettings();
+
     [Header("LSystem Decorations")]
     public LSystemDecoration[] LSystemDecorations = new LSystemDecoration[0];
     [Header("Tree Decorations")]

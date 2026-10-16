@@ -15,5 +15,6 @@ public enum PendingWriteMode : byte
     Replace,       // always overwrite
     ReplaceAir,    // only write if block is air (0)
     ReplaceSoft,   // write if block is air or "soft" (leaves, plants)
+    ReplaceSolid,  // only write if block is neither air nor water
     DropToSurface, // settle onto the nearest surface in this column (within the chunk), then ReplaceAir
 }

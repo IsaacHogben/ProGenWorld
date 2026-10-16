@@ -16,7 +16,6 @@ public struct BlockAssignmentJob : IJobParallelFor
     [ReadOnly] public int chunkSize;   // voxels per axis of this array (chunk size / sampleRes)
     [ReadOnly] public int sampleRes;   // blocks per voxel (1 = full resolution)
     [ReadOnly] public int3 chunkCoord;
-    [ReadOnly] public int waterLevel;
 
     // Biome data
     [ReadOnly] public NativeArray<BiomeHint> biomeHints;
@@ -36,10 +35,10 @@ public struct BlockAssignmentJob : IJobParallelFor
         bool isSolid = blockDensity <= 0;
         bool isAirAbove = aboveBlockDensity > 0;
         int worldY = GetWorldYValue(index);
-        bool isAboveWaterLevel = worldY > waterLevel;
 
         // Sample biome at this location
         BiomeHint hint = SampleBiome(index.x, index.z);
+        bool isAboveWaterLevel = worldY > hint.waterY;
 
         byte block;
 
@@ -82,7 +81,7 @@ public struct BlockAssignmentJob : IJobParallelFor
 
         // Use gradient thresholds from primary biome
         if (gradient > primaryBiome.gradientThreshold1)
-            return primaryBiome.surfaceBlock;        // Gentle slopes
+            return hint.surfaceOverride != 0 ? hint.surfaceOverride : primaryBiome.surfaceBlock;        // Gentle slopes
         else if (gradient > primaryBiome.gradientThreshold2)
             return primaryBiome.subsurfaceBlock;     // Moderate slopes
         else

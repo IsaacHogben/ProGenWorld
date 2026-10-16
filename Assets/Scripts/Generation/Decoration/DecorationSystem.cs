@@ -15,12 +15,14 @@ public class DecorationSystem
         public Func<bool> GetBootstrapMode;
         public Func<float> GetCompleteBudgetMs;   // main-thread time per frame for completing jobs (at least one completes)
         public BiomeDataManager biomeDataManager;
+        public StreamSystem streams;   // optional: streams run before each chunk's decoration
     }
 
     private DecorationConfig config;
     private readonly Dictionary<int3, JobHandle> jobHandles = new();
     private readonly Dictionary<int3, NativeList<PendingBlockWrite>> outputLists = new();
     private readonly Dictionary<int3, (NativeArray<byte> blockIds, LODLevel lod)> inputs = new();
+    private readonly Dictionary<int3, (NativeArray<StreamHead> heads, NativeList<StreamHead> outgoing, NativeArray<byte> visited, NativeList<StreamEnd> ends)> streamData = new();
 
     public int ActiveJobs => jobHandles.Count;
 
@@ -66,7 +68,21 @@ public class DecorationSystem
         };
 
         Profiler.StartDeco();
-        JobHandle handle = job.Schedule();
+
+        // Streams first (those that arrived from neighbours, then the chunk's own new ones), so
+        // they run over bare ground and nothing grows in their water
+        JobHandle handle = default;
+        if (config.streams != null)
+        {
+            var heads = config.streams.TakeForDecoration(coord, Allocator.Persistent);
+            var outgoing = new NativeList<StreamHead>(Allocator.Persistent);
+            var visited = config.streams.BeginDecoration(coord);
+            var ends = new NativeList<StreamEnd>(Allocator.Persistent);
+            handle = config.streams.CreateJob(coord, blockIds, writes, biomeData.grid, biomeData.resolution,
+                heads, outgoing, visited, ends, spawnSources: true).Schedule();
+            streamData[coord] = (heads, outgoing, visited, ends);
+        }
+        handle = job.Schedule(handle);
         jobHandles[coord] = handle;
         outputLists[coord] = writes;
         inputs[coord] = (blockIds, lod);
@@ -107,6 +123,16 @@ public class DecorationSystem
             jobHandles.Remove(coord);
             outputLists.Remove(coord);
             inputs.Remove(coord);
+
+            if (streamData.Remove(coord, out var sd))
+            {
+                config.streams.Route(sd.outgoing);
+                config.streams.Report(sd.ends);
+                sd.heads.Dispose();
+                sd.outgoing.Dispose();
+                config.streams.EndDecoration(coord);
+                sd.ends.Dispose();
+            }
 
             // IMPORTANT: we do NOT dispose here.
             // Ownership of writesNative transfers to ChunkManager.

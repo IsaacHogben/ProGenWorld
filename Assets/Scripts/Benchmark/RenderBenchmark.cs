@@ -30,6 +30,7 @@ public class RenderBenchmark : MonoBehaviour
         public bool lookAtPlayer;
         public bool overWater;   // offset / yaw relative to the nearest open water instead of the player
         public bool playerInWater;   // move the player into shallow water first (lookAtPlayer views)
+        public bool overStream;      // offset relative to the nearest stream water (water well above the water level), looking at it
     }
 
     static readonly View[] Views =
@@ -44,6 +45,9 @@ public class RenderBenchmark : MonoBehaviour
         new View { name = "waterHigh", offset = new Vector3(0f, 14f, 0f), pitch = 35f, overWater = true },
         new View { name = "waterFar", offset = new Vector3(0f, 30f, 0f), pitch = 28f, overWater = true },
         new View { name = "underwater", offset = new Vector3(0f, -0.6f, 0f), pitch = -30f, overWater = true },
+        new View { name = "stream", offset = new Vector3(0f, 9f, -11f), overStream = true },
+        new View { name = "streamHigh", offset = new Vector3(0f, 45f, -45f), overStream = true },
+        new View { name = "streamTop", offset = new Vector3(0f, 110f, -1f), overStream = true },
         new View { name = "wading", offset = new Vector3(2.5f, 1.8f, -4f), lookAtPlayer = true, playerInWater = true },
     };
 
@@ -137,6 +141,48 @@ public class RenderBenchmark : MonoBehaviour
             Log($"region detail terrain {(detail >= 0 && detail < bdm.terrainTypes.Length ? bdm.terrainTypes[detail].terrainTypeName : "none")}");
         }
         Log($"region gen {chunkManager.UseRegionGen}");
+
+        if (Arg("-benchLogStreams") != null)
+            chunkManager.LogStreamEnds = true;
+
+        // -benchSeed <n>: another world; -benchOnlyBiome <BiomeType>: every climate cell holds just that biome
+        if (int.TryParse(Arg("-benchSeed"), out int benchSeed))
+        {
+            chunkManager.seed = benchSeed;
+            Log($"seed {benchSeed}");
+        }
+        if (Enum.TryParse(Arg("-benchOnlyBiome") ?? "", true, out BiomeType onlyBiome) && chunkManager.biomeDataManager?.climateGrid != null)
+        {
+            foreach (var cell in chunkManager.biomeDataManager.climateGrid.cells)
+                cell.biomes = new List<BiomeType> { onlyBiome };
+            Log($"only biome {onlyBiome}");
+        }
+
+        // -benchStreams <chance>: streams in every biome at that chance per chunk, for this run only
+        if (float.TryParse(Arg("-benchStreams"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float streamChance)
+            && chunkManager.biomeDataManager != null)
+        {
+            foreach (var biome in chunkManager.biomeDataManager.biomes)
+                if (biome != null && biome.streams != null)
+                {
+                    biome.streams.enabled = streamChance > 0f;
+                    biome.streams.chancePerChunk = streamChance;
+                }
+            Log($"streams in every biome, chance {streamChance} per chunk");
+        }
+
+        // Start somewhere else (-benchPlayerAt x,y,z), before the chunk manager seeds its first chunks
+        string at = null;   // read directly: the value may start with '-'
+        var argv = Environment.GetCommandLineArgs();
+        for (int i = 0; i < argv.Length - 1; i++)
+            if (argv[i] == "-benchPlayerAt") at = argv[i + 1];
+        if (!string.IsNullOrEmpty(at))
+        {
+            var p = at.Split(',');
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            player.position = new Vector3(float.Parse(p[0], ci), float.Parse(p[1], ci), float.Parse(p[2], ci));
+            Log($"player moved to {player.position}");
+        }
 
         foreach (var p in FindObjectsByType<ChunkProfiler>(FindObjectsSortMode.None))
             p.enabled = false;
@@ -268,6 +314,12 @@ public class RenderBenchmark : MonoBehaviour
 
     void PlaceCamera(View v)
     {
+        if (v.overStream)
+        {
+            cam.transform.position = streamSpot.Value + v.offset;
+            cam.transform.rotation = Quaternion.LookRotation(streamSpot.Value - cam.transform.position);
+            return;
+        }
         if (v.overWater)
         {
             // Back off so the view centre lands on the far side of the water spot.
@@ -306,12 +358,19 @@ public class RenderBenchmark : MonoBehaviour
         Log($"screen {Screen.width}x{Screen.height}, player at {player.position}");
         playerStart = player.position;
         FindWater();
+        FindStream();
+        if (Arg("-benchWaterWalls") != null)
+            FindWaterWalls(Arg("-benchWaterWalls") == "view");
+        // -benchLookAt x,y,z: the stream views look there instead
+        var lookAt = (Arg("-benchLookAt") ?? "").Split(',');
+        if (lookAt.Length == 3 && float.TryParse(lookAt[0], out float lx) && float.TryParse(lookAt[1], out float ly) && float.TryParse(lookAt[2], out float lz))
+            streamSpot = new Vector3(lx + 0.5f, ly + 1f, lz + 0.5f);
 
         json.Append("{\n  \"results\": [\n");
         bool first = true;
         foreach (var view in Views)
         {
-            if ((view.overWater && waterSpot == null) || (view.playerInWater && shallowSpot == null))
+            if ((view.overStream && streamSpot == null) || (view.overWater && waterSpot == null) || (view.playerInWater && shallowSpot == null))
                 continue;
             if (viewFilter != null && !viewFilter.Contains(view.name))
                 continue;
@@ -396,6 +455,76 @@ public class RenderBenchmark : MonoBehaviour
     }
 
     Vector3? playerStart;
+    Vector3? streamSpot;
+
+    // Stream water: the top block of a column is water well above the world's water level
+    void FindStream()
+    {
+        int waterLevel = chunkManager.biomeDataManager != null ? chunkManager.biomeDataManager.GetWaterLevel() : -64;
+        Vector3 p = player.position;
+        int top = Mathf.FloorToInt(p.y) + 120, bottom = waterLevel + 3;
+        float best = float.MaxValue;
+        int columns = 0;
+        for (int dz = -192; dz <= 192; dz += 2)
+        for (int dx = -192; dx <= 192; dx += 2)
+        {
+            int x = Mathf.FloorToInt(p.x) + dx, z = Mathf.FloorToInt(p.z) + dz;
+            if (!WaterSurface(x, z, top, bottom, out int y))
+                continue;
+            columns++;
+            float d = dx * dx + dz * dz;
+            if (d < best) { best = d; streamSpot = new Vector3(x + 0.5f, y + 1f, z + 0.5f); }
+        }
+        Log(streamSpot == null ? "no stream water near the player" : $"stream water in {columns} sampled columns, nearest at {streamSpot.Value}");
+    }
+
+    // Water walls: a water surface block with open air beside it and below that (water that
+    // should have spread or been held in). With "view", the stream views look at the nearest one.
+    void FindWaterWalls(bool view)
+    {
+        bool deep = Arg("-benchWallDepth") != "1";
+        int waterLevel = chunkManager.biomeDataManager != null ? chunkManager.biomeDataManager.GetWaterLevel() : -64;
+        Vector3 p = player.position;
+        int top = Mathf.FloorToInt(p.y) + 120, bottom = waterLevel + 1;
+        int walls = 0;
+        float best = float.MaxValue;
+        var sample = new System.Text.StringBuilder();
+        int[] ox = { 1, -1, 0, 0 }, oz = { 0, 0, 1, -1 };
+        for (int dz = -160; dz <= 160; dz++)
+        for (int dx = -160; dx <= 160; dx++)
+        {
+            int x = Mathf.FloorToInt(p.x) + dx, z = Mathf.FloorToInt(p.z) + dz;
+            if (!WaterSurface(x, z, top, bottom, out int y))
+                continue;
+            for (int k = 0; k < 4; k++)
+            {
+                var n = new Unity.Mathematics.int3(x + ox[k], y, z + oz[k]);
+                if (!VoxelPhysics.TryGetBlock(n, out byte a) || a != (byte)BlockType.Air)
+                    continue;
+                // Below the air beside it: more air (2+ deep), or dry ground (water held in by
+                // nothing; a stream stepping down has water there instead)
+                if (!VoxelPhysics.TryGetBlock(n + new Unity.Mathematics.int3(0, -1, 0), out byte b))
+                    continue;
+                if (deep ? b != (byte)BlockType.Air : b == (byte)BlockType.Water)
+                    continue;
+                // Pond walls only: wide water (most of the 7 x 7 around it at the same level)
+                int wide = 0;
+                for (int wz = -3; wz <= 3; wz++)
+                for (int wx = -3; wx <= 3; wx++)
+                    if (VoxelPhysics.TryGetBlock(new Unity.Mathematics.int3(x + wx, y, z + wz), out byte w) && w == (byte)BlockType.Water)
+                        wide++;
+                if (wide < 20)
+                    continue;
+                walls++;
+                if (walls <= 15)
+                    sample.Append($" ({x},{y},{z})");
+                float d = dx * dx + dz * dz;
+                if (view && d < best) { best = d; streamSpot = new Vector3(x + 0.5f, y + 1f, z + 0.5f); }
+                break;
+            }
+        }
+        Log($"water walls ({(deep ? 2 : 1)}+ deep): {walls} columns within 160 blocks{sample}");
+    }
 
     void FindWater()
     {

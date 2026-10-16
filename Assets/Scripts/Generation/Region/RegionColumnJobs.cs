@@ -32,7 +32,9 @@ public struct RegionParams
     public byte fallbackBiome;
 
     public float macroBase, macroAmplitude;
-    public FbmSimplexNoise2D macro;
+    public FbmSimplexNoise2D macro;          // broad rises and dips (rivers are planned on these)
+    public FbmSimplexNoise2D macroDetail;    // smaller bumps on them, flattened near rivers like hills
+    public float macroDetailAmplitude;
 
     public float paletteEdge;
     public FbmSimplexNoise2D paletteNoise;
@@ -186,8 +188,39 @@ public static class RegionMath
         return true;
     }
 
+    /// <summary>Mask (0..1) of a sub-biome layer at a point.</summary>
+    public static float SubMask(in SubBiomeData l, float x, float z)
+    {
+        if (l.kind == (byte)SubBiomeKind.Continuous)
+        {
+            float n = l.noise.GetNoise(x, z);
+            float half = l.softness * 0.5f;
+            return math.smoothstep(l.threshold - half, l.threshold + half, n);
+        }
+
+        // Patches: at most one rounded, wobbly patch per cell
+        float2 p = new float2(x, z) * l.invScale;
+        int2 ci = (int2)math.floor(p);
+        float wobble = 0.35f * l.noise.GetNoise(x, z);
+        float mask = 0f;
+        for (int dz = -1; dz <= 1; dz++)
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            int2 cell = ci + new int2(dx, dz);
+            uint h = Hash(cell, l.seed);
+            if ((h & 0xFFFF) * (1f / 65535f) >= l.coverage)
+                continue;
+            uint h2 = Hash(cell, l.seed ^ 0x68E31DA4u);
+            float2 centre = (float2)cell + 0.5f + (new float2(h2 & 0xFFFF, h2 >> 16) * (1f / 65535f) - 0.5f) * 0.5f;
+            float radius = 0.25f + 0.2f * ((h >> 16) * (1f / 65535f));
+            float d = math.distance(p, centre) / radius + wobble;
+            mask = math.max(mask, 1f - math.smoothstep(1f - l.softness, 1f, d));
+        }
+        return mask;
+    }
+
     /// <summary>A biome's own surface height at a point (before blending).</summary>
-    public static float BiomeHeight(in BiomeShapeData s, float x, float z)
+    public static float BiomeHeight(in BiomeShapeData s, float x, float z, float hillMultiplier)
     {
         float n = s.hillNoise.GetNoise(x, z);
         if (s.ridged > 0f)
@@ -195,7 +228,7 @@ public static class RegionMath
             float r = 1f - math.abs(s.ridgeNoise.GetNoise(x, z));
             n = math.lerp(n, r * r * 2f - 1f, s.ridged);
         }
-        float h = s.baseHeight + s.hillHeight * n;
+        float h = s.baseHeight + s.hillHeight * hillMultiplier * n;
 
         if (s.terraceStep > 0f)
         {
@@ -207,19 +240,107 @@ public static class RegionMath
         return h;
     }
 
-    public static float Height(float2 pos, in RegionWeights rw, in RegionParams rp, in NativeArray<BiomeShapeData> shapes)
+    /// <summary>One biome's height and sub-biome effects at a point.</summary>
+    public struct BiomePoint
     {
-        float h = rp.macroBase + rp.macroAmplitude * rp.macro.GetNoise(pos.x, pos.y);
-        h += rw.w0 * BiomeHeight(shapes[rw.b0], pos.x, pos.y);
-        if (rw.w1 > 0f) h += rw.w1 * BiomeHeight(shapes[rw.b1], pos.x, pos.y);
-        if (rw.w2 > 0f) h += rw.w2 * BiomeHeight(shapes[rw.b2], pos.x, pos.y);
-        return h;
+        public float height;
+        public float decoration;     // decoration chance multiplier
+        public float detail;         // 3D shape strength multiplier
+        public byte surfaceBlock;    // strongest sub-biome surface block (0 = none)
+        public float surfaceMask;
+    }
+
+    public static BiomePoint SampleBiome(in BiomeShapeData s, in NativeArray<SubBiomeData> subs, float x, float z, float hillFactor)
+    {
+        var bp = new BiomePoint { decoration = 1f, detail = 1f };
+        float hillMul = 1f, offset = 0f;
+        for (int i = s.subStart; i < s.subStart + s.subCount; i++)
+        {
+            var l = subs[i];
+            float m = SubMask(l, x, z);
+            if (m <= 0f)
+                continue;
+            offset += m * l.heightOffset;
+            hillMul *= math.lerp(1f, l.hillMultiplier, m);
+            bp.detail *= math.lerp(1f, l.detailMultiplier, m);
+            bp.decoration *= math.lerp(1f, l.decorationMultiplier, m);
+            if (l.surfaceBlock != 0 && m > bp.surfaceMask)
+            {
+                bp.surfaceMask = m;
+                bp.surfaceBlock = l.surfaceBlock;
+            }
+        }
+        bp.height = BiomeHeight(s, x, z, hillMul * hillFactor) + offset;
+        return bp;
+    }
+
+    /// <summary>Blended surface (before rivers) and sub-biome effects at a point.</summary>
+    public struct PointSample
+    {
+        public float height;
+        public float decoration;
+        public float detail0, detail1, detail2;   // 3D strength multipliers per weight slot
+        public byte surfaceBlock;
+        public float surfaceScore;
+    }
+
+    /// <param name="hillFactor">1 = full hills, 0 = the ground without hills (rivers are planned on it).</param>
+    public static PointSample Sample(float2 pos, in RegionWeights rw, in RegionParams rp,
+        in NativeArray<BiomeShapeData> shapes, in NativeArray<SubBiomeData> subs, float hillFactor)
+    {
+        float macro = rp.macroBase + rp.macroAmplitude * rp.macro.GetNoise(pos.x, pos.y);
+        if (hillFactor > 0f)
+            macro += hillFactor * rp.macroDetailAmplitude * rp.macroDetail.GetNoise(pos.x, pos.y);
+        var ps = new PointSample { height = macro, detail1 = 1f, detail2 = 1f };
+
+        var b0 = SampleBiome(shapes[rw.b0], subs, pos.x, pos.y, hillFactor);
+        ps.height += rw.w0 * b0.height;
+        ps.decoration = rw.w0 * b0.decoration;
+        ps.detail0 = b0.detail;
+        Surface(ref ps, b0, rw.w0);
+        if (rw.w1 > 0f)
+        {
+            var b1 = SampleBiome(shapes[rw.b1], subs, pos.x, pos.y, hillFactor);
+            ps.height += rw.w1 * b1.height;
+            ps.decoration += rw.w1 * b1.decoration;
+            ps.detail1 = b1.detail;
+            Surface(ref ps, b1, rw.w1);
+        }
+        if (rw.w2 > 0f)
+        {
+            var b2 = SampleBiome(shapes[rw.b2], subs, pos.x, pos.y, hillFactor);
+            ps.height += rw.w2 * b2.height;
+            ps.decoration += rw.w2 * b2.decoration;
+            ps.detail2 = b2.detail;
+            Surface(ref ps, b2, rw.w2);
+        }
+        return ps;
+    }
+
+    static void Surface(ref PointSample ps, in BiomePoint bp, float weight)
+    {
+        float score = bp.surfaceMask * weight;
+        if (bp.surfaceBlock != 0 && score > ps.surfaceScore)
+        {
+            ps.surfaceScore = score;
+            ps.surfaceBlock = bp.surfaceBlock;
+        }
     }
 }
 
+/// <summary>Raw per point output of RegionRawJob.</summary>
+public struct RawColumn
+{
+    public RegionWeights rw;
+    public RegionMath.PointSample s;   // s.height is after rivers and lakes
+    public float waterY;
+    public float nearWater;
+    public byte bank;
+}
+
 /// <summary>
-/// Region weights and surface height on a grid with a one point border (for slopes):
-/// point (i, j) of rawSide^2 sits at origin + (i - 1, j - 1) * spacing.
+/// Region weights, sub-biomes, surface height and water on a grid with a one point border (for
+/// slopes): point (i, j) of rawSide^2 sits at origin + (i - 1, j - 1) * spacing.
 /// </summary>
 [BurstCompile]
 public struct RegionRawJob : IJobParallelFor
@@ -228,22 +349,47 @@ public struct RegionRawJob : IJobParallelFor
     public float spacing;
     public int rawSide;
     public RegionParams rp;
+    public float waterLevel;
+    public float bankWidth;
 
     [ReadOnly] public NativeArray<BiomeShapeData> shapes;
+    [ReadOnly] public NativeArray<SubBiomeData> subs;
     [ReadOnly] public NativeArray<ClimateGridCell> climateCells;
     [ReadOnly] public NativeArray<byte> cellBiomes;
     [ReadOnly] public NativeArray<float> rarity;
 
-    [WriteOnly] public NativeArray<float> heights;
-    [WriteOnly] public NativeArray<RegionWeights> weights;
+    // Rivers and lakes (RiverQuery's arrays)
+    public float2 riverOrigin;
+    public float riverBucketSize;
+    public int2 riverBuckets;
+    [ReadOnly] public NativeArray<RiverEdge> riverEdges;
+    [ReadOnly] public NativeArray<RiverLake> riverLakes;
+    [ReadOnly] public NativeArray<int2> riverBucketRanges;
+    [ReadOnly] public NativeArray<int> riverItems;
+
+    [WriteOnly] public NativeArray<RawColumn> output;
 
     public void Execute(int index)
     {
         int i = index % rawSide, j = index / rawSide;
         float2 pos = origin + new float2(i - 1, j - 1) * spacing;
-        var rw = RegionMath.Weights(pos, rp, shapes, climateCells, cellBiomes, rarity);
-        weights[index] = rw;
-        heights[index] = RegionMath.Height(pos, rw, rp, shapes);
+        var raw = new RawColumn { waterY = waterLevel };
+        raw.rw = RegionMath.Weights(pos, rp, shapes, climateCells, cellBiomes, rarity);
+
+        var q = new RiverQuery
+        {
+            origin = riverOrigin,
+            bucketSize = riverBucketSize,
+            buckets = riverBuckets,
+            edges = riverEdges,
+            lakes = riverLakes,
+            bucketRanges = riverBucketRanges,
+            items = riverItems
+        };
+        raw.s = RegionMath.Sample(pos, raw.rw, rp, shapes, subs, RiverMath.HillFactor(pos, q));
+        RiverMath.Apply(pos, q, bankWidth, ref raw.s.height, ref raw.waterY, out raw.nearWater, out bool bank);
+        raw.bank = (byte)(bank ? 1 : 0);
+        output[index] = raw;
     }
 }
 
@@ -260,8 +406,7 @@ public struct RegionColumnJob : IJobParallelFor
     public RegionParams rp;
 
     [ReadOnly] public NativeArray<BiomeShapeData> shapes;
-    [ReadOnly] public NativeArray<float> heights;
-    [ReadOnly] public NativeArray<RegionWeights> weights;
+    [ReadOnly] public NativeArray<RawColumn> raw;
 
     [WriteOnly] public NativeArray<ColumnSample> columns;
     [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<BiomeHint> hints;
@@ -272,11 +417,12 @@ public struct RegionColumnJob : IJobParallelFor
         int rawSide = side + 2;
         int r = (x + 1) + (z + 1) * rawSide;
 
-        float h = heights[r];
-        float gx = (heights[r + 1] - heights[r - 1]) / (2f * spacing);
-        float gz = (heights[r + rawSide] - heights[r - rawSide]) / (2f * spacing);
+        var c = raw[r];
+        float h = c.s.height;
+        float gx = (raw[r + 1].s.height - raw[r - 1].s.height) / (2f * spacing);
+        float gz = (raw[r + rawSide].s.height - raw[r - rawSide].s.height) / (2f * spacing);
 
-        var rw = weights[r];
+        var rw = c.rw;
         float2 pos = origin + new float2(x, z) * spacing;
 
         var col = new ColumnSample
@@ -288,16 +434,31 @@ public struct RegionColumnJob : IJobParallelFor
             palette = Palette(rw, pos),
             detail0 = ColumnSample.None,
             detail1 = ColumnSample.None,
-            detail2 = ColumnSample.None
+            detail2 = ColumnSample.None,
+            waterY = c.waterY,
+            decoScale = c.s.decoration,
+            surfaceOverride = c.s.surfaceScore > 0.5f ? c.s.surfaceBlock : (byte)0
         };
 
-        AddDetail(ref col, rw.b0, rw.w0);
-        if (rw.w1 > 0f) AddDetail(ref col, rw.b1, rw.w1);
-        if (rw.w2 > 0f) AddDetail(ref col, rw.b2, rw.w2);
+        // 3D shapes give way near water so overhangs do not hang over (or dam) rivers and lakes
+        float keep = 1f - c.nearWater;
+        AddDetail(ref col, rw.b0, rw.w0 * c.s.detail0 * keep);
+        if (rw.w1 > 0f) AddDetail(ref col, rw.b1, rw.w1 * c.s.detail1 * keep);
+        if (rw.w2 > 0f) AddDetail(ref col, rw.b2, rw.w2 * c.s.detail2 * keep);
+
+        if (c.bank != 0 || h < c.waterY)
+            col.surfaceOverride = shapes[col.palette].sedimentBlock;
 
         columns[index] = col;
         if (index < hints.Length)
-            hints[index] = new BiomeHint { primaryBiome = col.palette, secondaryBiome = col.palette };
+            hints[index] = new BiomeHint
+            {
+                primaryBiome = col.palette,
+                secondaryBiome = col.palette,
+                waterY = col.waterY,
+                decoScale = col.decoScale,
+                surfaceOverride = col.surfaceOverride
+            };
     }
 
     // The heaviest biome, with the line where two weights cross bent by noise (per biome, so it

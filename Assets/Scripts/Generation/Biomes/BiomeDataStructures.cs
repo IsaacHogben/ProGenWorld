@@ -199,6 +199,11 @@ public struct BiomeHint
     public byte primaryBiome;
     public byte secondaryBiome;
     public byte biomeBlend;    // 0-255
+
+    // Per column water and decoration (BiomeJob: global water level, scale 1)
+    public float waterY;           // water fills air at or below this world y
+    public float decoScale;        // decoration spawn chance multiplier
+    public byte surfaceOverride;   // block for exposed gentle surfaces (0 = biome palette)
 }
 
 // ============================================================================

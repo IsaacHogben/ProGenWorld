@@ -83,7 +83,9 @@ public struct BiomeJob : IJobParallelFor
             terrainBlend = terrainBlend,
             primaryBiome = primaryBiome,
             secondaryBiome = secondaryBiome,
-            biomeBlend = biomeBlend
+            biomeBlend = biomeBlend,
+            waterY = waterLevel,
+            decoScale = 1f
         };
     }
 

@@ -59,6 +59,12 @@ public sealed class HybridDensity
             noiseByBiome[id] = noise;
             frequencyByBiome[id] = frequency / 100f * terrain.frequencyMultiplier;
             surfaceOffsetByBiome[id] = shape.detailSurfaceOffset;
+            if (shape.autoCalibrate)
+            {
+                var cal = DetailCalibration.Get(terrain, frequency, seed);
+                if (cal.valid)
+                    surfaceOffsetByBiome[id] = cal.ground;
+            }
             scaleByBiome[id] = shape.detailDensityScale;
         }
     }
@@ -272,6 +278,7 @@ public sealed class HybridDensity
                 result[t] = (1f - w) * result[t] + detail[t];
             }
         }
+
         return result;
     }
 }

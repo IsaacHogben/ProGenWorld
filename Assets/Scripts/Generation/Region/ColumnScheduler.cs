@@ -18,6 +18,11 @@ public sealed class ColumnScheduler
     int offsetRadius = -1;
 
     int minChunkY = int.MaxValue, maxChunkY = int.MinValue;
+    int ticksSinceCheck;
+
+    // Ticks between re-checks of queued columns: chunks can be dropped later (unloaded or left
+    // behind by 3D distance, e.g. while flying high) and must be queued again when back in range
+    const int RecheckEvery = 30;
 
     /// <summary>Lowest / highest chunk y of any known column band (int.MaxValue / MinValue before any).</summary>
     public int MinChunkY => minChunkY;
@@ -66,17 +71,31 @@ public sealed class ColumnScheduler
     /// <summary>
     /// Requests bands for unknown columns within radius (nearest first) and queues the chunks of
     /// known columns that have not been queued yet. enqueue gets every chunk coord in a column's band.
+    /// Every few ticks, queued columns are re-checked: needsGenerating(coord) says whether a chunk
+    /// is in range but not loaded, generating or waiting, and such chunks are queued again.
     /// </summary>
-    public void Tick(int2 center, int radius, int maxNewColumns, Action<int3> enqueue)
+    public void Tick(int2 center, int radius, int maxNewColumns, Action<int3> enqueue, Func<int3, bool> needsGenerating)
     {
         EnsureOffsets(radius);
         int requested = 0;
         bool busy = false;
+        bool recheck = ++ticksSinceCheck >= RecheckEvery;
+        if (recheck)
+            ticksSinceCheck = 0;
         foreach (var o in offsets)
         {
             int2 column = center + o;
             if (expanded.Contains(column))
+            {
+                if (recheck && bands.TryGetValue(column, out var known))
+                    for (int y = known.x; y <= known.y; y++)
+                    {
+                        var c = new int3(column.x, y, column.y);
+                        if (needsGenerating(c))
+                            enqueue(c);
+                    }
                 continue;
+            }
 
             if (bands.TryGetValue(column, out var band))
             {

@@ -136,6 +136,38 @@ public class WriteSystem
             storedBySource[source] = byTarget;
     }
 
+    // Writes a chunk sends after its decoration (e.g. a stream arriving from a neighbour and running
+    // on): enqueued and added to what the chunk already sent, so they replay like decoration writes.
+    public void EnqueueExtraWrites(int3 source, NativeList<PendingBlockWrite> writes)
+    {
+        storedBySource.TryGetValue(source, out var byTarget);
+        for (int i = 0; i < writes.Length; i++)
+        {
+            var w = writes[i];
+            EnqueueWrite(w);
+            if (w.targetChunk.Equals(source))
+                continue;
+
+            if (byTarget == null)
+            {
+                byTarget = targetMapPool.Count > 0 ? targetMapPool.Pop() : new Dictionary<int3, List<PendingBlockWrite>>();
+                storedBySource[source] = byTarget;
+            }
+            if (!byTarget.TryGetValue(w.targetChunk, out var list))
+            {
+                list = RentList();
+                byTarget[w.targetChunk] = list;
+                if (!sourcesByTarget.TryGetValue(w.targetChunk, out var sources))
+                {
+                    sources = sourceSetPool.Count > 0 ? sourceSetPool.Pop() : new HashSet<int3>();
+                    sourcesByTarget[w.targetChunk] = sources;
+                }
+                sources.Add(source);
+            }
+            list.Add(w);
+        }
+    }
+
     // Called when a chunk gets fresh block data: re-enqueues every stored write its loaded
     // neighbours sent it. Queued writes from those neighbours are replaced rather than doubled.
     public void ReplayStoredWrites(int3 target)
@@ -283,6 +315,11 @@ public class WriteSystem
             case PendingWriteMode.ReplaceAir:
             case PendingWriteMode.ReplaceSoft:
                 if (current == 0)
+                    blockIds[index] = w.blockId;
+                break;
+
+            case PendingWriteMode.ReplaceSolid:
+                if (current != (byte)BlockType.Air && current != (byte)BlockType.Water)
                     blockIds[index] = w.blockId;
                 break;
         }

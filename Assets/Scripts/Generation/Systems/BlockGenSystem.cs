@@ -72,7 +72,6 @@ public class BlockGenSystem
             chunkSize = chunkLodSize,
             sampleRes = sampleRes,
             chunkCoord = coord,
-            waterLevel = cfg.biomeDataManager.GetWaterLevel(),
 
             // Pass biome data
             biomeHints = biomeData.grid,

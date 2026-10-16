@@ -22,15 +22,23 @@ public struct BlockWriter
         int3 targetChunk = FloorDiv(worldPos, chunkSize);
         int3 targetLocal = worldPos - targetChunk * chunkSize;
 
-        // Blocks inside this chunk are written straight into its array. Local 0 is excluded
-        // because WriteSystem mirrors those into the neighbouring chunk's overlap layer.
-        if (mode == PendingWriteMode.ReplaceAir && targetChunk.Equals(chunkCoord) &&
-            targetLocal.x != 0 && targetLocal.y != 0 && targetLocal.z != 0)
+        // Blocks inside this chunk are written straight into its array. Those on local 0 also go
+        // to WriteSystem, which mirrors them into the neighbouring chunk's overlap layer.
+        if ((mode == PendingWriteMode.ReplaceAir || mode == PendingWriteMode.Replace || mode == PendingWriteMode.ReplaceSolid)
+            && targetChunk.Equals(chunkCoord))
         {
             int index = targetLocal.x + targetLocal.y * indexSize + targetLocal.z * indexSize * indexSize;
-            if (blockIds[index] == (byte)BlockType.Air)
+            byte current = blockIds[index];
+            bool write = mode == PendingWriteMode.Replace
+                         || (mode == PendingWriteMode.ReplaceAir && current == (byte)BlockType.Air)
+                         || (mode == PendingWriteMode.ReplaceSolid && current != (byte)BlockType.Air && current != (byte)BlockType.Water);
+            if (write)
                 blockIds[index] = blockId;
-            return;
+            if (targetLocal.x != 0 && targetLocal.y != 0 && targetLocal.z != 0)
+                return;
+            if (!write)
+                return;   // nothing changed, nothing to mirror
+            mode = PendingWriteMode.Replace;   // already decided here: WriteSystem just writes and mirrors it
         }
 
         // Drops inside this chunk can settle right here, since its blocks are available.

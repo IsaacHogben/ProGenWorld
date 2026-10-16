@@ -53,6 +53,8 @@ public class VoxelRenderSettings : MonoBehaviour
     [Header("Level Of Detail")]
     [Tooltip("Leaves and other alpha masked blocks render solid from this detail level on (1 = half resolution, 2 = quarter resolution). Rays stop at the first leaf instead of marching through the canopy; far away the mask holes are smaller than a pixel anyway. 0 = never.")]
     [Range(0, 2)] public int solidLeavesFromLod = 1;
+    [Tooltip("Camera rays also treat leaves as solid beyond this distance (world units), at any detail level: the holes are about pixel sized there, and marching through canopies is expensive. 0 = only from the LOD above.")]
+    [Min(0f)] public float solidLeavesDistance = 64f;
 
     [Header("Texel Relief")]
     [Tooltip("Carve nearby block faces into small columns, one per texture texel: dark texels sink, bright texels stay at the surface. Follows the Small Scale texel grid.")]
@@ -137,6 +139,8 @@ public class VoxelRenderSettings : MonoBehaviour
     [Min(0f)] public float shadowMaxDistance = 300f;
     [Tooltip("Occluders closer than this (in blocks) along a shadow ray are ignored. Removes the striping that each 1-block step of a slope casts on the next one when the sun is low. 0 = exact voxel shadows.")]
     [Range(0f, 8f)] public float shadowIgnoreDistance = 0f;
+    [Tooltip("Shadow rays count as blocked once they reach this many leaf blocks in a row of a canopy, instead of testing every leaf's alpha: a canopy a few blocks deep lets almost no light through anyway. Lower = cheaper, darker canopies. 0 = test every leaf.")]
+    [Range(0, 8)] public int shadowLeafDepth = 3;
 
     [Header("Water / Translucent")]
     [Tooltip("Multiplies the water block's painted texture (Block Database), which colours the thin surface layer.")]
@@ -216,6 +220,8 @@ public class VoxelRenderSettings : MonoBehaviour
         public static readonly int GrassTexels = Shader.PropertyToID("_VoxelGrassTexels");
         public static readonly int TexelCount = Shader.PropertyToID("_VoxelTexelCount");
         public static readonly int SolidLeavesFromLevel = Shader.PropertyToID("_VoxelSolidLeavesFromLevel");
+        public static readonly int SolidLeavesDistance = Shader.PropertyToID("_VoxelSolidLeavesDistance");
+        public static readonly int ShadowLeafDepth = Shader.PropertyToID("_VoxelShadowLeafDepth");
         public static readonly int AmbientOcclusion = Shader.PropertyToID("_VoxelAmbientOcclusion");
         public static readonly int ShadowPixelated = Shader.PropertyToID("_VoxelShadowPixelated");
     }
@@ -303,6 +309,8 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalFloat(Ids.LeafFlutterDistance, leafFlutterDistance);
         ApplyGrassBlades();
         Shader.SetGlobalFloat(Ids.SolidLeavesFromLevel, solidLeavesFromLod);
+        Shader.SetGlobalFloat(Ids.SolidLeavesDistance, solidLeavesDistance);
+        Shader.SetGlobalFloat(Ids.ShadowLeafDepth, shadowLeafDepth);
         Shader.SetGlobalFloat(Ids.AmbientOcclusion, ambientOcclusion);
         Shader.SetGlobalFloat(Ids.ShadowPixelated, pixelatedShadows ? 1f : 0f);
         ApplyAntiAliasing();

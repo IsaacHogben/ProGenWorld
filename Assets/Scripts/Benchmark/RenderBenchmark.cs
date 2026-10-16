@@ -31,6 +31,7 @@ public class RenderBenchmark : MonoBehaviour
         public bool overWater;   // offset / yaw relative to the nearest open water instead of the player
         public bool playerInWater;   // move the player into shallow water first (lookAtPlayer views)
         public bool overStream;      // offset relative to the nearest stream water (water well above the water level), looking at it
+        public bool overForest;      // offset relative to the densest tree canopy near the player, looking at it
     }
 
     static readonly View[] Views =
@@ -49,11 +50,15 @@ public class RenderBenchmark : MonoBehaviour
         new View { name = "streamHigh", offset = new Vector3(0f, 45f, -45f), overStream = true },
         new View { name = "streamTop", offset = new Vector3(0f, 110f, -1f), overStream = true },
         new View { name = "wading", offset = new Vector3(2.5f, 1.8f, -4f), lookAtPlayer = true, playerInWater = true },
+        new View { name = "forest", offset = new Vector3(0f, 8f, -28f), overForest = true },
+        new View { name = "forestHigh", offset = new Vector3(0f, 45f, -40f), overForest = true },
+        new View { name = "forestUnder", offset = new Vector3(0f, -14f, -10f), overForest = true },
     };
 
     // Open water near the player (top of a water surface block) and the direction with the most
     // water ahead of it, found once after loading. Water views are skipped when there is none.
     Vector3? waterSpot;
+    Vector3? forestSpot;   // middle of the densest canopy (in the leaves)
     Vector3? shallowSpot;   // water one block deep, for the player to stand in
     float waterYaw;
 
@@ -305,6 +310,13 @@ public class RenderBenchmark : MonoBehaviour
         };
         configs["noFarHorizon"] = () => FindFirstObjectByType<ViewDistanceSettings>().farHorizon = false;
         configs["noLowestDetail"] = () => FindFirstObjectByType<ViewDistanceSettings>().lowestDetailRange = 0;
+        configs["solidLeafShadows"] = () => Shader.SetGlobalFloat("_VoxelBenchSolidLeaves", 1f);   // shadow rays ignore leaf alpha
+        configs["solidLeaves"] = () => Shader.SetGlobalFloat("_VoxelBenchSolidLeaves", 2f);        // camera and shadow rays
+        configs["leavesAlpha"] = () => { settings.solidLeavesDistance = 0f; settings.shadowLeafDepth = 0; };   // before the leaf limits
+        configs["noSolidLeafDistance"] = () => settings.solidLeavesDistance = 0f;
+        configs["noShadowLeafDepth"] = () => settings.shadowLeafDepth = 0;
+        configs["solidLeaves32"] = () => settings.solidLeavesDistance = 32f;
+        configs["shadowLeafDepth1"] = () => settings.shadowLeafDepth = 1;
         configs["baselineAgain"] = () => { };
     }
 
@@ -330,6 +342,7 @@ public class RenderBenchmark : MonoBehaviour
     void RestoreBaseline()
     {
         foreach (var kv in baselineFields) kv.Key.SetValue(settings, kv.Value);
+        Shader.SetGlobalFloat("_VoxelBenchSolidLeaves", 0f);
         urp.msaaSampleCount = baseMsaa;
         foreach (var fc in FindObjectsByType<AtmosphericFogController>(FindObjectsSortMode.None)) fc.enabled = true;
         foreach (var s in ssaoFeatures) s.SetActive(true);
@@ -337,6 +350,15 @@ public class RenderBenchmark : MonoBehaviour
 
     void PlaceCamera(View v)
     {
+        if (v.overForest)
+        {
+            cam.transform.position = forestSpot.Value + v.offset;
+            if (v.offset.y < 0f && VoxelPhysics.TryGetColumnSurface(Mathf.FloorToInt(cam.transform.position.x), Mathf.FloorToInt(cam.transform.position.z),
+                    forestSpot.Value.y, forestSpot.Value.y - 40f, out float ground))
+                cam.transform.position = new Vector3(cam.transform.position.x, ground + 2f, cam.transform.position.z);   // under the trees
+            cam.transform.rotation = Quaternion.LookRotation(forestSpot.Value - cam.transform.position);
+            return;
+        }
         if (v.overStream)
         {
             cam.transform.position = streamSpot.Value + v.offset;
@@ -382,6 +404,7 @@ public class RenderBenchmark : MonoBehaviour
         playerStart = player.position;
         FindWater();
         FindStream();
+        FindForest();
         if (Arg("-benchWaterWalls") != null)
             FindWaterWalls(Arg("-benchWaterWalls") == "view");
         // -benchLookAt x,y,z: the stream views look there instead
@@ -393,7 +416,8 @@ public class RenderBenchmark : MonoBehaviour
         bool first = true;
         foreach (var view in Views)
         {
-            if ((view.overStream && streamSpot == null) || (view.overWater && waterSpot == null) || (view.playerInWater && shallowSpot == null))
+            if ((view.overStream && streamSpot == null) || (view.overWater && waterSpot == null) || (view.playerInWater && shallowSpot == null)
+                || (view.overForest && forestSpot == null))
                 continue;
             if (viewFilter != null && !viewFilter.Contains(view.name))
                 continue;
@@ -444,7 +468,7 @@ public class RenderBenchmark : MonoBehaviour
                 json.Append(first ? "" : ",\n");
                 first = false;
                 json.Append($"    {{ \"view\": \"{view.name}\", \"config\": \"{name}\", {stats.ToJson()} }}");
-                Log($"{view.name,-12} {name,-16} gpu {stats.GpuMean:F2} ms  cpu {stats.CpuMean:F2} ms");
+                Log($"{view.name,-12} {name,-16} gpu {stats.GpuMean:F2} ms  cpu {stats.CpuMean:F2} ms  cells {chunkManager.VoxelRenderer.LastDrawnCells}");
             }
         }
         RestoreBaseline();
@@ -547,6 +571,56 @@ public class RenderBenchmark : MonoBehaviour
             }
         }
         Log($"water walls ({(deep ? 2 : 1)}+ deep): {walls} columns within 160 blocks{sample}");
+    }
+
+    // Densest tree canopy within 160 blocks: the column area with the most leaf (alpha masked) voxels.
+    void FindForest()
+    {
+        var dbField = typeof(ChunkManager).GetField("nativeBlockDatabase", BindingFlags.Instance | BindingFlags.NonPublic);
+        if (dbField?.GetValue(chunkManager) is not Unity.Collections.NativeArray<BlockDatabase.BlockInfoUnmanaged> db || !db.IsCreated)
+        {
+            Log("no block database: forest views skipped");
+            return;
+        }
+        const int R = 160, S = 4;
+        int n = R * 2 / S + 1;
+        var leaves = new int[n, n];
+        var heights = new float[n, n];
+        Vector3 p = player.position;
+        for (int iz = 0; iz < n; iz++)
+        for (int ix = 0; ix < n; ix++)
+        {
+            int x = Mathf.FloorToInt(p.x) - R + ix * S, z = Mathf.FloorToInt(p.z) - R + iz * S;
+            int count = 0; float sumY = 0f;
+            for (int y = Mathf.FloorToInt(p.y) - 40; y < Mathf.FloorToInt(p.y) + 60; y++)
+            {
+                if (VoxelPhysics.TryGetBlock(new Unity.Mathematics.int3(x, y, z), out byte id) && id < db.Length
+                    && db[id].visibility == BlockVisibility.Stacked)
+                {
+                    count++;
+                    sumY += y;
+                }
+            }
+            leaves[ix, iz] = count;
+            heights[ix, iz] = count > 0 ? sumY / count : 0f;
+        }
+        int best = 0, bx = 0, bz = 0;
+        for (int iz = 2; iz < n - 2; iz++)
+        for (int ix = 2; ix < n - 2; ix++)
+        {
+            int sum = 0;
+            for (int dz = -2; dz <= 2; dz++)
+            for (int dx = -2; dx <= 2; dx++)
+                sum += leaves[ix + dx, iz + dz];
+            if (sum > best) { best = sum; bx = ix; bz = iz; }
+        }
+        if (best == 0)
+        {
+            Log("no trees near the player: forest views skipped");
+            return;
+        }
+        forestSpot = new Vector3(Mathf.FloorToInt(p.x) - R + bx * S + 0.5f, heights[bx, bz], Mathf.FloorToInt(p.z) - R + bz * S + 0.5f);
+        Log($"forest at {forestSpot.Value}: {best} leaf voxels sampled in a 20x20 area");
     }
 
     void FindWater()

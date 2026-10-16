@@ -75,6 +75,9 @@ float  _VoxelSpecular;
 float4 _VoxelTexVariation;          // x: small scale, y: large scale (blocks per tile), z: large blend, w: mode (0 lerp, 1 multiply)
 float  _VoxelShadowIgnoreDistance;  // occluders closer than this along a shadow ray are ignored (blocks)
 float  _VoxelSolidLeavesFromLevel;  // detail level from which masked blocks (leaves) render solid; 0 = never
+float  _VoxelSolidLeavesDistance;   // camera rays treat masked blocks as solid beyond this distance (world units); 0 = never
+float  _VoxelShadowLeafDepth;       // shadow rays count as blocked in their Nth masked block; 0 = no limit
+float  _VoxelBenchSolidLeaves;      // RenderBenchmark only: 1 = masked blocks solid in shadow rays, 2 = everywhere
 float  _VoxelTexelCount;            // texels per block texture edge
 
 // Shaders with their own material cbuffer (e.g. the voxel shadow receiver) define this.
@@ -399,7 +402,15 @@ bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
 
     // Far away the alpha mask holes are smaller than a pixel: treat masked blocks as solid so
     // rays stop at the first leaf instead of marching through the canopy.
-    bool solidMasked = _VoxelSolidLeavesFromLevel > 0.5 && level >= (uint)_VoxelSolidLeavesFromLevel;
+    bool solidMasked = (_VoxelSolidLeavesFromLevel > 0.5 && level >= (uint)_VoxelSolidLeavesFromLevel)
+        || _VoxelBenchSolidLeaves > (skipStartSolid ? 0.5 : 1.5);
+    // Camera rays (o is the camera, t its distance in voxels): solid leaves past a distance too.
+    float solidMaskedFrom = !skipStartSolid && _VoxelSolidLeavesDistance > 0.0
+        ? _VoxelSolidLeavesDistance / (c.originSize.w * VoxelLevelScale(level)) : 3.4e38;
+    // Shadow rays: a canopy several leaf blocks deep lets almost no light through anyway, so stop
+    // testing masks after a few blocks and call it blocked.
+    int leafLimit = skipStartSolid ? (int)_VoxelShadowLeafDepth : 0;
+    int leafBlocks = 0;
 
     int3 stepDir = int3(d.x > 0 ? 1 : -1, d.y > 0 ? 1 : -1, d.z > 0 ? 1 : -1);
     int majorAxis = VoxelMajorAxis(d);
@@ -413,7 +424,7 @@ bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
         bool isUniform = false;
         uint id = VoxelFetchMarch(c, level, cur.p, isUniform);
         uint vis = VoxelBlockVisibility(id);
-        if (solidMasked && vis == VOXEL_VIS_STACKED)
+        if (vis == VOXEL_VIS_STACKED && (solidMasked || cur.t >= solidMaskedFrom))
             vis = VOXEL_VIS_OPAQUE;
 
         int faceAxis = cur.axis >= 0 ? cur.axis : majorAxis;
@@ -450,6 +461,12 @@ bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
         if (prevVis == VOXEL_VIS_STACKED && (vis == VOXEL_VIS_INVISIBLE || vis == VOXEL_VIS_TRANSLUCENT) && VoxelMaskPass(c, level, prevId, faceAxis, pos))
         {
             hit.t = cur.t; hit.id = prevId; hit.axis = faceAxis; hit.posVoxel = pos;
+            return true;
+        }
+
+        if (vis == VOXEL_VIS_STACKED && leafLimit > 0 && ++leafBlocks >= leafLimit)
+        {
+            hit.t = cur.t; hit.id = id; hit.axis = faceAxis; hit.posVoxel = pos;
             return true;
         }
 

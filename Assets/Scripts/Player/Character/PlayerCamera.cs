@@ -3,7 +3,8 @@ using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
 
 /// <summary>
-/// First and third person camera for the player (V toggles, scroll zooms in third person, Esc
+/// First and third person camera for the player (V toggles, scroll zooms in third person and
+/// zooming in past the closest distance goes to first person, scrolling out comes back, Esc
 /// frees the cursor). Runs after animation so it sees the final head position.
 /// </summary>
 [DefaultExecutionOrder(100)]
@@ -37,6 +38,8 @@ public class PlayerCamera : MonoBehaviour
     [SerializeField] private float distance = 6f;
     [SerializeField] private float minDistance = 2f;
     [SerializeField] private float maxDistance = 14f;
+    [Tooltip("Scrolling in past the closest distance switches to first person; scrolling out in first person switches back")]
+    [SerializeField] private bool scrollSwitchesView = true;
     [Tooltip("Distance change per scroll notch")]
     [SerializeField] private float zoomStep = 0.8f;
     [Tooltip("Smoothing of the camera's vertical follow (seconds). Softens stairs and landings")]
@@ -122,21 +125,36 @@ public class PlayerCamera : MonoBehaviour
             }
 
             if (keyboard[toggleViewKey].wasPressedThisFrame)
-            {
-                thirdPerson = !thirdPerson;
-                smoothPivotY = transform.position.y + pivotHeight;
-                pivotYVelocity = 0f;
-            }
+                SetThirdPerson(!thirdPerson);
         }
 
         var mouse = Mouse.current;
-        if (thirdPerson && mouse != null)
+        float scroll = mouse != null ? mouse.scroll.ReadValue().y : 0f;
+        if (Mathf.Abs(scroll) > 0.01f)
         {
-            float scroll = mouse.scroll.ReadValue().y;
-            if (Mathf.Abs(scroll) > 0.01f)
-                targetDistance = Mathf.Clamp(targetDistance - Mathf.Sign(scroll) * zoomStep, minDistance, maxDistance);
+            if (thirdPerson)
+            {
+                // Already as close as it goes: one more notch in goes to first person.
+                if (scroll > 0f && scrollSwitchesView && targetDistance <= minDistance + 0.01f)
+                    SetThirdPerson(false);
+                else
+                    targetDistance = Mathf.Clamp(targetDistance - Mathf.Sign(scroll) * zoomStep, minDistance, maxDistance);
+            }
+            else if (scroll < 0f && scrollSwitchesView)
+            {
+                // Scrolling out of first person: back to third person, starting close.
+                SetThirdPerson(true);
+                targetDistance = distance = currentDistance = minDistance;
+            }
         }
         distance = Mathf.Lerp(distance, targetDistance, 1f - Mathf.Exp(-12f * Time.deltaTime));
+    }
+
+    void SetThirdPerson(bool on)
+    {
+        thirdPerson = on;
+        smoothPivotY = transform.position.y + pivotHeight;
+        pivotYVelocity = 0f;
     }
 
     void PlaceFirstPerson()

@@ -85,8 +85,9 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
     [Tooltip("Jumping from the surface (to climb out) works while the water is no deeper than this above the feet")]
     [SerializeField] private float surfaceJumpDepth = 2.4f;
 
-    [Header("Dev: Noclip")]
-    [Tooltip("Fly through everything (editor and development builds only)")]
+    [Header("Noclip")]
+    [Tooltip("Fly through everything (editor and builds)")]
+    [SerializeField] private bool allowNoclip = true;
     [SerializeField] private Key noclipKey = Key.N;
     [SerializeField] private float flySpeed = 15f;
     [SerializeField] private float flyFastMultiplier = 4f;
@@ -190,7 +191,7 @@ public class PlayerController : MonoBehaviour, ICharacterLocomotionSource
         UpdatePosture();
         crouch = Mathf.MoveTowards(crouch, posture == Posture.Crouching ? 1f : 0f, crouchTransitionSpeed * Time.deltaTime);
 
-        if ((Application.isEditor || Debug.isDebugBuild) && Keyboard.current != null && Keyboard.current[noclipKey].wasPressedThisFrame)
+        if (allowNoclip && Keyboard.current != null && Keyboard.current[noclipKey].wasPressedThisFrame)
         {
             motor.NoClip = !motor.NoClip;
             motor.FlyVelocity = Vector3.zero;

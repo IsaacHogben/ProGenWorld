@@ -204,6 +204,11 @@ public struct BiomeHint
     public float waterY;           // water fills air at or below this world y
     public float decoScale;        // decoration spawn chance multiplier
     public byte surfaceOverride;   // block for exposed gentle surfaces (0 = biome palette)
+
+    // Region generator: gradient thresholds inside the column's 3D shapes (world y within the
+    // band); elsewhere the primary biome's apply. BiomeJob leaves the band empty.
+    public float shapeBandMin, shapeBandMax;
+    public float shapeGradient1, shapeGradient2;
 }
 
 // ============================================================================

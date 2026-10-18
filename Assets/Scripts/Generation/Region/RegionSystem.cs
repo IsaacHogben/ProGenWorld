@@ -66,21 +66,18 @@ public sealed class RegionSystem : IDisposable
         shapes = new NativeArray<BiomeShapeData>(defs.Length, Allocator.Persistent);
         detailSources = new NativeArray<DetailSourceData>(256, Allocator.Persistent);
 
-        // A 3D shape tree's strength and reach (measured when Auto Calibrate is on)
-        DetailSourceData Source(TerrainTypeDefinitionSO terrain, float strength, bool autoCalibrate, float up, float down)
+        // A 3D shape tree's strength and reach (measured, unless overridden)
+        DetailSourceData Source(TerrainTypeDefinitionSO terrain, float strength, DetailCalibration.Placement p)
         {
             if (terrain == null || strength <= 0f)
                 return default;
-            if (autoCalibrate)
+            return new DetailSourceData
             {
-                var cal = DetailCalibration.Get(terrain, frequency, seed);
-                if (cal.valid)
-                {
-                    up = cal.up;
-                    down = cal.down;
-                }
-            }
-            return new DetailSourceData { hasDetail = 1, strength = strength, rangeUp = up, rangeDown = down };
+                hasDetail = 1, strength = strength, rangeUp = p.up, rangeDown = p.down,
+                overrideGradient = (byte)(terrain.overrideGradientThresholds ? 1 : 0),
+                gradient1 = terrain.gradientThreshold1,
+                gradient2 = terrain.gradientThreshold2
+            };
         }
 
         var layers = new List<SubBiomeData>();
@@ -123,13 +120,14 @@ public sealed class RegionSystem : IDisposable
                     });
                     byte source = RegionDetailSources.LayerSource(defs.Length, layer, n);
                     if (source != RegionDetailSources.None)
-                        detailSources[source] = Source(layer.detailTerrain, layer.detailStrength, layer.autoCalibrate,
-                            layer.detailRangeUp, layer.detailRangeDown);
+                        detailSources[source] = Source(layer.detailTerrain, layer.detailStrength, layer.ResolveDetail(frequency, seed));
                     else if (layer.detailTerrain != null && defs.Length + n >= RegionDetailSources.None)
                         Debug.LogWarning($"[RegionGen] Too many sub-biome layers: the 3D shape of '{layer.name}' in {biome.biomeType} is ignored.");
                 }
 
-            var detail = Source(s.detailTerrain, s.detailStrength, s.autoCalibrate, s.detailRangeUp, s.detailRangeDown);
+            var detail = s.detailTerrain != null && s.detailStrength > 0f
+                ? Source(s.detailTerrain, s.detailStrength, s.ResolveDetail(frequency, seed))
+                : default;
             detailSources[id] = detail;
 
             shapes[id] = new BiomeShapeData
@@ -148,6 +146,8 @@ public sealed class RegionSystem : IDisposable
                 detailRangeDown = detail.rangeDown,
                 rainfall = s.rainfall,
                 sedimentBlock = (byte)biome.sedimentBlock,
+                gradient1 = biome.gradientThreshold1,
+                gradient2 = biome.gradientThreshold2,
                 subStart = subStart,
                 subCount = layers.Count - subStart
             };
@@ -262,6 +262,7 @@ public sealed class RegionSystem : IDisposable
             rp = rp,
             shapes = shapes,
             sources = detailSources,
+            subs = subBiomes,
             raw = raw,
             columns = columns,
             hints = hints

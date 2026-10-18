@@ -23,6 +23,18 @@ public class TerrainTypeDefinitionSO : ScriptableObject
     [Range(-500, 500)]
     public int yOffset = 0;
 
+    [Header("Block Layers (Region Gen 3D shapes)")]
+    [Tooltip("Use this tree's own gradient thresholds for surface / subsurface / deep blocks inside its 3D shapes, in place of the biome's (blended by the shape's weight).")]
+    public bool overrideGradientThresholds = false;
+
+    [Tooltip("Gradient threshold for surface/subsurface inside this tree's shapes (density change per block upward).")]
+    [Range(0f, 0.1f)]
+    public float gradientThreshold1 = 0.005f;
+
+    [Tooltip("Gradient threshold for subsurface/deep inside this tree's shapes.")]
+    [Range(0f, 0.1f)]
+    public float gradientThreshold2 = 0.002f;
+
     [Header("Density Curve (Replaced by NodeTree)")]
     [Tooltip("Density modification by height. X = normalized height (0-1), Y = density modifier")]
     public AnimationCurve densityCurve = AnimationCurve.Linear(0, 0, 1, 0);
@@ -80,5 +92,7 @@ public class TerrainTypeDefinitionSO : ScriptableObject
         {
             densityCurve = AnimationCurve.Linear(0, 0, 1, 0);
         }
+        if (gradientThreshold2 > gradientThreshold1)
+            gradientThreshold2 = gradientThreshold1;
     }
 }

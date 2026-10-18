@@ -53,7 +53,7 @@ public struct BlockAssignmentJob : IJobParallelFor
         else if (isAirAbove && isAboveWaterLevel)
         {
             // Surface block - use biome's gradient-based palette
-            block = GetSurfaceBlock(hint, verticalGradient);
+            block = GetSurfaceBlock(hint, verticalGradient, worldY);
         }
         else if (isAirAbove && !isAboveWaterLevel)
         {
@@ -63,7 +63,7 @@ public struct BlockAssignmentJob : IJobParallelFor
         else if (verticalGradient > 0)
         {
             // Subsurface - approaching surface from below
-            block = GetSubsurfaceBlock(hint, verticalGradient);
+            block = GetSubsurfaceBlock(hint, verticalGradient, worldY);
         }
         else
         {
@@ -74,26 +74,41 @@ public struct BlockAssignmentJob : IJobParallelFor
         blockIds[i] = block;
     }
 
-    private byte GetSurfaceBlock(BiomeHint hint, float gradient)
+    // Gradient thresholds: the column's 3D shapes' (blended) inside their band, else the primary biome's
+    private void Thresholds(in BiomeHint hint, in BiomeDefinition biome, int worldY, out float t1, out float t2)
     {
-        // Blend between primary and secondary biome based on hint.biomeBlend
-        BiomeDefinition primaryBiome = biomes[hint.primaryBiome];
+        if (worldY >= hint.shapeBandMin && worldY <= hint.shapeBandMax)
+        {
+            t1 = hint.shapeGradient1;
+            t2 = hint.shapeGradient2;
+        }
+        else
+        {
+            t1 = biome.gradientThreshold1;
+            t2 = biome.gradientThreshold2;
+        }
+    }
 
-        // Use gradient thresholds from primary biome
-        if (gradient > primaryBiome.gradientThreshold1)
+    private byte GetSurfaceBlock(BiomeHint hint, float gradient, int worldY)
+    {
+        BiomeDefinition primaryBiome = biomes[hint.primaryBiome];
+        Thresholds(hint, primaryBiome, worldY, out float t1, out float t2);
+
+        if (gradient > t1)
             return hint.surfaceOverride != 0 ? hint.surfaceOverride : primaryBiome.surfaceBlock;        // Gentle slopes
-        else if (gradient > primaryBiome.gradientThreshold2)
+        else if (gradient > t2)
             return primaryBiome.subsurfaceBlock;     // Moderate slopes
         else
             return primaryBiome.deepBlock;           // Steep cliffs
     }
 
-    private byte GetSubsurfaceBlock(BiomeHint hint, float gradient)
+    private byte GetSubsurfaceBlock(BiomeHint hint, float gradient, int worldY)
     {
         BiomeDefinition primaryBiome = biomes[hint.primaryBiome];
+        Thresholds(hint, primaryBiome, worldY, out _, out float t2);
 
         // Check if we're close to surface or deeper
-        if (gradient > primaryBiome.gradientThreshold2)
+        if (gradient > t2)
             return primaryBiome.subsurfaceBlock;
         else
             return primaryBiome.deepBlock;

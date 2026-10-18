@@ -8,7 +8,7 @@ using UnityEngine;
 /// weight so it shrinks away towards the biome's border.
 /// </summary>
 [Serializable]
-public class RegionShape
+public class RegionShape : ISerializationCallbackReceiver
 {
     [Header("Height")]
     [Tooltip("Ground height of this biome in blocks, added to the world's macro height.")]
@@ -39,17 +39,41 @@ public class RegionShape
     [Tooltip("How much the 3D shape replaces the height surface at the heart of the biome (it fades out towards the border).")]
     [Range(0f, 1f)] public float detailStrength = 1f;
 
-    [Tooltip("Measure the tree at start: where its ground sits and how far its shapes reach. Off = use the three values below.")]
-    public bool autoCalibrate = true;
+    [Tooltip("Off: the tree's ground is measured at start (Auto Calibrate). On: use Detail Surface Offset.")]
+    public bool overrideSurfaceOffset = false;
 
-    [Tooltip("Height in the tree's own coordinates where its ground sits; it is placed on this biome's surface. (Auto Calibrate measures it.)")]
+    [Tooltip("Height in the tree's own coordinates where its ground sits; it is placed on this biome's surface. Higher sinks the shape into the ground, lower raises it out. Used when Override Surface Offset is on (the log prints the measured value to start from).")]
     public float detailSurfaceOffset = 0f;
 
-    [Tooltip("Highest the 3D shape reaches above the surface, in blocks. Nothing is generated above this: too low cuts shapes off flat. (Auto Calibrate measures it.)")]
+    [Tooltip("Off: how far the shape reaches above the surface is measured at start. On: use Detail Range Up.")]
+    public bool overrideRangeUp = false;
+
+    [Tooltip("Highest the 3D shape reaches above the surface, in blocks. Nothing is generated above this: too low cuts shapes off flat. Used when Override Range Up is on.")]
     [Min(0f)] public float detailRangeUp = 64f;
 
-    [Tooltip("Deepest the 3D shape reaches below the surface, in blocks (caves, undercuts). (Auto Calibrate measures it.)")]
+    [Tooltip("Off: how far the shape reaches below the surface is measured at start. On: use Detail Range Down.")]
+    public bool overrideRangeDown = false;
+
+    [Tooltip("Deepest the 3D shape reaches below the surface, in blocks (caves, undercuts). Used when Override Range Down is on.")]
     [Min(0f)] public float detailRangeDown = 32f;
+
+    // Older assets: Auto Calibrate off meant all three values were set by hand
+    [SerializeField, HideInInspector] bool autoCalibrate = true;
+
+    public void OnBeforeSerialize() { }
+
+    public void OnAfterDeserialize()
+    {
+        if (autoCalibrate)
+            return;
+        autoCalibrate = true;
+        overrideSurfaceOffset = overrideRangeUp = overrideRangeDown = true;
+    }
+
+    /// <summary>Where the tree's ground sits and how far it reaches: measured, except the overridden values.</summary>
+    public DetailCalibration.Placement ResolveDetail(float frequency, int seed) =>
+        DetailCalibration.Resolve(detailTerrain, frequency, seed,
+            overrideSurfaceOffset, detailSurfaceOffset, overrideRangeUp, detailRangeUp, overrideRangeDown, detailRangeDown);
 
     [Tooltip("Multiplier on the tree's output so its density per block matches the world's density scale.")]
     [Min(0.001f)] public float detailDensityScale = 1f;
@@ -77,7 +101,7 @@ public enum SubBiomeKind : byte
 /// own weight, so layers fade out at biome borders and blend where they overlap.
 /// </summary>
 [Serializable]
-public class SubBiomeLayer
+public class SubBiomeLayer : ISerializationCallbackReceiver
 {
     public string name = "Layer";
     public SubBiomeKind kind = SubBiomeKind.Continuous;
@@ -108,23 +132,47 @@ public class SubBiomeLayer
     public BlockType surfaceBlock = BlockType.Air;
 
     [Header("3D Shape (optional)")]
-    [Tooltip("This layer's own FastNoise tree for 3D shapes; where the layer is, it takes over from the biome's shape by the layer's mask. None = the biome's shape. Must be in BiomeDataManager's terrain types.")]
+    [Tooltip("This layer's own FastNoise tree for 3D shapes; where the layer is, it takes over from the biome's shape by the layer's mask (overlapping layers with their own shapes share it). None = the biome's shape. Must be in BiomeDataManager's terrain types.")]
     public TerrainTypeDefinitionSO detailTerrain;
 
     [Tooltip("How much this layer's 3D shape replaces the height surface where the layer is at full mask.")]
     [Range(0f, 1f)] public float detailStrength = 1f;
 
-    [Tooltip("Measure the tree at start: where its ground sits and how far its shapes reach. Off = use the three values below.")]
-    public bool autoCalibrate = true;
+    [Tooltip("Off: the tree's ground is measured at start (Auto Calibrate). On: use Detail Surface Offset.")]
+    public bool overrideSurfaceOffset = false;
 
-    [Tooltip("Height in the tree's own coordinates where its ground sits. (Auto Calibrate measures it.)")]
+    [Tooltip("Height in the tree's own coordinates where its ground sits; it is placed on the biome's surface. Higher sinks the shape into the ground, lower raises it out. Used when Override Surface Offset is on (the log prints the measured value to start from).")]
     public float detailSurfaceOffset = 0f;
 
-    [Tooltip("Highest the 3D shape reaches above the surface, in blocks. (Auto Calibrate measures it.)")]
+    [Tooltip("Off: how far the shape reaches above the surface is measured at start. On: use Detail Range Up.")]
+    public bool overrideRangeUp = false;
+
+    [Tooltip("Highest the 3D shape reaches above the surface, in blocks. Nothing is generated above this: too low cuts shapes off flat. Used when Override Range Up is on.")]
     [Min(0f)] public float detailRangeUp = 64f;
 
-    [Tooltip("Deepest the 3D shape reaches below the surface, in blocks. (Auto Calibrate measures it.)")]
+    [Tooltip("Off: how far the shape reaches below the surface is measured at start. On: use Detail Range Down.")]
+    public bool overrideRangeDown = false;
+
+    [Tooltip("Deepest the 3D shape reaches below the surface, in blocks (caves, undercuts). Used when Override Range Down is on.")]
     [Min(0f)] public float detailRangeDown = 32f;
+
+    // Older assets: Auto Calibrate off meant all three values were set by hand
+    [SerializeField, HideInInspector] bool autoCalibrate = true;
+
+    public void OnBeforeSerialize() { }
+
+    public void OnAfterDeserialize()
+    {
+        if (autoCalibrate)
+            return;
+        autoCalibrate = true;
+        overrideSurfaceOffset = overrideRangeUp = overrideRangeDown = true;
+    }
+
+    /// <summary>Where the tree's ground sits and how far it reaches: measured, except the overridden values.</summary>
+    public DetailCalibration.Placement ResolveDetail(float frequency, int seed) =>
+        DetailCalibration.Resolve(detailTerrain, frequency, seed,
+            overrideSurfaceOffset, detailSurfaceOffset, overrideRangeUp, detailRangeUp, overrideRangeDown, detailRangeDown);
 
     [Tooltip("Multiplier on the tree's output so its density per block matches the world's density scale.")]
     [Min(0.001f)] public float detailDensityScale = 1f;
@@ -170,6 +218,8 @@ public struct DetailSourceData
     public float strength;
     public float rangeUp;
     public float rangeDown;
+    public byte overrideGradient;   // 1 = the tree's own gradient thresholds, else the biome's
+    public float gradient1, gradient2;
 }
 
 /// <summary>Job safe copy of a SubBiomeLayer.</summary>
@@ -209,6 +259,7 @@ public struct BiomeShapeData
 
     public float rainfall;
     public byte sedimentBlock;
+    public float gradient1, gradient2;   // the biome's gradient thresholds
     public int subStart, subCount;  // range in RegionSystem's SubBiomeData array
 }
 
@@ -223,14 +274,16 @@ public struct ColumnSample
     public float bandMin;    // world y range where 3D shapes can differ from the height surface
     public float bandMax;
     public byte palette;     // biome ID for blocks and decoration
-    public byte detail0, detail1, detail2;   // detail sources (RegionDetailSources) with 3D shapes here (255 = none)
-    public float detailW0, detailW1, detailW2;   // their weight * strength
+    public byte detail0, detail1, detail2, detail3;   // detail sources (RegionDetailSources) with 3D shapes here (255 = none)
+    public float detailW0, detailW1, detailW2, detailW3;   // their weight * strength
     public float waterY;     // water fills air at or below this world y (rivers, lakes, the water level)
     public float decoScale;  // decoration chance multiplier from sub-biomes
     public byte surfaceOverride;   // gentle surface block (0 = biome palette)
+    public float gradient1, gradient2;   // gradient thresholds inside the band (3D shapes' blended with the palette biome's)
 
     public const byte None = 255;
 
     public bool HasDetail => detail0 != None;
-    public float DetailWeight => detailW0 + detailW1 + detailW2;
+    public float DetailWeight => detailW0 + detailW1 + detailW2 + detailW3;
+    public bool Uses(int source) => detail0 == source || detail1 == source || detail2 == source || detail3 == source;
 }

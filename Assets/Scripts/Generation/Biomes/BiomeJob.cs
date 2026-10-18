@@ -85,7 +85,9 @@ public struct BiomeJob : IJobParallelFor
             secondaryBiome = secondaryBiome,
             biomeBlend = biomeBlend,
             waterY = waterLevel,
-            decoScale = 1f
+            decoScale = 1f,
+            shapeBandMin = 1f,   // empty band: the biome's thresholds everywhere
+            shapeBandMax = 0f
         };
     }
 

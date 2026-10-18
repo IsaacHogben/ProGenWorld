@@ -33,7 +33,7 @@ public sealed class HybridDensity
         densityScale = settings.densityScale;
 
         var byTerrain = new Dictionary<TerrainTypeDefinitionSO, FastNoise>();
-        void Register(int id, string owner, TerrainTypeDefinitionSO terrain, bool autoCalibrate, float surfaceOffset, float densityScale)
+        void Register(int id, string owner, TerrainTypeDefinitionSO terrain, DetailCalibration.Placement placement, float densityScale)
         {
             if (!byTerrain.TryGetValue(terrain, out var noise))
             {
@@ -52,13 +52,7 @@ public sealed class HybridDensity
 
             noiseByBiome[id] = noise;
             frequencyByBiome[id] = frequency / 100f * terrain.frequencyMultiplier;
-            surfaceOffsetByBiome[id] = surfaceOffset;
-            if (autoCalibrate)
-            {
-                var cal = DetailCalibration.Get(terrain, frequency, seed);
-                if (cal.valid)
-                    surfaceOffsetByBiome[id] = cal.ground;
-            }
+            surfaceOffsetByBiome[id] = placement.ground;
             scaleByBiome[id] = densityScale;
         }
 
@@ -66,8 +60,8 @@ public sealed class HybridDensity
         {
             var shape = biome != null ? biome.regionShape : null;
             if (shape?.detailTerrain != null && shape.detailStrength > 0f)
-                Register(biome.BiomeID, $"Biome {biome.biomeType}", shape.detailTerrain, shape.autoCalibrate,
-                    shape.detailSurfaceOffset, shape.detailDensityScale);
+                Register(biome.BiomeID, $"Biome {biome.biomeType}", shape.detailTerrain, shape.ResolveDetail(frequency, seed),
+                    shape.detailDensityScale);
         }
 
         int biomeCount = biomeDataManager.GetBiomeDefinitions().Length;
@@ -75,8 +69,8 @@ public sealed class HybridDensity
         {
             byte source = RegionDetailSources.LayerSource(biomeCount, layer, index);
             if (source != RegionDetailSources.None)
-                Register(source, $"Biome {biome.biomeType}, layer '{layer.name}'", layer.detailTerrain, layer.autoCalibrate,
-                    layer.detailSurfaceOffset, layer.detailDensityScale);
+                Register(source, $"Biome {biome.biomeType}, layer '{layer.name}'", layer.detailTerrain, layer.ResolveDetail(frequency, seed),
+                    layer.detailDensityScale);
         }
     }
 
@@ -119,6 +113,7 @@ public sealed class HybridDensity
                 used[c.detail0] = true;
                 if (c.detail1 != ColumnSample.None) used[c.detail1] = true;
                 if (c.detail2 != ColumnSample.None) used[c.detail2] = true;
+                if (c.detail3 != ColumnSample.None) used[c.detail3] = true;
             }
         }
         if (!anyDetail)
@@ -146,7 +141,7 @@ public sealed class HybridDensity
             for (int x = 0; x < side; x++)
             {
                 var c = columns[x * sampleRes + z * sampleRes * colSide];
-                if (c.detail0 != id && c.detail1 != id && c.detail2 != id)
+                if (!c.Uses(id))
                     continue;
 
                 float wx = origin.x + x * sampleRes, wz = origin.z + z * sampleRes;
@@ -203,6 +198,7 @@ public sealed class HybridDensity
         if (c.detail0 == id) return c.detailW0;
         if (c.detail1 == id) return c.detailW1;
         if (c.detail2 == id) return c.detailW2;
+        if (c.detail3 == id) return c.detailW3;
         return 0f;
     }
 
@@ -230,6 +226,7 @@ public sealed class HybridDensity
                 used[c.detail0] = true;
                 if (c.detail1 != ColumnSample.None) used[c.detail1] = true;
                 if (c.detail2 != ColumnSample.None) used[c.detail2] = true;
+                if (c.detail3 != ColumnSample.None) used[c.detail3] = true;
             }
         }
 
@@ -248,7 +245,7 @@ public sealed class HybridDensity
             for (int col = 0; col < columns.Length; col++)
             {
                 var c = columns[col];
-                if (c.detail0 != id && c.detail1 != id && c.detail2 != id)
+                if (!c.Uses(id))
                     continue;
                 for (int i = 0; i < count; i++)
                 {

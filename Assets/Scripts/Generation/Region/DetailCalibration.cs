@@ -18,6 +18,31 @@ public static class DetailCalibration
         public float down;     // deepest air below the ground
     }
 
+    /// <summary>Where a tree's ground sits (tree y) and how far it reaches above and below it (blocks).</summary>
+    public struct Placement
+    {
+        public float ground, up, down;
+    }
+
+    /// <summary>
+    /// A tree's placement: each value measured, unless overridden (or the tree cannot be measured,
+    /// in which case the given values are used).
+    /// </summary>
+    public static Placement Resolve(TerrainTypeDefinitionSO terrain, float frequency, int seed,
+        bool overrideGround, float ground, bool overrideUp, float up, bool overrideDown, float down)
+    {
+        var p = new Placement { ground = ground, up = up, down = down };
+        if (terrain == null || (overrideGround && overrideUp && overrideDown))
+            return p;
+        var cal = Get(terrain, frequency, seed);
+        if (!cal.valid)
+            return p;
+        if (!overrideGround) p.ground = cal.ground;
+        if (!overrideUp) p.up = cal.up;
+        if (!overrideDown) p.down = cal.down;
+        return p;
+    }
+
     const int Columns = 24;          // per side
     const float ColumnSpacing = 97f; // blocks
     const float YMin = -1024f, YMax = 1024f, YStep = 3f;

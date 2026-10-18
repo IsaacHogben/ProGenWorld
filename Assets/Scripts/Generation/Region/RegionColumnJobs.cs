@@ -248,13 +248,11 @@ public static class RegionMath
         public float detail;         // 3D shape strength multiplier
         public byte surfaceBlock;    // strongest sub-biome surface block (0 = none)
         public float surfaceMask;
-        public byte detailLayer;     // strongest sub-biome with its own 3D shape (its detail source; None = none)
-        public float detailMask;     // its mask: its shape takes over from the biome's by this much
     }
 
     public static BiomePoint SampleBiome(in BiomeShapeData s, in NativeArray<SubBiomeData> subs, float x, float z, float hillFactor)
     {
-        var bp = new BiomePoint { decoration = 1f, detail = 1f, detailLayer = RegionDetailSources.None };
+        var bp = new BiomePoint { decoration = 1f, detail = 1f };
         float hillMul = 1f, offset = 0f;
         for (int i = s.subStart; i < s.subStart + s.subCount; i++)
         {
@@ -271,11 +269,6 @@ public static class RegionMath
                 bp.surfaceMask = m;
                 bp.surfaceBlock = l.surfaceBlock;
             }
-            if (l.detailSource != RegionDetailSources.None && m > bp.detailMask)
-            {
-                bp.detailMask = m;
-                bp.detailLayer = l.detailSource;
-            }
         }
         bp.height = BiomeHeight(s, x, z, hillMul * hillFactor) + offset;
         return bp;
@@ -287,8 +280,6 @@ public static class RegionMath
         public float height;
         public float decoration;
         public float detail0, detail1, detail2;   // 3D strength multipliers per weight slot
-        public byte layer0, layer1, layer2;       // per weight slot: sub-biome 3D shape source (None = none)
-        public float layerMask0, layerMask1, layerMask2;
         public byte surfaceBlock;
         public float surfaceScore;
     }
@@ -300,18 +291,12 @@ public static class RegionMath
         float macro = rp.macroBase + rp.macroAmplitude * rp.macro.GetNoise(pos.x, pos.y);
         if (hillFactor > 0f)
             macro += hillFactor * rp.macroDetailAmplitude * rp.macroDetail.GetNoise(pos.x, pos.y);
-        var ps = new PointSample
-        {
-            height = macro, detail1 = 1f, detail2 = 1f,
-            layer1 = RegionDetailSources.None, layer2 = RegionDetailSources.None
-        };
+        var ps = new PointSample { height = macro, detail1 = 1f, detail2 = 1f };
 
         var b0 = SampleBiome(shapes[rw.b0], subs, pos.x, pos.y, hillFactor);
         ps.height += rw.w0 * b0.height;
         ps.decoration = rw.w0 * b0.decoration;
         ps.detail0 = b0.detail;
-        ps.layer0 = b0.detailLayer;
-        ps.layerMask0 = b0.detailMask;
         Surface(ref ps, b0, rw.w0);
         if (rw.w1 > 0f)
         {
@@ -319,8 +304,6 @@ public static class RegionMath
             ps.height += rw.w1 * b1.height;
             ps.decoration += rw.w1 * b1.decoration;
             ps.detail1 = b1.detail;
-            ps.layer1 = b1.detailLayer;
-            ps.layerMask1 = b1.detailMask;
             Surface(ref ps, b1, rw.w1);
         }
         if (rw.w2 > 0f)
@@ -329,8 +312,6 @@ public static class RegionMath
             ps.height += rw.w2 * b2.height;
             ps.decoration += rw.w2 * b2.decoration;
             ps.detail2 = b2.detail;
-            ps.layer2 = b2.detailLayer;
-            ps.layerMask2 = b2.detailMask;
             Surface(ref ps, b2, rw.w2);
         }
         return ps;
@@ -426,6 +407,7 @@ public struct RegionColumnJob : IJobParallelFor
 
     [ReadOnly] public NativeArray<BiomeShapeData> shapes;
     [ReadOnly] public NativeArray<DetailSourceData> sources;
+    [ReadOnly] public NativeArray<SubBiomeData> subs;
     [ReadOnly] public NativeArray<RawColumn> raw;
 
     [WriteOnly] public NativeArray<ColumnSample> columns;
@@ -455,6 +437,7 @@ public struct RegionColumnJob : IJobParallelFor
             detail0 = ColumnSample.None,
             detail1 = ColumnSample.None,
             detail2 = ColumnSample.None,
+            detail3 = ColumnSample.None,
             waterY = c.waterY,
             decoScale = c.s.decoration,
             surfaceOverride = c.s.surfaceScore > 0.5f ? c.s.surfaceBlock : (byte)0
@@ -462,12 +445,24 @@ public struct RegionColumnJob : IJobParallelFor
 
         // 3D shapes give way near water so overhangs do not hang over (or dam) rivers and lakes
         float keep = 1f - c.nearWater;
-        AddBiomeDetail(ref col, rw.b0, rw.w0 * c.s.detail0 * keep, c.s.layer0, c.s.layerMask0);
-        if (rw.w1 > 0f) AddBiomeDetail(ref col, rw.b1, rw.w1 * c.s.detail1 * keep, c.s.layer1, c.s.layerMask1);
-        if (rw.w2 > 0f) AddBiomeDetail(ref col, rw.b2, rw.w2 * c.s.detail2 * keep, c.s.layer2, c.s.layerMask2);
+        AddBiomeDetail(ref col, rw.b0, rw.w0 * c.s.detail0 * keep, pos);
+        if (rw.w1 > 0f) AddBiomeDetail(ref col, rw.b1, rw.w1 * c.s.detail1 * keep, pos);
+        if (rw.w2 > 0f) AddBiomeDetail(ref col, rw.b2, rw.w2 * c.s.detail2 * keep, pos);
 
         if (c.bank != 0 || h < c.waterY)
             col.surfaceOverride = shapes[col.palette].sedimentBlock;
+
+        // Gradient thresholds inside the band: each 3D shape's own (or the palette biome's) by its
+        // weight, the rest of the weight (the height surface) the palette biome's
+        var palette = shapes[col.palette];
+        float rest = 1f - math.min(1f, col.DetailWeight);
+        float scale = col.DetailWeight > 1f ? 1f / col.DetailWeight : 1f;
+        col.gradient1 = rest * palette.gradient1;
+        col.gradient2 = rest * palette.gradient2;
+        BlendGradient(ref col, col.detail0, col.detailW0 * scale, palette);
+        BlendGradient(ref col, col.detail1, col.detailW1 * scale, palette);
+        BlendGradient(ref col, col.detail2, col.detailW2 * scale, palette);
+        BlendGradient(ref col, col.detail3, col.detailW3 * scale, palette);
 
         columns[index] = col;
         if (index < hints.Length)
@@ -477,8 +472,21 @@ public struct RegionColumnJob : IJobParallelFor
                 secondaryBiome = col.palette,
                 waterY = col.waterY,
                 decoScale = col.decoScale,
-                surfaceOverride = col.surfaceOverride
+                surfaceOverride = col.surfaceOverride,
+                shapeBandMin = col.HasDetail ? col.bandMin : 1f,
+                shapeBandMax = col.HasDetail ? col.bandMax : 0f,
+                shapeGradient1 = col.gradient1,
+                shapeGradient2 = col.gradient2
             };
+    }
+
+    void BlendGradient(ref ColumnSample col, byte source, float weight, in BiomeShapeData palette)
+    {
+        if (source == ColumnSample.None)
+            return;
+        var s = sources[source];
+        col.gradient1 += weight * (s.overrideGradient != 0 ? s.gradient1 : palette.gradient1);
+        col.gradient2 += weight * (s.overrideGradient != 0 ? s.gradient2 : palette.gradient2);
     }
 
     // The heaviest biome, with the line where two weights cross bent by noise (per biome, so it
@@ -499,13 +507,29 @@ public struct RegionColumnJob : IJobParallelFor
 
     float EdgeNoise(byte biome, float2 pos) => rp.paletteNoise.GetNoise(pos.x + biome * 7919f, pos.y - biome * 6563f);
 
-    // A biome's 3D shape, with the sub-biome layer that has its own shape here taking over by its mask
-    void AddBiomeDetail(ref ColumnSample col, byte biome, float weight, byte layer, float layerMask)
+    // A biome's 3D shape, with each of its sub-biome layers that has its own shape taking over by
+    // its mask (overlapping ones share; all weights change smoothly with the masks)
+    void AddBiomeDetail(ref ColumnSample col, byte biome, float weight, float2 pos)
     {
-        float m = layer != RegionDetailSources.None ? layerMask : 0f;
-        AddDetail(ref col, biome, weight * (1f - m));
-        if (m > 0f)
-            AddDetail(ref col, layer, weight * m);
+        var s = shapes[biome];
+        float sum = 0f;
+        for (int i = s.subStart; i < s.subStart + s.subCount; i++)
+            if (subs[i].detailSource != RegionDetailSources.None)
+                sum += RegionMath.SubMask(subs[i], pos.x, pos.y);
+
+        AddDetail(ref col, biome, weight * (1f - math.min(1f, sum)));
+        if (sum <= 0f)
+            return;
+        float share = weight / math.max(1f, sum);
+        for (int i = s.subStart; i < s.subStart + s.subCount; i++)
+        {
+            var l = subs[i];
+            if (l.detailSource == RegionDetailSources.None)
+                continue;
+            float m = RegionMath.SubMask(l, pos.x, pos.y);
+            if (m > 0f)
+                AddDetail(ref col, l.detailSource, share * m);
+        }
     }
 
     void AddDetail(ref ColumnSample col, byte source, float weight)
@@ -518,12 +542,16 @@ public struct RegionColumnJob : IJobParallelFor
         if (col.detail0 == ColumnSample.None) { col.detail0 = source; col.detailW0 = w; }
         else if (col.detail1 == ColumnSample.None) { col.detail1 = source; col.detailW1 = w; }
         else if (col.detail2 == ColumnSample.None) { col.detail2 = source; col.detailW2 = w; }
+        else if (col.detail3 == ColumnSample.None) { col.detail3 = source; col.detailW3 = w; }
         else
         {
-            // All three slots taken (biome borders with sub-biome shapes): the weakest gives way
-            if (col.detailW2 <= col.detailW1 && col.detailW2 <= col.detailW0) { if (w <= col.detailW2) return; col.detail2 = source; col.detailW2 = w; }
-            else if (col.detailW1 <= col.detailW0) { if (w <= col.detailW1) return; col.detail1 = source; col.detailW1 = w; }
-            else { if (w <= col.detailW0) return; col.detail0 = source; col.detailW0 = w; }
+            // All four slots taken (biome borders with sub-biome shapes): the weakest gives way
+            float min = math.min(math.min(col.detailW0, col.detailW1), math.min(col.detailW2, col.detailW3));
+            if (w <= min) return;
+            if (col.detailW3 == min) { col.detail3 = source; col.detailW3 = w; }
+            else if (col.detailW2 == min) { col.detail2 = source; col.detailW2 = w; }
+            else if (col.detailW1 == min) { col.detail1 = source; col.detailW1 = w; }
+            else { col.detail0 = source; col.detailW0 = w; }
         }
 
         col.bandMin = math.min(col.bandMin, col.height - s.rangeDown);

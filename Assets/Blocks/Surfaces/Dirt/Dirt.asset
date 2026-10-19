@@ -16,10 +16,13 @@ MonoBehaviour:
   colours:
   - {r: 0.41625518, g: 0.27936545, b: 0.15736195, a: 1}
   - {r: 0.27622414, g: 0.29902858, b: 0.32091445, a: 1}
-  shadeDark: 0.6595411
-  shadeLight: 1.8125926
-  patchContrast: 1
+  shadeDark: 0.311
+  shadeLight: 1.891
+  patchContrast: 1.44
   patchOffset: 0
   texelColourVariation: 1
   reliefMask: {fileID: 2800000, guid: 6b3287427e2c10a428850267916b07e5, type: 3}
   alphaMask: {fileID: 0}
+  leafPaletteTones: 0
+  autoLeafColours: 0
+  leafColour: {r: 0.3, g: 0.55, b: 0.2, a: 1}

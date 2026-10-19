@@ -2,6 +2,14 @@ using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
 
+public enum ShapeSampleSpacing
+{
+    [InspectorName("Every block")] Every1 = 1,
+    [InspectorName("Every 2 blocks")] Every2 = 2,
+    [InspectorName("Every 4 blocks")] Every4 = 4,
+    [InspectorName("Every 8 blocks")] Every8 = 8
+}
+
 [CreateAssetMenu(fileName = "New Terrain Type", menuName = "World Generation/Terrain Type")]
 public class TerrainTypeDefinitionSO : ScriptableObject
 {
@@ -22,6 +30,10 @@ public class TerrainTypeDefinitionSO : ScriptableObject
     [Tooltip("Vertical offset for sampling (positive = sample higher, negative = sample lower)")]
     [Range(-500, 500)]
     public int yOffset = 0;
+
+    [Header("Speed (Region Gen 3D shapes)")]
+    [Tooltip("Sample this tree only every N blocks and blend smoothly in between. Every 2 blocks is 8x and every 4 blocks 64x fewer samples (the trees are by far the costliest part of generation); detail thinner than the spacing is smoothed away. Far detail levels already sample coarser than this.")]
+    public ShapeSampleSpacing shapeSampleSpacing = ShapeSampleSpacing.Every1;
 
     [Header("Block Layers (Region Gen 3D shapes)")]
     [Tooltip("Use this tree's own gradient thresholds for surface / subsurface / deep blocks inside its 3D shapes, in place of the biome's (blended by the shape's weight).")]

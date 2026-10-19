@@ -38,6 +38,7 @@ public struct RegionParams
 
     public float paletteEdge;
     public FbmSimplexNoise2D paletteNoise;
+    public float minShapeWeight;   // 3D shape weights fade to 0 from twice this down to this
 }
 
 /// <summary>Shared region math, callable from Burst jobs.</summary>
@@ -556,6 +557,9 @@ public struct RegionColumnJob : IJobParallelFor
     {
         var s = sources[source];
         float w = weight * s.strength;
+        // Faint shapes fade out smoothly and are then skipped (the trees are costly to sample)
+        if (rp.minShapeWeight > 0f)
+            w *= math.smoothstep(rp.minShapeWeight, 2f * rp.minShapeWeight, w);
         if (s.hasDetail == 0 || w < 0.001f)
             return;
 

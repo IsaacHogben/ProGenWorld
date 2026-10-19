@@ -3,16 +3,18 @@ using System.Collections.Generic;
 using Unity.Mathematics;
 
 /// <summary>
-/// Region generator replacement for the flood fill: walks chunk columns nearest the player first,
-/// asks RegionSystem for each column's height band, and queues only the chunks inside that band.
-/// Chunks entirely above the terrain (open sky) or below it (buried rock) are never generated.
+/// Region generator scheduling: walks chunk columns nearest the player first, asks RegionSystem for
+/// each column's height band (how far its terrain, water and 3D shapes can reach) and queues the
+/// chunks around its surface. From those the flood fill grows through faces where terrain crosses
+/// (ChunkManager), but only into chunks inside their column's band: open sky and buried rock are
+/// never generated, and 3D shapes only cost chunks where they actually reach.
 /// </summary>
 public sealed class ColumnScheduler
 {
     readonly int chunkSize;
     readonly RegionSystem regions;
 
-    readonly Dictionary<int2, int2> bands = new();   // column -> chunk y range (inclusive)
+    readonly Dictionary<int2, int4> bands = new();   // column -> chunk y range (x, y) and its surface chunks (z, w), inclusive
     readonly HashSet<int2> expanded = new();         // columns whose band chunks were queued
     int2[] offsets = Array.Empty<int2>();            // column offsets within range, nearest first
     int offsetRadius = -1;
@@ -38,13 +40,19 @@ public sealed class ColumnScheduler
         regions.OnColumnBand += HandleBand;
     }
 
-    void HandleBand(int2 column, float minY, float maxY)
+    // Margin around the surface for the chunks queued first (the surface between samples, shallow
+    // 3D shapes): the flood fill finds the rest
+    const float SurfaceMargin = 4f;
+
+    void HandleBand(int2 column, float minY, float maxY, float surfaceMin, float surfaceMax)
     {
         // Chunks share their top face with the chunk above (chunkSize + 1 samples), so a surface
         // exactly on a boundary is in the lower chunk
         int lo = (int)math.floor((minY - 1f) / chunkSize);
         int hi = (int)math.floor(maxY / chunkSize);
-        bands[column] = new int2(lo, hi);
+        int surfaceLo = math.clamp((int)math.floor((surfaceMin - SurfaceMargin - 1f) / chunkSize), lo, hi);
+        int surfaceHi = math.clamp((int)math.floor((surfaceMax + SurfaceMargin) / chunkSize), surfaceLo, hi);
+        bands[column] = new int4(lo, hi, surfaceLo, surfaceHi);
         minChunkY = math.min(minChunkY, lo);
         maxChunkY = math.max(maxChunkY, hi);
     }
@@ -52,7 +60,15 @@ public sealed class ColumnScheduler
     /// <summary>False while the column's band is unknown: its chunks may still hold terrain.</summary>
     public bool IsColumnKnown(int2 column) => bands.ContainsKey(column);
 
-    public bool TryGetBand(int2 column, out int2 band) => bands.TryGetValue(column, out band);
+    public bool TryGetBand(int2 column, out int2 band)
+    {
+        bool known = bands.TryGetValue(column, out var b);
+        band = b.xy;
+        return known;
+    }
+
+    /// <summary>True when the chunk lies inside its column's band (or the band is not known yet).</summary>
+    public bool InBand(int3 coord) => !bands.TryGetValue(coord.xz, out var b) || (coord.y >= b.x && coord.y <= b.y);
 
     void EnsureOffsets(int radius)
     {
@@ -69,10 +85,10 @@ public sealed class ColumnScheduler
     }
 
     /// <summary>
-    /// Requests bands for unknown columns within radius (nearest first) and queues the chunks of
-    /// known columns that have not been queued yet. enqueue gets every chunk coord in a column's band.
-    /// Every few ticks, queued columns are re-checked: needsGenerating(coord) says whether a chunk
-    /// is in range but not loaded, generating or waiting, and such chunks are queued again.
+    /// Requests bands for unknown columns within radius (nearest first) and queues the surface chunks
+    /// of known columns that have not been queued yet. Every few ticks, queued columns are re-checked:
+    /// needsGenerating(coord) says whether a chunk is in range but not loaded, generating or waiting,
+    /// and such surface chunks are queued again (the flood fill brings back the rest).
     /// </summary>
     public void Tick(int2 center, int radius, int maxNewColumns, Action<int3> enqueue, Func<int3, bool> needsGenerating)
     {
@@ -88,7 +104,7 @@ public sealed class ColumnScheduler
             if (expanded.Contains(column))
             {
                 if (recheck && bands.TryGetValue(column, out var known))
-                    for (int y = known.x; y <= known.y; y++)
+                    for (int y = known.z; y <= known.w; y++)
                     {
                         var c = new int3(column.x, y, column.y);
                         if (needsGenerating(c))
@@ -99,7 +115,7 @@ public sealed class ColumnScheduler
 
             if (bands.TryGetValue(column, out var band))
             {
-                for (int y = band.x; y <= band.y; y++)
+                for (int y = band.z; y <= band.w; y++)
                     enqueue(new int3(column.x, y, column.y));
                 expanded.Add(column);
                 continue;

@@ -146,6 +146,64 @@ public class RenderBenchmark : MonoBehaviour
                         biome.regionShape.detailTerrain = bdm.terrainTypes[detail];
             Log($"region detail terrain {(detail >= 0 && detail < bdm.terrainTypes.Length ? bdm.terrainTypes[detail].terrainTypeName : "none")}");
         }
+        // Switch things off for measuring: -benchNoLayerDetail (sub-biome 3D shapes), -benchNoDetail
+        // (all 3D shapes), -benchNoDecorations, -benchNoLeafMarkers
+        if (chunkManager.biomeDataManager != null)
+        {
+            var bdm = chunkManager.biomeDataManager;
+            bool noLayerDetail = Arg("-benchNoLayerDetail") != null, noDetail = Arg("-benchNoDetail") != null;
+            bool noDecorations = Arg("-benchNoDecorations") != null;
+            foreach (var biome in bdm.biomes)
+            {
+                if (biome == null) continue;
+                var shape = biome.regionShape;
+                if (noDetail && shape != null)
+                    shape.detailTerrain = null;
+                if ((noDetail || noLayerDetail) && shape?.subBiomes != null)
+                    foreach (var layer in shape.subBiomes)
+                        if (layer != null) layer.detailTerrain = null;
+                if (noDecorations)
+                {
+                    biome.LSystemDecorations = new LSystemDecoration[0];
+                    biome.trees = new TreeDecoration[0];
+                    biome.vegetation = new VegetationDecoration[0];
+                    biome.rocks = new RockDecoration[0];
+                    biome.aliens = new AlienDecoration[0];
+                    if (shape?.subBiomes != null)
+                        foreach (var layer in shape.subBiomes)
+                            if (layer != null) layer.decorations = new DecorationSet();
+                }
+            }
+            if (noDetail || noLayerDetail || noDecorations)
+                Log($"switched off:{(noDetail ? " 3D shapes" : noLayerDetail ? " sub-biome 3D shapes" : "")}{(noDecorations ? " decorations" : "")}");
+        }
+        // -benchMinShapeWeight <w>: Region Gen Settings > Min Shape Weight for this run
+        if (float.TryParse(Arg("-benchMinShapeWeight"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float minShape)
+            && chunkManager.RegionGenSettings != null)
+        {
+            chunkManager.RegionGenSettings.minShapeWeight = minShape;
+            Log($"min shape weight {minShape}");
+        }
+        // -benchShapeSpacing <1|2|4|8>: every 3D shape tree's Shape Sample Spacing for this run
+        if (int.TryParse(Arg("-benchShapeSpacing"), out int spacing) && chunkManager.biomeDataManager != null)
+        {
+            void Set(TerrainTypeDefinitionSO t) { if (t != null) t.shapeSampleSpacing = (ShapeSampleSpacing)spacing; }
+            foreach (var biome in chunkManager.biomeDataManager.biomes)
+            {
+                if (biome?.regionShape == null) continue;
+                Set(biome.regionShape.detailTerrain);
+                if (biome.regionShape.subBiomes != null)
+                    foreach (var layer in biome.regionShape.subBiomes)
+                        if (layer != null) Set(layer.detailTerrain);
+            }
+            Log($"3D shape sample spacing {spacing}");
+        }
+        if (Arg("-benchNoLeafMarkers") != null)
+        {
+            VoxelPackSystem.LeafMarkers = false;
+            Log("leaf markers off");
+        }
+
         // -benchLayerDetail <terrain index>: every biome gets a patchy sub-biome layer with that
         // terrain type's tree as its own 3D shape, for this run only
         if (int.TryParse(Arg("-benchLayerDetail"), out int layerDetail) && chunkManager.biomeDataManager != null)
@@ -390,7 +448,11 @@ public class RenderBenchmark : MonoBehaviour
         float start = Time.realtimeSinceStartup;
         while (!loadComplete && Time.realtimeSinceStartup - start < 300f)
             yield return null;
-        Log($"load {(loadComplete ? "complete" : "TIMED OUT")} in {Time.realtimeSinceStartup - start:F1}s");
+        Log($"load {(loadComplete ? "complete" : "TIMED OUT")} in {Time.realtimeSinceStartup - start:F1}s, {ChunkProfiler.TotalChunks} chunks");
+        Log($"density fills: {Profiler.NoiseCount}, {Profiler.NoiseTotalMs / 1000.0:F1}s of work in total, {Profiler.NoiseTotalMs / Math.Max(1, Profiler.NoiseCount):F1} ms each, {chunkManager.NoiseThreadCount} threads");
+        for (int l = 0; l < 8; l++)
+            if (HybridDensity.Fills[l] > 0)
+                Log($"  sampleRes {1 << l}: {HybridDensity.Fills[l]} fills, trees {HybridDensity.TreeMs[l] / 1000.0:F1}s for {HybridDensity.TreeSamples[l] / 1e6:F1}M samples ({HybridDensity.TreeMs[l] * 1e6 / Math.Max(1, HybridDensity.TreeSamples[l]):F0} ns each)");
 
         // Let decoration and LOD streaming settle, then freeze the world as far as possible.
         yield return Wait(8f);

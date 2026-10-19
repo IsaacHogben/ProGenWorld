@@ -41,6 +41,10 @@ public class RegionGenSettingsSO : ScriptableObject
     [Tooltip("Size of the continent scale rises and dips, in blocks.")]
     [Min(100f)] public float macroScale = 8000f;
 
+    [Header("3D Shapes")]
+    [Tooltip("3D shape weights below this fade to nothing and the tree is not sampled there (the fade runs up to twice this). The trees are by far the costliest part of generation: higher loads faster, but soft sub-biome edges lose their faint shapes.")]
+    [Range(0f, 0.3f)] public float minShapeWeight = 0.05f;
+
     [Header("Block Palette Edge")]
     [Tooltip("Where two biomes blend, the block palette switches where their weights cross. This bends that line so it is not smooth.")]
     [Range(0f, 0.5f)] public float paletteEdgeNoise = 0.2f;

@@ -10,6 +10,9 @@ using Unity.Mathematics;
 /// </summary>
 public class VoxelPackSystem : IDisposable
 {
+    /// <summary>Mark the air next to leaves for the shader's leaf planes (off only for measuring).</summary>
+    public static bool LeafMarkers = true;
+
     public struct Config
     {
         public int chunkSize;
@@ -174,6 +177,7 @@ public class VoxelPackSystem : IDisposable
         {
             blocks = blocks,
             blockDb = config.blockDb,
+            leafMarkers = LeafMarkers,
             chunkSize = config.chunkSize,
             coord = coord,
             collectECSSpawns = lod == LODLevel.Near,

@@ -373,6 +373,113 @@ public class RegionMapWindow : EditorWindow
         DestroyImmediate(w);
     }
 
+    /// <summary>
+    /// Times the region density fill on one thread: every chunk of a block of chunk columns
+    /// (-densityBenchColumns n, default 6) at -regionMapCenterX/Z, optionally one biome only
+    /// (-regionMapOnlyBiome) and a shape sample spacing for every tree (-densityBenchSpacing).
+    /// </summary>
+    public static void BenchDensity()
+    {
+        string Arg(string name, string fallback)
+        {
+            var args = Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length - 1; i++)
+                if (args[i] == name) return args[i + 1];
+            return fallback;
+        }
+        UnityEditor.SceneManagement.EditorSceneManager.OpenScene("Assets/Scenes/Scene.unity");
+        var w = CreateInstance<RegionMapWindow>();
+        w.FindSceneDefaults();
+        var chunkManager = FindFirstObjectByType<ChunkManager>();
+        int chunkSize = chunkManager != null ? chunkManager.chunkSize : 64;
+        float frequency = chunkManager != null ? chunkManager.frequency : 1f;
+        int columnsSide = int.Parse(Arg("-densityBenchColumns", "6"));
+        int sampleRes = int.Parse(Arg("-densityBenchSampleRes", "1"));
+        float cx = float.Parse(Arg("-regionMapCenterX", "0"), System.Globalization.CultureInfo.InvariantCulture);
+        float cz = float.Parse(Arg("-regionMapCenterZ", "0"), System.Globalization.CultureInfo.InvariantCulture);
+        int only = Enum.TryParse(Arg("-regionMapOnlyBiome", ""), true, out BiomeType ob) ? (int)ob : -1;
+        string spacing = Arg("-densityBenchSpacing", "");
+
+        var source = w.biomeDataManager;
+        var changed = new System.Collections.Generic.Dictionary<TerrainTypeDefinitionSO, ShapeSampleSpacing>();
+        if (spacing != "")
+            foreach (var b in source.biomes)
+            {
+                if (b?.regionShape == null) continue;
+                var terrains = new System.Collections.Generic.List<TerrainTypeDefinitionSO> { b.regionShape.detailTerrain };
+                if (b.regionShape.subBiomes != null)
+                    foreach (var l in b.regionShape.subBiomes) terrains.Add(l?.detailTerrain);
+                foreach (var t in terrains)
+                    if (t != null && !changed.ContainsKey(t))
+                    {
+                        changed[t] = t.shapeSampleSpacing;
+                        t.shapeSampleSpacing = (ShapeSampleSpacing)int.Parse(spacing);
+                    }
+            }
+
+        var go = new GameObject("Density Bench Biome Data") { hideFlags = HideFlags.HideAndDontSave };
+        var data = go.AddComponent<BiomeDataManager>();
+        EditorUtility.CopySerialized(source, data);
+        int side = chunkSize + 1;
+        var columns = new NativeArray<ColumnSample>(side * side, Allocator.Persistent);
+        var hints = new NativeArray<BiomeHint>(side * side, Allocator.Persistent);
+        int n = chunkSize / sampleRes + 1;
+        var density = new NativeArray<float>(n * n * n, Allocator.Persistent);
+        RegionSystem regions = null;
+        try
+        {
+            data.Initialize();
+            if (only >= 0)
+            {
+                var cells = data.GetClimateCellBiomes();
+                for (int i = 0; i < cells.Length; i++) cells[i] = (byte)only;
+            }
+            regions = new RegionSystem(w.settings, data, w.seed, chunkSize, frequency);
+            var hybrid = new HybridDensity(data, w.settings, w.seed, frequency);
+            Array.Clear(HybridDensity.TreeMs, 0, 8);
+            Array.Clear(HybridDensity.TreeSamples, 0, 8);
+
+            int2 c0 = (int2)math.floor(new float2(cx, cz) / chunkSize) - columnsSide / 2;
+            int chunks = 0;
+            double fillMs = 0;
+            for (int gz = 0; gz < columnsSide; gz++)
+            for (int gx = 0; gx < columnsSide; gx++)
+            {
+                int2 column = c0 + new int2(gx, gz);
+                regions.CompleteArea((float2)(column * chunkSize), 1f, side);
+                regions.TryScheduleColumns((float2)(column * chunkSize), 1f, side, columns, hints, out var handle);
+                handle.Complete();
+                float lo = float.MaxValue, hi = float.MinValue;
+                foreach (var c in columns)
+                {
+                    lo = math.min(lo, math.min(c.height, c.bandMin));
+                    hi = math.max(hi, math.max(c.bandMax, c.height));
+                }
+                for (int cy = (int)math.floor((lo - 1f) / chunkSize); cy <= (int)math.floor(hi / chunkSize); cy++)
+                {
+                    var watch = System.Diagnostics.Stopwatch.StartNew();
+                    hybrid.Fill(density, new int3(column.x, cy, column.y), chunkSize, sampleRes, columns);
+                    fillMs += watch.Elapsed.TotalMilliseconds;
+                    chunks++;
+                }
+            }
+            int level = math.tzcnt(sampleRes);
+            double treeMs = HybridDensity.TreeMs[level];
+            Debug.Log($"[DensityBench] {chunks} chunks (sampleRes {sampleRes}, spacing {(spacing == "" ? "as set" : spacing)}): fill {fillMs:F0} ms = {fillMs / chunks:F1} ms each; trees {treeMs:F0} ms for {HybridDensity.TreeSamples[level] / 1e6:F1}M samples; the rest {fillMs - treeMs:F0} ms");
+        }
+        finally
+        {
+            regions?.Dispose();
+            columns.Dispose();
+            hints.Dispose();
+            density.Dispose();
+            data.Dispose();
+            DestroyImmediate(go);
+            foreach (var kv in changed) kv.Key.shapeSampleSpacing = kv.Value;
+            DestroyImmediate(w);
+        }
+    }
+
     // Fills the density of the chunks a column's surface passes through and logs what came out
     static void DensitySmokeTest(RegionGenSettingsSO settings, BiomeDataManager source, int seed, Vector2 at)
     {

@@ -481,10 +481,23 @@ public static class Profiler
     public static void StartUpload() => GetWatch().Restart();
 
     public static void EndBiome() { lock (biomeLock) biomeTimes.Enqueue((float)GetWatch().Elapsed.TotalMilliseconds); }
-    public static void EndNoise() { lock (noiseLock) noiseTimes.Enqueue((float)GetWatch().Elapsed.TotalMilliseconds); }
+    public static void EndNoise()
+    {
+        double ms = GetWatch().Elapsed.TotalMilliseconds;
+        lock (noiseLock)
+        {
+            noiseTimes.Enqueue((float)ms);
+            NoiseTotalMs += ms;
+            NoiseCount++;
+        }
+    }
     public static void EndBlock() { lock (blockLock) blockTimes.Enqueue((float)GetWatch().Elapsed.TotalMilliseconds); }
     public static void EndDeco() { lock (decoLock) decoTimes.Enqueue((float)GetWatch().Elapsed.TotalMilliseconds); }
     public static void EndMesh() { lock (meshLock) meshTimes.Enqueue((float)GetWatch().Elapsed.TotalMilliseconds); }
+
+    // Totals since start (density fills only: they are timed on their own thread, start to end)
+    public static double NoiseTotalMs;
+    public static int NoiseCount;
     public static void EndUpload() { lock (uploadLock) uploadTimes.Enqueue((float)GetWatch().Elapsed.TotalMilliseconds); }
 
     // MAIN THREAD

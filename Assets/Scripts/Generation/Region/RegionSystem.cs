@@ -51,8 +51,12 @@ public sealed class RegionSystem : IDisposable
     /// <summary>Column data for a chunk is ready (owned by the receiver: dispose with BiomeData.Dispose).</summary>
     public event Action<int3, BiomeData> OnChunkReady;
 
-    /// <summary>A chunk column's terrain spans world y [min, max] (including water and 3D shapes).</summary>
-    public event Action<int2, float, float> OnColumnBand;
+    /// <summary>
+    /// A chunk column's terrain can span world y [min, max] (including water and how far 3D shapes
+    /// reach); its surface and water lie within [surfaceMin, surfaceMax].
+    /// Arguments: column, min, max, surfaceMin, surfaceMax.
+    /// </summary>
+    public event Action<int2, float, float, float, float> OnColumnBand;
 
     /// <param name="frequency">ChunkManager.frequency (FastNoise trees' world frequency, for calibrating 3D shapes).</param>
     public RegionSystem(RegionGenSettingsSO settings, BiomeDataManager biomeDataManager, int seed, int chunkSize, float frequency)
@@ -188,6 +192,7 @@ public sealed class RegionSystem : IDisposable
             macroDetail = FbmSimplexNoise2D.Create(seed + 7302, 4f / settings.macroScale, 3),
             macroDetailAmplitude = settings.macroAmplitude * 0.3f,
             paletteEdge = settings.paletteEdgeNoise,
+            minShapeWeight = settings.minShapeWeight,
             paletteNoise = FbmSimplexNoise2D.Create(seed + 7401, 1f / settings.paletteEdgeScale, 2)
         };
 
@@ -379,15 +384,18 @@ public sealed class RegionSystem : IDisposable
                 pendingColumns.Remove(column);
 
                 float lo = float.MaxValue, hi = float.MinValue;
+                float surfaceLo = float.MaxValue, surfaceHi = float.MinValue;
                 for (int i = 0; i < p.columns.Length; i++)
                 {
                     var c = p.columns[i];
                     lo = math.min(lo, math.min(c.bandMin, c.height));
                     hi = math.max(hi, math.max(c.bandMax, c.waterY));
+                    surfaceLo = math.min(surfaceLo, c.height);
+                    surfaceHi = math.max(surfaceHi, math.max(c.height, c.waterY));
                 }
                 p.columns.Dispose();
                 p.hints.Dispose();
-                OnColumnBand?.Invoke(column, lo, hi);
+                OnColumnBand?.Invoke(column, lo, hi, surfaceLo, surfaceHi);
             }
         }
     }

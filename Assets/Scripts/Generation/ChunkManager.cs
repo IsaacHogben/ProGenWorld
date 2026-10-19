@@ -47,6 +47,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
     [Tooltip("Generate terrain with the region generator: large biome regions blended over wide borders, a height surface per biome with optional FastNoise 3D shapes, and only the chunks each column's terrain passes through. Off = BiomeSystem terrain types and the flood fill. Fixed at start.")]
     [SerializeField] bool useRegionGen = false;
     [SerializeField] RegionGenSettingsSO regionGenSettings;
+    public RegionGenSettingsSO RegionGenSettings => regionGenSettings;
 
     [Tooltip("Log to the console where and why each stream ends (stream decoration).")]
     [SerializeField] bool logStreamEnds = false;
@@ -632,6 +633,8 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
 
             if (chunks.ContainsKey(n) || generatingSet.Contains(n))
                 continue;
+            if (RegionGen && !columnScheduler.InBand(n))
+                continue;   // past where the column's terrain and 3D shapes can reach
 
             if (IsChunkWithinRange(n, playerPos, viewDistance))
             {
@@ -722,8 +725,10 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
         // Low resolution samples miss surfaces that cross a face between them. A Horizon chunk with
         // any terrain also opens every face it can see through, so the flood fill keeps going;
         // the extra chunks this loads are mostly empty air, which is cheap at this resolution.
+        // (The region generator queues every surface chunk itself, so it only follows real crossings:
+        // otherwise every low resolution surface chunk would open its sky face up to the band's top.)
         bool generous = false;
-        if (sampleRes > 1)
+        if (sampleRes > 1 && !RegionGen)
         {
             for (int i = 0; i < blockIds.Length && !generous; i++)
                 generous = nativeBlockDatabase[blockIds[i]].isSolid;
@@ -1266,8 +1271,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
             terrainMinY = Math.Min(terrainMinY, coord.y);
             terrainMaxY = Math.Max(terrainMaxY, coord.y);
         }
-        if (!RegionGen)
-            ExpandFrontierFromFaces(coord, player.transform.position, faces);
+        ExpandFrontierFromFaces(coord, player.transform.position, faces);
     }
     private void HandleDecorationStarted(int3 coord)
     {
@@ -1322,8 +1326,7 @@ public class ChunkManager : MonoBehaviour, IVoxelWorldSource
                 terrainMinY = Math.Min(terrainMinY, coord.y);
                 terrainMaxY = Math.Max(terrainMaxY, coord.y);
             }
-            if (!RegionGen)
-                ExpandFrontierFromFaces(coord, lastPlayerPos, faces);
+            ExpandFrontierFromFaces(coord, lastPlayerPos, faces);
 
             if (biomeDataByChunk.Remove(coord, out var biome))
                 biome.Dispose();

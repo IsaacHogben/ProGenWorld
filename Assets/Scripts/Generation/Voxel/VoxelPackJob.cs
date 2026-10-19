@@ -158,6 +158,7 @@ public struct VoxelPackJob : IJob
 {
     [ReadOnly] public NativeArray<byte> blocks;   // (chunkSize / 2^inputLevel + 1)^3, x + y*S + z*S*S
     [ReadOnly] public NativeArray<BlockDatabase.BlockInfoUnmanaged> blockDb;
+    public bool leafMarkers;   // mark the air next to leaves for the leaf planes (VoxelPackSystem.LeafMarkers)
     public int chunkSize;
     public int3 coord;
     public bool collectECSSpawns;
@@ -203,7 +204,8 @@ public struct VoxelPackJob : IJob
         int brickOffset = 0;
 
         PlaceGrass(grid, res, cellSize, cpa);
-        PlaceLeafMarkers(grid, res, cellSize, cpa);
+        if (leafMarkers)
+            PlaceLeafMarkers(grid, res, cellSize, cpa);
         PackLevel(grid, res, brickOffset, ref mixed, firstLevel == 0, true, cellSize, cpa, ref bmin, ref bmax, ref flags);
         Occlusion(grid, res, cpa, true);
         brickOffset += VoxelGpuFormat.BricksInLevel(res, 0);

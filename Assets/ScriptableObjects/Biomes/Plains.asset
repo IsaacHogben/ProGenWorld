@@ -73,19 +73,19 @@ MonoBehaviour:
       overrideSurfaceOffset: 1
       detailSurfaceOffset: 70
       overrideRangeUp: 1
-      detailRangeUp: 320
-      overrideRangeDown: 0
-      detailRangeDown: 0
+      detailRangeUp: 310
+      overrideRangeDown: 1
+      detailRangeDown: 110
       autoCalibrate: 1
       detailDensityScale: 1
     - name: Flats
       kind: 0
       scale: 600
-      coverage: 0.4224
-      softness: 0.7925
-      heightOffset: -15
-      hillMultiplier: 0.503
-      detailMultiplier: 0.037
+      coverage: 0.4336
+      softness: 1
+      heightOffset: -10
+      hillMultiplier: 0.7
+      detailMultiplier: 0.1
       decorationMultiplier: 0.095
       surfaceBlock: 35
       decorationMode: 0

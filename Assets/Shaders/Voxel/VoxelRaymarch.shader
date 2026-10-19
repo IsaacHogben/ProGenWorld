@@ -117,8 +117,8 @@ Shader "ProGenWorld/VoxelRaymarch"
 
                 // Flat colour leaves: the leaf's average colour, sunlight in a few flat bands by face
                 // direction and voxel shadow (a few texels one band brighter), plus the sky light.
-                // Leaf planes take their block's outward normal; their filled texels are a dark
-                // shade of the sky light only.
+                // Leaf planes take their block's outward normal; their filled texels blend from the
+                // plane's own tone towards a dark shade of the sky light only (Leaf Fill Darkness).
                 if (VoxelLeafFlat() && hit.grass == 0u && VoxelIsLeaf(hit.id))
                 {
                     // Wrapped light: a low sun still reaches the top band on leaves facing it, and the
@@ -134,20 +134,22 @@ Shader "ProGenWorld/VoxelRaymarch"
                     int3 texel = (int3)floor((hitWS - normalWS * (ts * 0.5)) / ts);
                     if (level < bands - 1.0 && VoxelLeafHash3(texel).x < _VoxelLeafTones.z)
                         level += 1.0;
-                    bool fill = hit.leaf == VOXEL_LEAF_FILL;
+                    // Filled texels (see-through ones past the see-through distance or depth): 0 = the
+                    // plane's own tone (no border), 1 = the dark fill (outlined, cel shaded look).
+                    float fillDark = hit.leaf == VOXEL_LEAF_FILL ? saturate(_VoxelLeafLight2.x) : 0.0;
                     // Leafy texture: clumps of texels a band lighter or darker, so canopies (the
                     // distant cube leaves especially) are not flat colour. Darker in the darkest band
                     // dims it instead.
                     float clumpDim = 1.0;
-                    if (!fill && (hit.leaf == 0u || _VoxelLeafClumps.w > 0.5))
+                    if (hit.leaf == 0u || _VoxelLeafClumps.w > 0.5)
                     {
                         float shift = VoxelLeafClumpShift(hitWS - normalWS * (ts * 0.5), input.level);
                         clumpDim = shift < 0.0 && level < 0.5 ? 0.75 : 1.0;
                         level = clamp(level + shift, 0.0, bands - 1.0);
                     }
-                    float sunShare = fill ? 0.0 : lerp(_VoxelLeafLight.y, 1.0, level / (bands - 1.0));
-                    half3 sky = SampleSH(leafNormal) * surface.occlusion * (fill ? _VoxelLeafTones.w : 1.0);
-                    float tone = fill ? 0.0 : level / (bands - 1.0);   // 0 shadow .. 1 full sun
+                    float sunShare = lerp(_VoxelLeafLight.y, 1.0, level / (bands - 1.0)) * (1.0 - fillDark);
+                    half3 sky = SampleSH(leafNormal) * surface.occlusion * lerp(1.0, _VoxelLeafTones.w, fillDark);
+                    float tone = level / (bands - 1.0) * (1.0 - fillDark);   // 0 shadow .. 1 full sun
                     half3 toned;
                     float4 leafParams = _VoxelSurfaceParams[hit.id];
                     if (VoxelHasSurface(hit.id) && leafParams.w > 0.5)

@@ -991,7 +991,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 263422
+  seed: 5233344
   frequency: 1.2
   chunkSize: 64
   minMoveBeforeUpdate: 9
@@ -1789,6 +1789,7 @@ MonoBehaviour:
   leafClumpLight: 0.22
   leafClumpDark: 0.25
   leafClumpsOnPlanes: 1
+  leafFillDarkness: 0
   leafFillBrightness: 1
   leafCrossSize: 1.9
   leafSeeThroughDistance: 0
@@ -2536,19 +2537,20 @@ MonoBehaviour:
   sunColor: {r: 1, g: 0.85624623, b: 0.3820755, a: 1}
   horizonHeight: 0
   enableClouds: 1
-  cloudPixelSize: 0.4
+  cloudPixelSize: 0.3
   cloudCount: 21
-  cloudCoverage: 0.274
-  cloudTowerHeight: 44.2
-  cloudPuffSize: 6.97
-  cloudRoundness: 0.494
-  cloudBaseElevation: -1
-  cloudDrift: 0.06
-  streakCoverage: 0.797
-  streakElevation: 9.2
-  streakThickness: 8.67
+  cloudCoverage: 0.39
+  cloudTowerHeight: 35.1
+  cloudPuffSize: 5.01
+  cloudRoundness: 0.536
+  cloudLumpSize: 7.9
+  cloudBaseElevation: -2.8
+  cloudDrift: -0.068
+  streakCoverage: 0.35
+  streakElevation: 9.7
+  streakThickness: 40
   cloudHorizonHaze: 0.5
-  cloudHazeHeight: 8
+  cloudHazeHeight: 10
   cloudEdgeDither: 0
   cloudLit: {r: 1, g: 1, b: 1, a: 1}
   cloudLight: {r: 0.86, g: 0.92, b: 1, a: 1}

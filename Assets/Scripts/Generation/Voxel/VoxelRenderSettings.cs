@@ -81,6 +81,8 @@ public class VoxelRenderSettings : MonoBehaviour
     [Range(0f, 0.5f)] public float leafClumpDark = 0.25f;
     [Tooltip("Leaf clumps on the near leaf planes too (they already have see-through edges); off: distant cube leaves only.")]
     public bool leafClumpsOnPlanes = false;
+    [Tooltip("How dark the filled texels of leaf planes are (the see-through texels past the see-through distance or depth): 0 = the plane's own tone, so far canopies have no borders; 1 = the dark fill, which outlines every leaf plane (a cel shaded look).")]
+    [Range(0f, 1f)] public float leafFillDarkness = 0f;
     [Tooltip("Brightness of the dark fill that replaces the see-through texels of leaf planes past the see-through distance (share of the shadowed tone).")]
     [Range(0f, 1f)] public float leafFillBrightness = 0.5f;
     [Tooltip("Leaf blocks drawn as three crossed planes through their centre instead of a cube, this many blocks across, so they reach past the block into the air around it. Solid in the middle, see-through towards the ragged pixel art edges. Level 0 only (further out: cubes). 0 = cubes.")]
@@ -280,6 +282,7 @@ public class VoxelRenderSettings : MonoBehaviour
         public static readonly int LeafTones = Shader.PropertyToID("_VoxelLeafTones");
         public static readonly int LeafCross = Shader.PropertyToID("_VoxelLeafCross");
         public static readonly int LeafLight = Shader.PropertyToID("_VoxelLeafLight");
+        public static readonly int LeafLight2 = Shader.PropertyToID("_VoxelLeafLight2");
         public static readonly int LeafSunTint = Shader.PropertyToID("_VoxelLeafSunTint");
         public static readonly int LeafShadowTint = Shader.PropertyToID("_VoxelLeafShadowTint");
         public static readonly int LeafSeeThroughDepth = Shader.PropertyToID("_VoxelLeafSeeThroughDepth");
@@ -378,6 +381,7 @@ public class VoxelRenderSettings : MonoBehaviour
         Shader.SetGlobalVector(Ids.LeafTones, new Vector4(leafFlatTones ? 1f : 0f, leafToneBands, leafToneSparkle, leafFillBrightness));
         Shader.SetGlobalVector(Ids.LeafCross, new Vector4(leafCrossSize, leafSeeThroughDistance, leafEdgeStart, leafInnerHoles));
         Shader.SetGlobalVector(Ids.LeafLight, new Vector4(leafLightWrap, leafShadowLift, leafSaturation, leafBrightness));
+        Shader.SetGlobalVector(Ids.LeafLight2, new Vector4(leafFillDarkness, 0f, 0f, 0f));
         Shader.SetGlobalVector(Ids.LeafSunTint, (Vector4)leafSunTint);
         Shader.SetGlobalVector(Ids.LeafShadowTint, (Vector4)leafShadowTint);
         Shader.SetGlobalFloat(Ids.LeafSeeThroughDepth, leafSeeThroughDepth);

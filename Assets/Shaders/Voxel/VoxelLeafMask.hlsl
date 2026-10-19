@@ -18,6 +18,7 @@
 float4 _VoxelLeafTones;   // x: 1 = flat colour leaves, y: sunlight bands, z: sparkle (share of texels one band brighter), w: dark fill brightness
 float4 _VoxelLeafCross;   // x: plane size (blocks, 0 = cubes), y: see-through distance (world units), z: edge start (share of the radius), w: inner holes
 float4 _VoxelLeafLight;   // x: light wrap, y: shadow band lift (share of the sun), z: colour saturation, w: colour luminance (linear)
+float4 _VoxelLeafLight2;  // x: fill darkness (0 = filled texels take the plane's tone, 1 = the dark fill)
 float4 _VoxelLeafSunTint;      // rgb: colour multiplier of the sunlit band
 float4 _VoxelLeafShadowTint;   // rgb: colour multiplier of the shadowed band and the dark fill
 float4 _VoxelLeafClumps;       // x: clump size (texels), y: share of lighter clumps, z: share of darker clumps, w: 1 = on leaf planes too

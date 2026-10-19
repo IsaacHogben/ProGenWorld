@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
@@ -15,7 +16,7 @@ using Object = UnityEngine.Object;
 /// </summary>
 public class BlockStudioWindow : EditorWindow
 {
-    enum Tab { Preview, Colour, Relief, Alpha }
+    enum Tab { Preview, Paint, Colour, Relief, Alpha }
 
     const string PendingBlockKey = "BlockStudio.PendingBlock";
     static readonly string[] DepthLabels = { "Surface", "Shallow", "Medium", "Deep" };
@@ -31,6 +32,7 @@ public class BlockStudioWindow : EditorWindow
     [SerializeField] string search = "";
     [SerializeField] string newBlockName = "";
     [SerializeField] bool newBlockCopiesSurface = true;
+    [SerializeField] int legacyTab;
 
     Vector2 listScroll, detailScroll;
     SerializedObject dbObject;
@@ -42,6 +44,12 @@ public class BlockStudioWindow : EditorWindow
     Color[] legacyPixels;
     Texture2D previewTexture, compareTexture;
     bool previewDirty = true;
+    readonly TextureCanvas paintCanvas = new();
+    readonly PaletteSolver solver = new();
+    [SerializeField] PaletteSolver.Affect paintAffect;
+    bool solverReady;
+    Texture2D paintPreview;
+    bool paintPreviewDirty = true;
     readonly TexelPainter colourPainter = new();
     readonly TexelPainter reliefPainter = new();
     readonly TexelPainter alphaPainter = new();
@@ -79,6 +87,8 @@ public class BlockStudioWindow : EditorWindow
     void OnDisable()
     {
         Undo.undoRedoPerformed -= OnUndoRedo;
+        paintCanvas.Dispose();
+        DestroyImmediate(paintPreview);
         colourPainter.Dispose();
         reliefPainter.Dispose();
         alphaPainter.Dispose();
@@ -133,6 +143,8 @@ public class BlockStudioWindow : EditorWindow
         grey = null;
         legacyPixels = null;
         previewDirty = true;
+        paintPreviewDirty = true;
+        solverReady = false;
         ClearSwatches();
         if (!HasSelection)
             return;
@@ -144,7 +156,11 @@ public class BlockStudioWindow : EditorWindow
 
         loadedSurface = entry.surface;
         if (loadedSurface == null)
+        {
+            if (entry.texture != null)
+                SetupCanvasForTexture(entry.texture);
             return;
+        }
         surfaceObject = new SerializedObject(loadedSurface);
         grey = loadedSurface.greyTexture != null
             ? BlockTextureArrayBuilder.ReadPixels(loadedSurface.greyTexture, size)
@@ -153,6 +169,7 @@ public class BlockStudioWindow : EditorWindow
         for (int i = 0; i < grey.Length; i++)
             positions[i] = grey[i].g;
         colourPainter.Load(positions, size);
+        SetupCanvasForSurface();
 
         reliefPainted = loadedSurface.reliefMask != null;
         reliefPainter.Load(reliefPainted ? BlockSurfaceAssets.ReadRed(loadedSurface.reliefMask, size) : AutoRelief(), size);
@@ -210,6 +227,14 @@ public class BlockStudioWindow : EditorWindow
     void SurfaceChanged(bool texturesChanged)
     {
         previewDirty = true;
+        paintPreviewDirty = true;
+        solverReady = false;
+        if (loadedSurface != null)
+            solver.Rebuild(loadedSurface);
+        paintCanvas.MarkDisplayDirty();
+        colourPainter.MarkDisplayDirty();
+        reliefPainter.MarkDisplayDirty();
+        alphaPainter.MarkDisplayDirty();
         if (HasSelection)
             DropSwatch(selected);
         PushToWorld(!texturesChanged);
@@ -343,7 +368,18 @@ public class BlockStudioWindow : EditorWindow
         var entry = Entry;
         var element = dbObject.FindProperty("blocks").GetArrayElementAtIndex(selected);
 
-        EditorGUILayout.LabelField($"{entry.type}  (id {selected})", EditorStyles.largeLabel);
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            EditorGUILayout.LabelField($"{entry.type}  (id {selected})", EditorStyles.largeLabel);
+            using (new EditorGUI.DisabledScope(selected == 0 || EditorApplication.isPlaying))
+            {
+                if (GUILayout.Button(new GUIContent("Delete Block", "Removes this block type from the enum and the database. Blocks after it move down one id; assets that reference blocks are renumbered."), GUILayout.Width(100f)))
+                {
+                    DeleteSelectedBlock();
+                    GUIUtility.ExitGUI();
+                }
+            }
+        }
 
         // --- Block properties ---
         EditorGUI.BeginChangeCheck();
@@ -373,7 +409,12 @@ public class BlockStudioWindow : EditorWindow
             if (legacyPixels != null)
             {
                 EditorGUILayout.HelpBox("This block still uses a full colour texture. Convert it to edit colours, relief and masks.", MessageType.Info);
-                DrawPreviewArea(null);
+                legacyTab = GUILayout.Toolbar(legacyTab, new[] { "Preview", "Paint" });
+                EditorGUILayout.Space(4f);
+                if (legacyTab == 0)
+                    DrawPreviewArea(null);
+                else
+                    DrawPaint();
             }
             return;
         }
@@ -382,11 +423,12 @@ public class BlockStudioWindow : EditorWindow
         DrawSurfaceSettings();
 
         EditorGUILayout.Space(6f);
-        tab = (Tab)GUILayout.Toolbar((int)tab, new[] { "Preview", "Colour Map", "Relief", "Alpha Mask" });
+        tab = (Tab)GUILayout.Toolbar((int)tab, new[] { "Preview", "Paint", "Colour Map", "Relief", "Alpha Mask" });
         EditorGUILayout.Space(4f);
         switch (tab)
         {
             case Tab.Preview: DrawPreviewArea(loadedSurface); break;
+            case Tab.Paint: DrawPaint(); break;
             case Tab.Colour: DrawColourMap(); break;
             case Tab.Relief: DrawRelief(); break;
             case Tab.Alpha: DrawAlpha(); break;
@@ -471,6 +513,8 @@ public class BlockStudioWindow : EditorWindow
 
         EditorGUI.BeginChangeCheck();
         var colours = surfaceObject.FindProperty("colours");
+        bool autoLeaf = surfaceObject.FindProperty("autoLeafColours").boolValue;
+        EditorGUI.BeginDisabledGroup(autoLeaf);
         EditorGUILayout.LabelField(new GUIContent("Colours", "Patches take a colour along the list: the first where the large scale texture is dark, the last where it is bright."));
         for (int i = 0; i < colours.arraySize; i++)
         {
@@ -496,17 +540,33 @@ public class BlockStudioWindow : EditorWindow
                     colours.GetArrayElementAtIndex(colours.arraySize - 1).colorValue = colours.GetArrayElementAtIndex(colours.arraySize - 2).colorValue;
             }
         }
+        EditorGUI.EndDisabledGroup();
 
         EditorGUILayout.PropertyField(surfaceObject.FindProperty("shadeDark"));
         EditorGUILayout.PropertyField(surfaceObject.FindProperty("shadeLight"));
         EditorGUILayout.PropertyField(surfaceObject.FindProperty("patchContrast"));
         EditorGUILayout.PropertyField(surfaceObject.FindProperty("patchOffset"));
         EditorGUILayout.PropertyField(surfaceObject.FindProperty("texelColourVariation"));
+
+        // Leaves: palette driven flat tones (shadow / middle / sun), optionally built from one colour.
+        EditorGUILayout.PropertyField(surfaceObject.FindProperty("leafPaletteTones"), new GUIContent("Leaf Palette Tones",
+            "Flat colour leaves take their tones from the colours: the first in shadow, the middle in half light, the last in full sun."));
+        EditorGUILayout.PropertyField(surfaceObject.FindProperty("autoLeafColours"), new GUIContent("Auto Leaf Colours",
+            "Fill the three colours from Leaf Colour alone: it is the middle tone, the shadow and sun tones follow from the global leaf tints."));
+        if (autoLeaf)
+            EditorGUILayout.PropertyField(surfaceObject.FindProperty("leafColour"));
         bool coloursChanged = EditorGUI.EndChangeCheck();
 
         if (coloursChanged || texturesChanged)
         {
             surfaceObject.ApplyModifiedProperties();
+            if (loadedSurface.autoLeafColours)
+            {
+                var settings = FindFirstObjectByType<VoxelRenderSettings>();
+                loadedSurface.ApplyAutoLeafColours(settings != null ? settings.LeafLook : BlockSurface.DefaultLeafLook);
+                EditorUtility.SetDirty(loadedSurface);
+                surfaceObject.Update();
+            }
             if (texturesChanged)
                 Reload();
             SurfaceChanged(texturesChanged);
@@ -571,6 +631,206 @@ public class BlockStudioWindow : EditorWindow
         if (both)
             EditorGUILayout.LabelField("Surface (left) and original texture (right)", EditorStyles.miniLabel);
         EditorGUILayout.LabelField($"Small scale {v.smallScale} blocks, large scale {v.largeScale} blocks, large blend {v.largeBlend:0.##} ({(v.multiply ? "multiply" : "lerp")}), from the scene's Voxel Render Settings.", EditorStyles.miniLabel);
+    }
+
+    // --- Paint tab ---
+
+    void SetupCanvasForSurface()
+    {
+        paintCanvas.Load((Color[])grey.Clone(), TextureSize);
+        paintCanvas.toDisplay = c => loadedSurface.Colour(c.g, c.r);
+        paintCanvas.fromDisplay = (before, want) => solver.Solve(before, want, paintAffect, out _);
+        paintCanvas.beginStroke = () => solver.Rebuild(loadedSurface);
+        solver.Rebuild(loadedSurface);
+    }
+
+    void SetupCanvasForTexture(Texture2D texture)
+    {
+        int size = Mathf.Max(texture.width, 1);
+        paintCanvas.Load(BlockTextureArrayBuilder.ReadPixels(texture, size), size);
+        paintCanvas.toDisplay = c => c;
+        paintCanvas.fromDisplay = (before, want) => new Color(want.r, want.g, want.b, before.a);
+        paintCanvas.beginStroke = null;
+    }
+
+    void DrawPaint()
+    {
+        var v = BlockStudioPreview.SceneVariation();
+        bool surfaceMode = loadedSurface != null;
+        var e = Event.current;
+
+        // Shortcuts: B brush, G fill, I picker, [ ] brush size, Ctrl+Z / Ctrl+Y undo / redo.
+        if (e.type == EventType.KeyDown && GUIUtility.keyboardControl == 0)
+        {
+            bool used = true;
+            if (e.keyCode == KeyCode.B) paintCanvas.tool = TextureCanvas.Tool.Brush;
+            else if (e.keyCode == KeyCode.G) paintCanvas.tool = TextureCanvas.Tool.Fill;
+            else if (e.keyCode == KeyCode.I) paintCanvas.tool = TextureCanvas.Tool.Picker;
+            else if (e.keyCode == KeyCode.LeftBracket) paintCanvas.brushSize = Mathf.Max(1, paintCanvas.brushSize - 1);
+            else if (e.keyCode == KeyCode.RightBracket) paintCanvas.brushSize = Mathf.Min(8, paintCanvas.brushSize + 1);
+            else if (e.keyCode == KeyCode.Z && (e.control || e.command) && paintCanvas.CanUndo) { paintCanvas.Undo(); SavePaint(); }
+            else if (e.keyCode == KeyCode.Y && (e.control || e.command) && paintCanvas.CanRedo) { paintCanvas.Redo(); SavePaint(); }
+            else used = false;
+            if (used) e.Use();
+        }
+
+        EditorGUILayout.HelpBox(surfaceMode
+            ? "Paint with any colour: each texel becomes the nearest colour the palette can make (shown as Match). " +
+              "Left drag paints, right click or Alt + click picks. B brush, G fill, I picker, [ ] size, Ctrl+Z / Ctrl+Y."
+            : "Paints the block's colour texture directly (the PNG is overwritten). Left drag paints, right click picks. " +
+              "B brush, G fill, I picker, [ ] size, Ctrl+Z / Ctrl+Y.", MessageType.None);
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            paintCanvas.tool = (TextureCanvas.Tool)GUILayout.Toolbar((int)paintCanvas.tool, new[] { "Brush", "Fill", "Picker" }, GUILayout.Width(210f));
+            GUILayout.Space(8f);
+            paintCanvas.tiled = GUILayout.Toggle(paintCanvas.tiled, new GUIContent("Tiled 3x3", "Show the texture repeated so strokes can cross the edges."), "Button", GUILayout.Width(80f));
+            GUILayout.FlexibleSpace();
+            using (new EditorGUI.DisabledScope(!paintCanvas.CanUndo))
+                if (GUILayout.Button("Undo", GUILayout.Width(50f))) { paintCanvas.Undo(); SavePaint(); }
+            using (new EditorGUI.DisabledScope(!paintCanvas.CanRedo))
+                if (GUILayout.Button("Redo", GUILayout.Width(50f))) { paintCanvas.Redo(); SavePaint(); }
+        }
+
+        // Colour, match and opacity
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            paintCanvas.brushColour = EditorGUILayout.ColorField(new GUIContent("Colour"), paintCanvas.brushColour, true, false, false);
+            if (surfaceMode)
+            {
+                if (!solverReady) { solver.Rebuild(loadedSurface); solverReady = true; }
+                var px = solver.Solve(new Color(0.5f, 0.5f, 0.5f, 1f), paintCanvas.brushColour, PaletteSolver.Affect.ShadeAndColour, out float error);
+                var r = GUILayoutUtility.GetRect(40f, 18f, GUILayout.Width(40f));
+                EditorGUI.DrawRect(r, loadedSurface.Colour(px.g, px.r));
+                GUILayout.Label(error > 0.03f ? "Match (outside palette)" : "Match", EditorStyles.miniLabel, GUILayout.Width(130f));
+            }
+        }
+        paintCanvas.opacity = EditorGUILayout.Slider(new GUIContent("Opacity", "How much of the colour each stroke lays down. Every texel is blended once per stroke."), paintCanvas.opacity, 0f, 1f);
+        paintCanvas.brushSize = EditorGUILayout.IntSlider("Brush Size", paintCanvas.brushSize, 1, 8);
+        if (paintCanvas.tool == TextureCanvas.Tool.Fill)
+            paintCanvas.fillTolerance = EditorGUILayout.Slider(new GUIContent("Fill Tolerance", "How different a texel may be from the clicked one and still be filled."), paintCanvas.fillTolerance, 0f, 0.5f);
+        if (surfaceMode)
+        {
+            EditorGUI.BeginChangeCheck();
+            paintAffect = (PaletteSolver.Affect)EditorGUILayout.EnumPopup(new GUIContent("Affect", "Shade And Colour: free colour. Shade Only: keep each texel's palette position, change its brightness. Colour Only: keep brightness, change palette position."), paintAffect);
+            if (EditorGUI.EndChangeCheck())
+                solver.Rebuild(loadedSurface);
+        }
+
+        // Swatches: palette colours at five shades, then recent colours.
+        if (surfaceMode)
+        {
+            int n = Mathf.Max(1, loadedSurface.ColourCount);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Label("Palette", GUILayout.Width(60f));
+                for (int k = 0; k < n; k++)
+                {
+                    float t = n == 1 ? 0f : k / (n - 1f);
+                    for (int s = 0; s < 5; s++)
+                        ColourSwatch(loadedSurface.Colour(t, s / 4f));
+                    GUILayout.Space(8f);
+                }
+                GUILayout.FlexibleSpace();
+            }
+        }
+        if (paintCanvas.recent.Count > 0)
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Label("Recent", GUILayout.Width(60f));
+                foreach (var c in paintCanvas.recent.ToArray())
+                    ColourSwatch(c);
+                GUILayout.FlexibleSpace();
+            }
+        }
+
+        EditorGUILayout.Space(4f);
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            float available = position.width - 230f - 40f;
+            bool sidePreview = surfaceMode && available > 620f;
+            float side = Mathf.Clamp(sidePreview ? available - 230f : available, 200f, 600f);
+            var rect = GUILayoutUtility.GetRect(side, side, GUILayout.Width(side), GUILayout.Height(side));
+            float texelsPerBlock = paintCanvas.size / v.smallScale;
+            if (paintCanvas.Draw(rect, surfaceMode ? texelsPerBlock : 0f))
+                SavePaint();
+
+            if (sidePreview)
+            {
+                GUILayout.Space(8f);
+                using (new EditorGUILayout.VerticalScope(GUILayout.Width(210f)))
+                {
+                    if (paintPreview == null)
+                    {
+                        paintPreview = BlockStudioPreview.NewTexture(256);
+                        paintPreviewDirty = true;
+                    }
+                    if (paintPreviewDirty && grey != null)
+                    {
+                        BlockStudioPreview.RenderSurface(paintPreview, loadedSurface, grey, null, TextureSize, 16f, v);
+                        paintPreviewDirty = false;
+                    }
+                    var pr = GUILayoutUtility.GetRect(210f, 210f, GUILayout.Width(210f), GUILayout.Height(210f));
+                    EditorGUI.DrawPreviewTexture(pr, paintPreview);
+                    EditorGUILayout.LabelField("16 x 16 blocks in the world", EditorStyles.miniLabel);
+                }
+            }
+        }
+        if (surfaceMode && loadedSurface.texelColourVariation < 0.99f)
+            EditorGUILayout.LabelField("The canvas shows each texel's own colour. With Texel Colour Variation below 1 the world mixes in the patch colour.", EditorStyles.miniLabel);
+    }
+
+    void ColourSwatch(Color c)
+    {
+        var r = GUILayoutUtility.GetRect(18f, 18f, GUILayout.Width(18f), GUILayout.Height(18f));
+        EditorGUI.DrawRect(r, c);
+        if (Event.current.type == EventType.MouseDown && r.Contains(Event.current.mousePosition))
+        {
+            paintCanvas.brushColour = new Color(c.r, c.g, c.b, 1f);
+            Event.current.Use();
+            Repaint();
+        }
+    }
+
+    void SavePaint()
+    {
+        if (loadedSurface != null)
+        {
+            grey = (Color[])paintCanvas.data.Clone();
+            BlockSurfaceAssets.SaveOwnedPixels(loadedSurface, BlockSurfaceAssets.Kind.Grey, grey, TextureSize);
+            var positions = new float[grey.Length];
+            for (int i = 0; i < grey.Length; i++)
+                positions[i] = grey[i].g;
+            colourPainter.values = positions;
+            colourPainter.MarkDisplayDirty();
+            if (!reliefPainted)
+                reliefPainter.Load(AutoRelief(), TextureSize);
+            reliefPainter.MarkDisplayDirty();
+            alphaPainter.MarkDisplayDirty();
+            paintPreviewDirty = true;
+            SurfaceChanged(true);
+            return;
+        }
+
+        // Legacy colour texture: overwrite its PNG, keeping its import settings.
+        var texture = Entry.texture;
+        string path = AssetDatabase.GetAssetPath(texture);
+        if (string.IsNullOrEmpty(path) || !path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+        {
+            Debug.LogWarning($"[Block Studio] Only PNG textures can be painted ({path}).");
+            return;
+        }
+        var tex = new Texture2D(paintCanvas.size, paintCanvas.size, TextureFormat.RGBA32, false);
+        tex.SetPixels(paintCanvas.data);
+        tex.Apply();
+        File.WriteAllBytes(path, tex.EncodeToPNG());
+        DestroyImmediate(tex);
+        AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+        legacyPixels = BlockTextureArrayBuilder.ReadPixels(texture, TextureSize);
+        previewDirty = true;
+        DropSwatch(selected);
+        PushToWorld(false);
     }
 
     // --- Colour map tab ---
@@ -652,6 +912,7 @@ public class BlockStudioWindow : EditorWindow
         for (int i = 0; i < grey.Length; i++)
             grey[i] = new Color(grey[i].r, colourPainter.values[i], grey[i].r, 1f);
         BlockSurfaceAssets.SaveOwnedPixels(loadedSurface, BlockSurfaceAssets.Kind.Grey, grey, TextureSize);
+        paintCanvas.SetData((Color[])grey.Clone());
         colourPainter.dirty = false;
         colourPainter.MarkDisplayDirty();
         reliefPainter.MarkDisplayDirty();
@@ -907,7 +1168,7 @@ public class BlockStudioWindow : EditorWindow
         if (name.Length == 0) { why = "Enter a name."; return false; }
         if (!Regex.IsMatch(name, "^[A-Za-z_][A-Za-z0-9_]*$")) { why = "Letters, digits and _ only, not starting with a digit."; return false; }
         if (Enum.IsDefined(typeof(BlockType), name)) { why = "That block type exists already."; return false; }
-        if (Enum.GetValues(typeof(BlockType)).Length >= VoxelGpuFormat.GrassMarker) { why = "No block ids left."; return false; }
+        if (Enum.GetValues(typeof(BlockType)).Length >= VoxelGpuFormat.LeafMarker) { why = "No block ids left."; return false; }
         return true;
     }
 
@@ -947,6 +1208,46 @@ public class BlockStudioWindow : EditorWindow
         newBlockName = "";
         AssetDatabase.ImportAsset(path);
         AssetDatabase.Refresh();
+    }
+
+    void DeleteSelectedBlock()
+    {
+        string enumPath = BlockTypesPath();
+        string problem = BlockTypeDeletion.EnumProblem(enumPath);
+        if (problem != null)
+        {
+            EditorUtility.DisplayDialog("Delete block", problem, "OK");
+            return;
+        }
+
+        string name = Entry.type.ToString();
+        var refs = BlockTypeDeletion.CodeReferences(name, enumPath);
+        if (refs.Count > 0)
+        {
+            EditorUtility.DisplayDialog("Delete block",
+                $"BlockType.{name} is used in code, so deleting it would break the build. Remove these uses first:\n\n" +
+                string.Join("\n", refs.Take(15)) + (refs.Count > 15 ? $"\n... and {refs.Count - 15} more" : ""), "OK");
+            return;
+        }
+
+        var surface = Entry.surface;
+        bool shared = surface != null && database.blocks.Where((b, i) => i != selected && b.surface == surface).Any();
+        string message = $"Delete block type {name} (id {selected})?\n\n" +
+            $"Every block after it moves down one id. Biomes, L-systems and other assets, prefabs and open scenes that " +
+            $"reference blocks are renumbered to match, and references to {name} become Air. " +
+            "Saved worlds or edit data that store block ids are not renumbered. This cannot be undone (use version control).";
+        int choice;
+        if (surface != null && !shared)
+            choice = EditorUtility.DisplayDialogComplex("Delete block", message, "Delete Block And Surface", "Cancel", "Delete Block, Keep Surface");
+        else
+            choice = EditorUtility.DisplayDialog("Delete block", message, "Delete Block", "Cancel") ? 2 : 1;
+        if (choice == 1)
+            return;
+
+        string report = BlockTypeDeletion.Delete(database, selected, choice == 0, enumPath);
+        Debug.Log("[Block Studio] " + report);
+        selected = Mathf.Max(1, selected - 1);
+        Reload();
     }
 
     /// <summary>After the recompile for a new block type: adds it to the database (as a copy of the chosen block).</summary>

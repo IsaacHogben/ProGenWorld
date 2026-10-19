@@ -53,6 +53,7 @@ public class RenderBenchmark : MonoBehaviour
         new View { name = "forest", offset = new Vector3(0f, 8f, -28f), overForest = true },
         new View { name = "forestHigh", offset = new Vector3(0f, 45f, -40f), overForest = true },
         new View { name = "forestUnder", offset = new Vector3(0f, -14f, -10f), overForest = true },
+        new View { name = "forestNear", offset = new Vector3(4f, 5f, -16f), overForest = true },
     };
 
     // Open water near the player (top of a water surface block) and the direction with the most
@@ -317,6 +318,9 @@ public class RenderBenchmark : MonoBehaviour
         configs["noShadowLeafDepth"] = () => settings.shadowLeafDepth = 0;
         configs["solidLeaves32"] = () => settings.solidLeavesDistance = 32f;
         configs["shadowLeafDepth1"] = () => settings.shadowLeafDepth = 1;
+        configs["leafCubes"] = () => settings.leafCrossSize = 0f;               // cube leaves instead of crossed planes
+        configs["leafFill"] = () => settings.leafSeeThroughDistance = 0f;      // dark filled leaf planes everywhere
+        configs["seeThrough6"] = () => settings.leafSeeThroughDepth = 6;          // see deep into canopies (before the limit)
         configs["baselineAgain"] = () => { };
     }
 

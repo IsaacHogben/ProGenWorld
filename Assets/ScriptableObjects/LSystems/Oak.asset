@@ -1,0 +1,73 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e352e1c65329ce548b2d68a9aab0651d, type: 3}
+  m_Name: Oak
+  m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
+  Axiom: F(0.8)~F(0.7)~S
+  Rules:
+  - Symbol: 83
+    Replacement: '[&(28)A]+(120)[&(32)A]+(120)[&(30)A]^(5)F(0.4)[&(14)A]'
+    Weight: 1
+  - Symbol: 83
+    Replacement: '[&(32)A]+(95)[&(26)A]+(95)[&(34)A]+(95)[&(28)A]'
+    Weight: 1
+  - Symbol: 65
+    Replacement: ~F[+&B]~F[-&A]A
+    Weight: 0.45
+  - Symbol: 65
+    Replacement: '~F[+&A][-&A]'
+    Weight: 0.35
+  - Symbol: 65
+    Replacement: ~F[&B][^B]A
+    Weight: 0.2
+  - Symbol: 66
+    Replacement: '*(0.75)~F[+&F(0.6)][-&F(0.6)]'
+    Weight: 1
+  Iterations: 5
+  DetailStartScale: 1
+  IterationsPerDoubling: 1
+  DetailMaxDroopAngle: 90
+  DetailStepScale: 0.5
+  StepLength: 7
+  MinStepLength: 2.5
+  StepLengthVariance: 1
+  PitchAngle: 24
+  YawAngle: 90
+  RollAngle: 0
+  CurveAngle: 8
+  AngleVariance: 15
+  Gravity: 0.02
+  MaxDroopAngle: 35
+  KeepAboveGround: 1
+  WindStrength: 0
+  WindDirection: 0
+  WindDirectionVariance: 0
+  TaperCurve: 2
+  TaperBy: 2
+  TrunkWidthAtBase: 8
+  MinWidth: 0.5
+  BodyBlock: 15
+  BranchShape: 0
+  Foliage: 11
+  FoliageBlock: 36
+  FoliageSize: 8
+  FoliageSizeVariance: 2
+  FoliageBlock2: 26
+  FoliageBlock2Chance: 0
+  GroundScatterBlock: 0
+  GroundScatterAmount: 0
+  RootCount: 7
+  RootLength: 9
+  RootWidth: 3
+  RootHeight: 3
+  RootWander: 25
+  RootBlock: 0

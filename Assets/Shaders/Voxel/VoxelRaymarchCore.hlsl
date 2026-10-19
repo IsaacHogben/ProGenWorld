@@ -30,6 +30,9 @@
 // Id the pack job writes into the air voxel above a grass top (VoxelGpuFormat.GrassMarker).
 // Invisible like air; near the camera the march tests its grass blades (VoxelGrass.hlsl).
 #define VOXEL_ID_GRASS        255u
+// Id the pack job writes into air voxels next to leaf blocks (VoxelGpuFormat.LeafMarker).
+// Invisible like air; near the camera the leaf planes reach into it (VoxelLeafMask.hlsl).
+#define VOXEL_ID_LEAF_HALO    254u
 
 struct VoxelChunk
 {
@@ -313,7 +316,11 @@ struct VoxelHit
     float3 texPosWS;   // texel centre of the hit column
     float  occlusion;  // ambient occlusion from the column depth (1 = none)
     uint   grass;      // 1 = a grass blade (id is the grass block it grows from)
+    uint   leaf;       // a leaf plane (VOXEL_LEAF_LIT / VOXEL_LEAF_FILL, VoxelLeafMask.hlsl), 0 = none
+    int3   leafOwner;  // the leaf block whose plane it is (level 0 voxel)
 };
+
+#include "VoxelLeafMask.hlsl"
 
 bool VoxelRayBox(float3 o, float3 invD, float3 bmin, float3 bmax,
                  out float tNear, out float tFar, out int nearAxis)
@@ -402,7 +409,11 @@ bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
 
     // Far away the alpha mask holes are smaller than a pixel: treat masked blocks as solid so
     // rays stop at the first leaf instead of marching through the canopy.
+    // Flat colour leaf cubes are solid faces for the camera (shadow rays keep the alpha masks).
+    // Level 0 leaves are crossed planes instead (VoxelLeafMask.hlsl), for shadow rays too.
+    bool leafPlanes = level == 0u && VoxelLeafCrossOn();
     bool solidMasked = (_VoxelSolidLeavesFromLevel > 0.5 && level >= (uint)_VoxelSolidLeavesFromLevel)
+        || (!skipStartSolid && VoxelLeafFlat() && !leafPlanes)
         || _VoxelBenchSolidLeaves > (skipStartSolid ? 0.5 : 1.5);
     // Camera rays (o is the camera, t its distance in voxels): solid leaves past a distance too.
     float solidMaskedFrom = !skipStartSolid && _VoxelSolidLeavesDistance > 0.0
@@ -410,22 +421,34 @@ bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
     // Shadow rays: a canopy several leaf blocks deep lets almost no light through anyway, so stop
     // testing masks after a few blocks and call it blocked.
     int leafLimit = skipStartSolid ? (int)_VoxelShadowLeafDepth : 0;
+    // Leaf plane texels are see-through up to this camera distance, filled past it. Shadow rays
+    // keep them see-through.
+    float crossFillFrom = skipStartSolid ? 3.4e38 : _VoxelLeafCross.y / c.originSize.w;
+    // Camera rays see through this many leaf blocks; deeper in the canopy the see-through texels
+    // are filled too, so rays do not march through whole trees.
+    int seeThroughBlocks = skipStartSolid ? 1 << 30 : max((int)_VoxelLeafSeeThroughDepth, 1);
     int leafBlocks = 0;
 
     int3 stepDir = int3(d.x > 0 ? 1 : -1, d.y > 0 ? 1 : -1, d.z > 0 ? 1 : -1);
     int majorAxis = VoxelMajorAxis(d);
     uint prevId = 0u;
     uint prevVis = VOXEL_VIS_INVISIBLE;
+    bool leavingThroughMasked = false;   // the next step is outside the bounds: only its far side test
     float grassTips = VoxelGrassTips();   // blade tips above the grass top (voxels = blocks)
 
     [loop]
     for (int i = 0; i < VOXEL_MAX_STEPS; i++)
     {
         bool isUniform = false;
-        uint id = VoxelFetchMarch(c, level, cur.p, isUniform);
-        uint vis = VoxelBlockVisibility(id);
-        if (vis == VOXEL_VIS_STACKED && (solidMasked || cur.t >= solidMaskedFrom))
-            vis = VOXEL_VIS_OPAQUE;
+        uint id = 0u;
+        uint vis = VOXEL_VIS_INVISIBLE;   // past the bounds after a masked block: known open space
+        if (!leavingThroughMasked)
+        {
+            id = VoxelFetchMarch(c, level, cur.p, isUniform);
+            vis = VoxelBlockVisibility(id);
+            if (vis == VOXEL_VIS_STACKED && (solidMasked || cur.t >= solidMaskedFrom))
+                vis = VOXEL_VIS_OPAQUE;
+        }
 
         int faceAxis = cur.axis >= 0 ? cur.axis : majorAxis;
         float3 pos = o + d * cur.t;
@@ -445,23 +468,52 @@ bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
         bool startsInMasked = skipping && vis == VOXEL_VIS_STACKED && cur.axis < 0;
         skipping = false;
 
+        // Leaf planes in leaf voxels and the air marked next to them; the voxel is open space
+        // otherwise. A shadow ray does not test the voxel it starts in (the planes of the surface
+        // it starts from).
+        bool crossCell = leafPlanes && cur.t < solidMaskedFrom && (vis == VOXEL_VIS_STACKED || id == VOXEL_ID_LEAF_HALO);
+        if (crossCell)
+        {
+            if (!(skipStartSolid && cur.axis < 0 && i == 0))
+            {
+                float3 tExit3 = ((float3)cur.p + (float3)(stepDir > 0) - o) * invD;
+                float tExit = min(tExit3.x, min(tExit3.y, tExit3.z));
+                if (VoxelLeafCrossCell(c, cur.p, id, o, d, invD, cur.t, tExit,
+                                       leafBlocks >= seeThroughBlocks ? 0.0 : crossFillFrom, hit) != 0u)
+                    return true;
+            }
+            if (vis == VOXEL_VIS_STACKED && ++leafBlocks >= leafLimit && leafLimit > 0)
+            {
+                hit.t = cur.t; hit.id = id; hit.axis = faceAxis; hit.posVoxel = pos;
+                return true;
+            }
+            vis = VOXEL_VIS_INVISIBLE;
+        }
+
         if (vis == VOXEL_VIS_STACKED && cur.t < stopAtMaskedBefore)
         {
             hit.t = cur.t; hit.id = id; hit.axis = faceAxis; hit.posVoxel = pos;
             return true;
         }
 
-        if (vis == VOXEL_VIS_OPAQUE || (vis == VOXEL_VIS_STACKED && !startsInMasked && VoxelMaskPass(c, level, id, faceAxis, pos)))
+        if (vis == VOXEL_VIS_OPAQUE)
         {
             hit.t = cur.t; hit.id = id; hit.axis = faceAxis; hit.posVoxel = pos;
             return true;
         }
 
-        // Far side of a masked block (they render double sided) - only towards open space.
-        if (prevVis == VOXEL_VIS_STACKED && (vis == VOXEL_VIS_INVISIBLE || vis == VOXEL_VIS_TRANSLUCENT) && VoxelMaskPass(c, level, prevId, faceAxis, pos))
+        // Masked block faces: the entry face of a masked block, or the far side of the one just
+        // left (they render double sided) - only towards open space. One mask test per step
+        // (each inlined copy of it costs shader compile time).
+        bool farSide = prevVis == VOXEL_VIS_STACKED && (vis == VOXEL_VIS_INVISIBLE || vis == VOXEL_VIS_TRANSLUCENT);
+        if ((vis == VOXEL_VIS_STACKED && !startsInMasked) || farSide)
         {
-            hit.t = cur.t; hit.id = prevId; hit.axis = faceAxis; hit.posVoxel = pos;
-            return true;
+            uint maskId = farSide ? prevId : id;
+            if (VoxelMaskPass(c, level, maskId, faceAxis, pos))
+            {
+                hit.t = cur.t; hit.id = maskId; hit.axis = faceAxis; hit.posVoxel = pos;
+                return true;
+            }
         }
 
         if (vis == VOXEL_VIS_STACKED && leafLimit > 0 && ++leafBlocks >= leafLimit)
@@ -485,7 +537,7 @@ bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
         }
 
         float3 cellMin, cellMax;
-        VoxelStepBounds(cur.p, isUniform && vis != VOXEL_VIS_STACKED, bmin, bmax, cellMin, cellMax);
+        VoxelStepBounds(cur.p, isUniform && vis != VOXEL_VIS_STACKED && !crossCell, bmin, bmax, cellMin, cellMax);
         VoxelAdvance(cur, o, d, invD, stepDir, cellMin, cellMax);
         prevId = id;
         prevVis = vis;
@@ -494,18 +546,14 @@ bool VoxelMarchVoxels(VoxelChunk c, uint level, float3 bmin, float3 bmax, float3
         {
             // Leaving through a masked block: its far face is visible only when the next voxel is
             // open space. Next to a solid or masked block that block draws the shared face, and
-            // drawing both at the same depth would z-fight.
-            if (vis == VOXEL_VIS_STACKED)
-            {
-                uint nextVis = VoxelBlockVisibility(VoxelFetchAny(c, level, cur.p));
-                pos = o + d * cur.t;
-                if ((nextVis == VOXEL_VIS_INVISIBLE || nextVis == VOXEL_VIS_TRANSLUCENT) && VoxelMaskPass(c, level, id, cur.axis, pos))
-                {
-                    hit.t = cur.t; hit.id = id; hit.axis = cur.axis; hit.posVoxel = pos;
-                    return true;
-                }
-            }
-            return false;
+            // drawing both at the same depth would z-fight. The next voxel is outside the march
+            // bounds: one more step tests it as the far side above, then stops.
+            if (vis != VOXEL_VIS_STACKED || leavingThroughMasked)
+                return false;
+            uint nextVis = VoxelBlockVisibility(VoxelFetchAny(c, level, cur.p));
+            if (nextVis != VOXEL_VIS_INVISIBLE && nextVis != VOXEL_VIS_TRANSLUCENT)
+                return false;
+            leavingThroughMasked = true;
         }
     }
     return false;

@@ -120,6 +120,9 @@ int VoxelResolvePrepass(VoxelChunk c, uint level, float3 bmin, float3 bmax, floa
         return VoxelGrassResolve(c, q, pv, axis, distance(hitWS, GetCameraPositionWS()), hit)
             ? VOXEL_RESOLVE_HIT : VOXEL_RESOLVE_TRACE;
     }
+    // A leaf plane: on a central plane of a leaf voxel or of the air marked next to leaves.
+    if (level == 0u && VoxelLeafResolve(c, pv, axis, distance(hitWS, GetCameraPositionWS()), hit))
+        return VoxelOutside((int3)floor(pv), bmin, bmax) ? VOXEL_RESOLVE_OTHER : VOXEL_RESOLVE_HIT;
     if (vis != VOXEL_VIS_OPAQUE && vis != VOXEL_VIS_STACKED)
         return VOXEL_RESOLVE_TRACE;   // e.g. the far face of a leaf block: the surface is in front
     if (VoxelOutside(q, bmin, bmax))
@@ -162,11 +165,17 @@ float VoxelShadowKey(float3 hitWS, float3 normalWS)
 
 // Voxel sun shadow at a surface, traced in place (no screen shadow texture available). Grass
 // blades are lit as if facing up (VoxelGrassLightNormal), so their shadow uses that normal too.
+// Leaf planes are lit by their block's outward normal (VoxelLeafOutward).
 half VoxelTraceSurfaceShadow(VoxelChunk c, VoxelHit hit, float3 hitWS, float3 normalWS, float3 sunDir)
 {
-    float3 n = hit.grass != 0u ? float3(0, 1, 0) : normalWS;
-    half s = VoxelSunShadow(VoxelShadowOrigin(hitWS, n), n, sunDir);
-    if (s > 0.0)
+    float3 n = hit.grass != 0u ? float3(0, 1, 0) : (hit.leaf != 0u ? VoxelLeafOutward(c, 0u, hit.leafOwner) : normalWS);
+    if (hit.leaf != 0u)
+    {
+        n = VoxelLeafShadowNormal(n, sunDir);
+        VoxelLeafIgnoreOwnShadow(c, hit.leafOwner);
+    }
+    half s = VoxelSunShadow(VoxelShadowOrigin(hitWS, hit.leaf != 0u ? normalWS : n), n, sunDir);
+    if (s > 0.0 && hit.leaf == 0u)
         s *= VoxelReliefSunShadow(c, hit, hitWS, normalWS, sunDir);
     if (s > 0.0)
         s *= VoxelGrassSunShadow(c, hitWS, sunDir);

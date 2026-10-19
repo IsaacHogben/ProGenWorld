@@ -62,20 +62,40 @@ Shader "Hidden/ProGenWorld/VoxelScreenShadows"
                 // are lit as if facing up (VoxelGrassLightNormal), so their shadow uses that normal.
                 float3 inside = hitWS - normalWS * 0.01;
                 int slot = _VoxelChunkWorldSize > 0.0 ? VoxelLookupChunk((int3)floor(inside / _VoxelChunkWorldSize)) : -1;
+                // A leaf plane is lit by its block's outward normal (VoxelLeafOutward).
                 VoxelChunk c = (VoxelChunk)0;
                 bool blade = false;
+                VoxelHit leaf = (VoxelHit)0;
+                bool leafCube = false;   // a leaf cube face (flat colour leaves, wrapped light too)
+                uint leafLevel = 0u;
                 if (slot >= 0)
                 {
                     c = _VoxelChunks[slot];
-                    int3 q = (int3)floor((inside - c.originSize.xyz) / c.originSize.w);
-                    blade = VoxelGrassAir(c, q, VoxelFetchAny(c, 0u, q));
+                    float3 pv = (hitWS - c.originSize.xyz) / c.originSize.w;
+                    int3 q = (int3)floor(pv - normalWS * 0.01);
+                    uint qId = VoxelFetchAny(c, 0u, q);
+                    blade = VoxelGrassAir(c, q, qId);
+                    // Leaf planes are level 0 only; leaf cube faces are read at the level the cell is
+                    // drawn from (far chunks may not keep level 0).
+                    leafLevel = VoxelLevelAtDistance(c, distance(hitWS, GetCameraPositionWS()));
+                    if (!blade && leafLevel == 0u)
+                        VoxelLeafResolve(c, pv, axis, distance(hitWS, GetCameraPositionWS()), leaf);
+                    leafCube = leaf.leaf == 0u && VoxelLeafFlat()
+                        && VoxelIsLeaf(VoxelFetchAny(c, leafLevel, VoxelLeafBlockAt(c, leafLevel, hitWS, normalWS)));
                 }
-                float3 lightNormal = blade ? float3(0, 1, 0) : normalWS;
+                float3 lightNormal = blade ? float3(0, 1, 0) : (leaf.leaf != 0u ? VoxelLeafOutward(c, 0u, leaf.leafOwner) : normalWS);
+                if (leafCube)
+                    lightNormal = VoxelLeafShadowNormal(VoxelLeafOutward(c, leafLevel, VoxelLeafBlockAt(c, leafLevel, hitWS, normalWS)), sunDir);
+                if (leaf.leaf != 0u)
+                {
+                    lightNormal = VoxelLeafShadowNormal(lightNormal, sunDir);
+                    VoxelLeafIgnoreOwnShadow(c, leaf.leafOwner);
+                }
 
-                float shadow = VoxelSunShadow(VoxelShadowOrigin(hitWS, lightNormal), lightNormal, sunDir);
+                float shadow = VoxelSunShadow(VoxelShadowOrigin(hitWS, leaf.leaf != 0u || leafCube ? normalWS : lightNormal), lightNormal, sunDir);
 
                 // Relief columns shadowing each other (needs the refined hit of the chunk).
-                if (shadow > 0.0 && _VoxelReliefShadows > 0.5 && slot >= 0 && !blade)
+                if (shadow > 0.0 && _VoxelReliefShadows > 0.5 && slot >= 0 && !blade && leaf.leaf == 0u)
                 {
                     VoxelHit hit = (VoxelHit)0;
                     hit.axis = axis;

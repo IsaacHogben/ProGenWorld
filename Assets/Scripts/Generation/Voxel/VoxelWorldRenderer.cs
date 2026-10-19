@@ -797,11 +797,11 @@ public sealed class VoxelWorldRenderer : IDisposable
     /// </summary>
     public void SetBlockInfo(NativeArray<BlockDatabase.BlockInfoUnmanaged> blockDb)
     {
-        // VoxelGpuFormat.GrassMarker (the air above a grass block) keeps the invisible default.
+        // The reserved marker ids (VoxelGpuFormat.LeafMarker and up: air next to leaves, above grass) keep the invisible default.
         var info = new NativeArray<uint>(256, Allocator.Temp);
         for (int i = 0; i < 256; i++)
             info[i] = (uint)BlockVisibility.Invisible;
-        for (int i = 0; i < blockDb.Length && i < VoxelGpuFormat.GrassMarker; i++)
+        for (int i = 0; i < blockDb.Length && i < VoxelGpuFormat.LeafMarker; i++)
             info[i] = (uint)blockDb[i].visibility | ((uint)blockDb[i].alphaMaskIndex << 8)
                 | ((uint)blockDb[i].surfaceDecoration << 16)
                 | (hasSurfaceLut && blockDb[i].hasSurface ? 1u << 24 : 0u);

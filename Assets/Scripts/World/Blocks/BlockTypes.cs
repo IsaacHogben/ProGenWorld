@@ -45,8 +45,9 @@ public enum BlockType : byte
 
     CherryBlossom,
     CherryBlossomPale,
-    CherryBark
-
+    CherryBark,
+    Grass_feilds,
+    OakLeaves
 }
 
 public enum BlockVisibility

@@ -43,10 +43,67 @@ public class BlockSurface : ScriptableObject
     [Tooltip("Cut-out mask per block face (red > 0.5 = solid), for Stacked blocks such as leaves. Empty: opaque.")]
     public Texture2D alphaMask;
 
+    [Tooltip("Leaves: flat colour leaves (VoxelRenderSettings) take their tones from the colours: the first in shadow (and the dark fill), the middle in half light, the last in full sun. Off: the leaf colour comes from the texture's hue and the global leaf tints.")]
+    public bool leafPaletteTones = false;
+    [Tooltip("Leaves: fill the three colours from Leaf Colour alone: it is the middle tone, and the shadow and sun tones follow from the global leaf shadow and sun tints.")]
+    public bool autoLeafColours = false;
+    [Tooltip("The one colour Auto Leaf Colours builds the palette from: the leaves' half lit (middle) tone, brightness included.")]
+    public Color leafColour = new Color(0.3f, 0.55f, 0.2f, 1f);
+
+    /// <summary>VoxelRenderSettings defaults, for AutoLeafColours without a settings object in the scene.</summary>
+    public static readonly LeafLook DefaultLeafLook = new LeafLook
+    {
+        brightness = 0.2f,
+        saturation = 0.75f,
+        sunTint = new Color(1.25f, 1.2f, 0.55f, 1f),
+        shadowTint = new Color(0.6f, 0.9f, 1.05f, 1f),
+    };
+
+    /// <summary>The global flat leaf look (VoxelRenderSettings) that AutoLeafColours reproduces.</summary>
+    public struct LeafLook
+    {
+        public float brightness, saturation;
+        public Color sunTint, shadowTint;
+    }
+
+    /// <summary>
+    /// Shadow, middle and sunlit sRGB colours for a leaf colour: the colour itself (brightness
+    /// included) is the middle tone, and the shadow / sun tones are it times the global shadow /
+    /// sun tint relative to their halfway tint, the way the voxel shader shades leaves without
+    /// palette tones.
+    /// </summary>
+    public static Color[] AutoLeafColours(Color leaf, LeafLook look)
+    {
+        Color mid = leaf.linear;
+        Color half = Color.LerpUnclamped(look.shadowTint, look.sunTint, 0.5f);
+        Color Relative(Color tint) => new Color(
+            mid.r * tint.r / Mathf.Max(half.r, 1e-4f),
+            mid.g * tint.g / Mathf.Max(half.g, 1e-4f),
+            mid.b * tint.b / Mathf.Max(half.b, 1e-4f), 1f).gamma;
+        return new[] { Relative(look.shadowTint), leaf, Relative(look.sunTint) };
+    }
+
+    /// <summary>Refills the colours from Leaf Colour when Auto Leaf Colours is on.</summary>
+    public void ApplyAutoLeafColours(LeafLook look)
+    {
+        if (autoLeafColours)
+            colours = AutoLeafColours(leafColour, look);
+    }
+
     /// <summary>Raised when a surface is edited, so a running world can refresh its colours.</summary>
     public static event System.Action<BlockSurface> Changed;
 
-    void OnValidate() => Changed?.Invoke(this);
+    void OnValidate()
+    {
+#if UNITY_EDITOR
+        if (autoLeafColours)
+        {
+            var settings = Object.FindFirstObjectByType<VoxelRenderSettings>();
+            ApplyAutoLeafColours(settings != null ? settings.LeafLook : DefaultLeafLook);
+        }
+#endif
+        Changed?.Invoke(this);
+    }
 
     public int ColourCount => colours == null ? 0 : Mathf.Clamp(colours.Length, 0, MaxColours);
 
@@ -75,8 +132,13 @@ public class BlockSurface : ScriptableObject
 
     /// <summary>
     /// For the shader: patch = saturate(colourLarge * x + y), texel position = lerp(patch, colourSmall, z).
+    /// w: leaf palette tones off (0), or 1 + the shade at which the lookup holds the plain colours.
     /// </summary>
-    public Vector4 PatchParams => new Vector4(patchContrast, 0.5f + patchOffset - 0.5f * patchContrast, texelColourVariation, 0f);
+    public Vector4 PatchParams => new Vector4(patchContrast, 0.5f + patchOffset - 0.5f * patchContrast, texelColourVariation,
+        leafPaletteTones ? 1f + PlainShade : 0f);
+
+    /// <summary>Shade (texture red) at which Colour gives the palette colours unchanged (multiplier 1).</summary>
+    public float PlainShade => Mathf.Abs(shadeLight - shadeDark) < 1e-4f ? 0.5f : Mathf.Clamp01((1f - shadeDark) / (shadeLight - shadeDark));
 
     /// <summary>sRGB colour of a small scale texel (shade, colour position) inside the patch picked by colourLarge.</summary>
     public Color Evaluate(float shadeSmall, float colourSmall, float colourLarge)

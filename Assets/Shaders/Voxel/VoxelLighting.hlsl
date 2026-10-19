@@ -7,6 +7,21 @@
 #ifndef PROGENWORLD_VOXEL_LIGHTING_INCLUDED
 #define PROGENWORLD_VOXEL_LIGHTING_INCLUDED
 
+float _VoxelTerrainBands;   // > 0: sunlight on the terrain in this many flat bands (VoxelBandedSun)
+
+// Main light shadow term that bands the sunlight: the sun reaching a surface (facing ratio x
+// shadow) snapped up to the next of a few flat steps, in shadow none. Returned as the shadow
+// attenuation for VoxelFragmentPBR, which multiplies it by the facing ratio again.
+half VoxelBandedSun(float3 normalWS, half voxelShadow)
+{
+    if (_VoxelTerrainBands < 0.5)
+        return voxelShadow;
+    float ndl = saturate(dot(normalWS, _MainLightPosition.xyz));
+    float sun = ndl * voxelShadow;
+    float banded = sun < 0.02 ? 0.0 : ceil(sun * _VoxelTerrainBands - 1e-3) / _VoxelTerrainBands;
+    return ndl > 1e-3 ? (half)(banded / ndl) : 0.0;
+}
+
 // UniversalFragmentPBR (URP 17) with an extra voxel shadow term on the main light.
 half4 VoxelFragmentPBR(InputData inputData, SurfaceData surfaceData, half voxelShadow)
 {

@@ -48,6 +48,40 @@ public class TimeOfDayManager : MonoBehaviour
 
     [Tooltip("Night ambient color")]
     public Color nightAmbientColor = new Color(0.1f, 0.1f, 0.15f);
+
+    [Header("Colour Lighting")]
+    [Tooltip("Ambient light from three directions (sky above, horizon, ground below) instead of one flat colour: surfaces facing up get the cool sky light, overhangs and undersides the warmer ground bounce. Off: the flat day / night ambient colours above.")]
+    public bool gradientAmbient = true;
+    [Tooltip("Ambient light from the sky above, by day.")]
+    public Color daySkyAmbient = new Color(0.45f, 0.56f, 0.76f);
+    [Tooltip("Ambient light from the horizon, by day.")]
+    public Color dayEquatorAmbient = new Color(0.47f, 0.52f, 0.56f);
+    [Tooltip("Ambient light bounced off the ground, by day.")]
+    public Color dayGroundAmbient = new Color(0.36f, 0.34f, 0.27f);
+    [Tooltip("Ambient light from the sky above, at night.")]
+    public Color nightSkyAmbient = new Color(0.1f, 0.12f, 0.2f);
+    [Tooltip("Ambient light from the horizon, at night.")]
+    public Color nightEquatorAmbient = new Color(0.1f, 0.1f, 0.14f);
+    [Tooltip("Ambient light bounced off the ground, at night.")]
+    public Color nightGroundAmbient = new Color(0.06f, 0.06f, 0.07f);
+    [Tooltip("Tint the sun by its height: warm orange at the horizon, warm white high up.")]
+    public bool controlSunColor = true;
+    [Tooltip("Sun colour by sun height (left: at the horizon, right: straight up).")]
+    public Gradient sunColorByHeight = DefaultSunGradient();
+
+    static Gradient DefaultSunGradient()
+    {
+        var g = new Gradient();
+        g.SetKeys(
+            new[]
+            {
+                new GradientColorKey(new Color(1f, 0.55f, 0.3f), 0f),
+                new GradientColorKey(new Color(1f, 0.8f, 0.6f), 0.25f),
+                new GradientColorKey(new Color(1f, 0.95f, 0.86f), 1f),
+            },
+            new[] { new GradientAlphaKey(1f, 0f), new GradientAlphaKey(1f, 1f) });
+        return g;
+    }
     [Header("Fog Preset Integration")]
     [Tooltip("Automatically change fog presets based on time")]
     public bool controlFogPresets = true;
@@ -149,6 +183,18 @@ public class TimeOfDayManager : MonoBehaviour
 
             sunLight.intensity = intensity;
         }
+
+        if (controlSunColor && sunColorByHeight != null)
+            sunLight.color = sunColorByHeight.Evaluate(Mathf.Clamp01(-sunLight.transform.forward.y));
+    }
+
+    void OnValidate()
+    {
+        // Live tweaking in the inspector while playing.
+        if (!Application.isPlaying)
+            return;
+        UpdateSunPosition();
+        UpdateAmbientLight();
     }
 
     void UpdateAmbientLight()
@@ -168,6 +214,16 @@ public class TimeOfDayManager : MonoBehaviour
         float t = Mathf.Clamp01(sunHeight * 2f + 0.5f);
         Color targetColor = Color.Lerp(nightAmbientColor, dayAmbientColor, t);
         float targetIntensity = Mathf.Lerp(nightAmbientIntensity, dayAmbientIntensity, t);
+
+        if (gradientAmbient)
+        {
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+            RenderSettings.ambientSkyColor = Color.Lerp(nightSkyAmbient, daySkyAmbient, t);
+            RenderSettings.ambientEquatorColor = Color.Lerp(nightEquatorAmbient, dayEquatorAmbient, t);
+            RenderSettings.ambientGroundColor = Color.Lerp(nightGroundAmbient, dayGroundAmbient, t);
+            RenderSettings.ambientIntensity = targetIntensity;
+            return;
+        }
 
         // Set ambient mode to Color
         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;

@@ -115,7 +115,63 @@ Shader "ProGenWorld/VoxelRaymarch"
                     ? LOAD_TEXTURE2D(_ScreenSpaceShadowmapTexture, (uint2)input.positionCS.xy).r
                     : VoxelTraceSurfaceShadow(chunk, hit, hitWS, normalWS, _MainLightPosition.xyz);
 
-                half4 color = VoxelFragmentPBR(inputData, surface, voxelShadow);
+                // Flat colour leaves: the leaf's average colour, sunlight in a few flat bands by face
+                // direction and voxel shadow (a few texels one band brighter), plus the sky light.
+                // Leaf planes take their block's outward normal; their filled texels are a dark
+                // shade of the sky light only.
+                if (VoxelLeafFlat() && hit.grass == 0u && VoxelIsLeaf(hit.id))
+                {
+                    // Wrapped light: a low sun still reaches the top band on leaves facing it, and the
+                    // shadow band keeps some sun so it is not near black.
+                    // Planes and cubes alike: the block's outward normal, so far trees shade like near ones.
+                    float3 leafNormal = hit.leaf != 0u ? VoxelLeafOutward(chunk, 0u, hit.leafOwner)
+                        : VoxelLeafOutward(chunk, input.level, VoxelLeafBlockAt(chunk, input.level, hitWS, normalWS));
+                    float bands = max(_VoxelLeafTones.y, 2.0);
+                    float wrap = _VoxelLeafLight.x;
+                    float sun = saturate((dot(leafNormal, _MainLightPosition.xyz) + wrap) / (1.0 + wrap)) * voxelShadow;
+                    float level = min(floor(sun * bands), bands - 1.0);
+                    float ts = VoxelLeafTexelSize();
+                    int3 texel = (int3)floor((hitWS - normalWS * (ts * 0.5)) / ts);
+                    if (level < bands - 1.0 && VoxelLeafHash3(texel).x < _VoxelLeafTones.z)
+                        level += 1.0;
+                    bool fill = hit.leaf == VOXEL_LEAF_FILL;
+                    // Leafy texture: clumps of texels a band lighter or darker, so canopies (the
+                    // distant cube leaves especially) are not flat colour. Darker in the darkest band
+                    // dims it instead.
+                    float clumpDim = 1.0;
+                    if (!fill && (hit.leaf == 0u || _VoxelLeafClumps.w > 0.5))
+                    {
+                        float shift = VoxelLeafClumpShift(hitWS - normalWS * (ts * 0.5), input.level);
+                        clumpDim = shift < 0.0 && level < 0.5 ? 0.75 : 1.0;
+                        level = clamp(level + shift, 0.0, bands - 1.0);
+                    }
+                    float sunShare = fill ? 0.0 : lerp(_VoxelLeafLight.y, 1.0, level / (bands - 1.0));
+                    half3 sky = SampleSH(leafNormal) * surface.occlusion * (fill ? _VoxelLeafTones.w : 1.0);
+                    float tone = fill ? 0.0 : level / (bands - 1.0);   // 0 shadow .. 1 full sun
+                    half3 toned;
+                    float4 leafParams = _VoxelSurfaceParams[hit.id];
+                    if (VoxelHasSurface(hit.id) && leafParams.w > 0.5)
+                    {
+                        // Palette tones (BlockSurface.leafPaletteTones): first colour in shadow, the
+                        // last in full sun, at the shade where the lookup holds the plain colours.
+                        toned = VoxelSurfaceColour(hit.id, tone, leafParams.w - 1.0);
+                    }
+                    else
+                    {
+                        // The texture's hue at a set brightness (leaf textures average out very dark),
+                        // then saturation, then the painterly two tone: sunlit bands tinted warm
+                        // (yellow-green), shadowed ones cool (teal).
+                        half3 base = VoxelBlockTextureMean(hit.id);
+                        half baseLum = dot(base, half3(0.2126, 0.7152, 0.0722));
+                        base = base / max(baseLum, 1e-4) * _VoxelLeafLight.w;
+                        base = max(lerp(_VoxelLeafLight.w, base, _VoxelLeafLight.z), 0.0);
+                        toned = base * lerp(_VoxelLeafShadowTint.rgb, _VoxelLeafSunTint.rgb, tone);
+                    }
+                    half3 leafColour = toned * clumpDim * (sky + _MainLightColor.rgb * sunShare);
+                    return half4(MixFog(leafColour, inputData.fogCoord), 1);
+                }
+
+                half4 color = VoxelFragmentPBR(inputData, surface, VoxelBandedSun(lightNormalWS, voxelShadow));
                 color.rgb = MixFog(color.rgb, inputData.fogCoord);
                 color.a = 1;
                 return color;

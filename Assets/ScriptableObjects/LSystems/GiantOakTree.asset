@@ -35,5 +35,5 @@ MonoBehaviour:
   MinWidth: 0
   Foliage: 7
   BodyBlock: 15
-  FoliageBlock: 16
+  FoliageBlock: 36
   FoliageSize: 24

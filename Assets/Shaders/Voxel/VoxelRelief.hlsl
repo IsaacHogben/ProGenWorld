@@ -276,7 +276,7 @@ bool VoxelReliefRefine(VoxelChunk c, float3 bmin, float3 bmax, float3 ro, float3
     [loop]
     for (int attempt = 0; attempt < VOXEL_RELIEF_ATTEMPTS; attempt++)
     {
-        if (hit.grass != 0u)
+        if (hit.grass != 0u || hit.leaf != 0u)
             return true;
         bool masked = VoxelBlockVisibility(hit.id) == VOXEL_VIS_STACKED;
         VoxelReliefParams rp;

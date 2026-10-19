@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 69bb1e938a08f6f44915b55e0a5160d2, type: 3}
+  m_Name: OakLeaves
+  m_EditorClassIdentifier: Assembly-CSharp::BlockSurface
+  greyTexture: {fileID: 2800000, guid: 3410dac7b3df2c54ea25a60465216c53, type: 3}
+  colours:
+  - {r: 0.2747, g: 0.5026, b: 0.3337, a: 1}
+  - {r: 0.3399, g: 0.5396, b: 0.2921, a: 1}
+  - {r: 0.3927, g: 0.5736, b: 0.2419, a: 1}
+  shadeDark: 0.3817442
+  shadeLight: 2.2715788
+  patchContrast: 1
+  patchOffset: 0
+  texelColourVariation: 1
+  reliefMask: {fileID: 2800000, guid: eb2a809c296f0e248a58586cc9254770, type: 3}
+  alphaMask: {fileID: 2800000, guid: 70c403292cced4a4b92a74918b44af00, type: 3}
+  leafPaletteTones: 1
+  autoLeafColours: 1
+  leafColour: {r: 0.3399, g: 0.5396, b: 0.2921, a: 1}

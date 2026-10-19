@@ -50,6 +50,61 @@ public class VoxelRenderSettings : MonoBehaviour
     [Tooltip("Shade from URP's depth + normals prepass, which already marched every voxel pixel, instead of marching each ray a second time in the forward pass.")]
     public bool reusePrepass = true;
 
+    [Header("Lighting")]
+    [Tooltip("Sunlight on the terrain in this many flat bands instead of a smooth falloff: every lit face snaps up to the next band, shadow stays shadow (the textures are kept). Painterly / anime look. 0 = smooth.")]
+    [Range(0, 6)] public int terrainLightBands = 3;
+
+    [Header("Leaves")]
+    [Tooltip("Leaves as flat colour pixel art: solid faces in the leaf's average colour, lit in a few flat bands by how much sun reaches them (their direction and the voxel shadow), plus the sky light. Leaf planes (Leaf Cross Size) are lit as if facing away from the canopy.")]
+    public bool leafFlatTones = true;
+    [Tooltip("Number of sunlight bands on flat colour leaves (shadow, ..., full sun).")]
+    [Range(2, 4)] public int leafToneBands = 3;
+    [Tooltip("Share of texels one band brighter, as a hint of leaf detail on flat colour leaves.")]
+    [Range(0f, 0.2f)] public float leafToneSparkle = 0.05f;
+    [Tooltip("Light wrap on flat colour leaves: leaves facing partly away from the sun still count as lit, so a low sun still gives sunlit canopy tops. 0 = plain facing ratio.")]
+    [Range(0f, 1f)] public float leafLightWrap = 0.5f;
+    [Tooltip("Sunlight the darkest (shadowed) band of flat colour leaves keeps, as a share of the full sun, so shadowed leaves are not near black.")]
+    [Range(0f, 0.6f)] public float leafShadowLift = 0.2f;
+    [Tooltip("Saturation of the flat leaf colour (1 = the leaf texture's hue as it is, lower = greyer, which also lets the warm sun tint show).")]
+    [Range(0f, 2f)] public float leafSaturation = 0.75f;
+    [Tooltip("Brightness (linear luminance) of the flat leaf colour. The colour keeps the leaf texture's hue but not its brightness, which averages out very dark.")]
+    [Range(0.02f, 0.6f)] public float leafBrightness = 0.2f;
+    [Tooltip("Colour tint of sunlit flat colour leaves (multiplies the leaf colour): warm yellow-green tops, as in painted canopies.")]
+    [ColorUsage(false, true)] public Color leafSunTint = new Color(1.25f, 1.2f, 0.55f, 1f);
+    [Tooltip("Colour tint of shadowed flat colour leaves and the dark fill (multiplies the leaf colour): cool teal undersides.")]
+    [ColorUsage(false, true)] public Color leafShadowTint = new Color(0.6f, 0.9f, 1.05f, 1f);
+    [Tooltip("Leafy texture on flat colour leaves: clumps of this many block texture texels drawn a band lighter or darker, so canopies (the distant cube leaves especially) are not flat colour.")]
+    [Range(1f, 8f)] public float leafClumpTexels = 3f;
+    [Tooltip("Share of leaf clumps a band lighter.")]
+    [Range(0f, 0.5f)] public float leafClumpLight = 0.22f;
+    [Tooltip("Share of leaf clumps a band darker.")]
+    [Range(0f, 0.5f)] public float leafClumpDark = 0.25f;
+    [Tooltip("Leaf clumps on the near leaf planes too (they already have see-through edges); off: distant cube leaves only.")]
+    public bool leafClumpsOnPlanes = false;
+    [Tooltip("Brightness of the dark fill that replaces the see-through texels of leaf planes past the see-through distance (share of the shadowed tone).")]
+    [Range(0f, 1f)] public float leafFillBrightness = 0.5f;
+    [Tooltip("Leaf blocks drawn as three crossed planes through their centre instead of a cube, this many blocks across, so they reach past the block into the air around it. Solid in the middle, see-through towards the ragged pixel art edges. Level 0 only (further out: cubes). 0 = cubes.")]
+    [Range(0f, 1.9f)] public float leafCrossSize = 1.5f;
+    [Tooltip("Leaf planes are see-through within this camera distance (world units). Further out their see-through texels are filled with a dark leaf colour, so rays stop there (cheaper), up to the solid leaves distance where leaves become cubes.")]
+    [Min(0f)] public float leafSeeThroughDistance = 48f;
+    [Tooltip("Camera rays see through the leaf planes of this many leaf blocks; deeper in the canopy the see-through texels are filled with the dark leaf colour, so rays stop instead of marching through whole trees (much cheaper up close; the canopy edge stays see-through).")]
+    [Range(1, 6)] public int leafSeeThroughDepth = 2;
+    [Tooltip("Where the see-through edge of a leaf plane starts, as a share of its radius: solid inside, more and more see-through texels towards the outline.")]
+    [Range(0f, 1f)] public float leafEdgeStart = 0.55f;
+    [Tooltip("Share of see-through texels in the solid middle of a leaf plane.")]
+    [Range(0f, 0.5f)] public float leafInnerHoles = 0.04f;
+    [Tooltip("The planes of a leaf block shadow each other where they reach past the block. Off: a leaf plane is only shadowed by other leaves and terrain, so the flat tone bands follow the canopy shape.")]
+    public bool leafSelfShadow = false;
+
+    /// <summary>The flat leaf look BlockSurface.AutoLeafColours reproduces in a leaf palette.</summary>
+    public BlockSurface.LeafLook LeafLook => new BlockSurface.LeafLook
+    {
+        brightness = leafBrightness,
+        saturation = leafSaturation,
+        sunTint = leafSunTint,
+        shadowTint = leafShadowTint,
+    };
+
     [Header("Level Of Detail")]
     [Tooltip("Leaves and other alpha masked blocks render solid from this detail level on (1 = half resolution, 2 = quarter resolution). Rays stop at the first leaf instead of marching through the canopy; far away the mask holes are smaller than a pixel anyway. 0 = never.")]
     [Range(0, 2)] public int solidLeavesFromLod = 1;
@@ -221,6 +276,15 @@ public class VoxelRenderSettings : MonoBehaviour
         public static readonly int TexelCount = Shader.PropertyToID("_VoxelTexelCount");
         public static readonly int SolidLeavesFromLevel = Shader.PropertyToID("_VoxelSolidLeavesFromLevel");
         public static readonly int SolidLeavesDistance = Shader.PropertyToID("_VoxelSolidLeavesDistance");
+        public static readonly int TerrainBands = Shader.PropertyToID("_VoxelTerrainBands");
+        public static readonly int LeafTones = Shader.PropertyToID("_VoxelLeafTones");
+        public static readonly int LeafCross = Shader.PropertyToID("_VoxelLeafCross");
+        public static readonly int LeafLight = Shader.PropertyToID("_VoxelLeafLight");
+        public static readonly int LeafSunTint = Shader.PropertyToID("_VoxelLeafSunTint");
+        public static readonly int LeafShadowTint = Shader.PropertyToID("_VoxelLeafShadowTint");
+        public static readonly int LeafSeeThroughDepth = Shader.PropertyToID("_VoxelLeafSeeThroughDepth");
+        public static readonly int LeafClumps = Shader.PropertyToID("_VoxelLeafClumps");
+        public static readonly int LeafSelfShadow = Shader.PropertyToID("_VoxelLeafSelfShadow");
         public static readonly int ShadowLeafDepth = Shader.PropertyToID("_VoxelShadowLeafDepth");
         public static readonly int AmbientOcclusion = Shader.PropertyToID("_VoxelAmbientOcclusion");
         public static readonly int ShadowPixelated = Shader.PropertyToID("_VoxelShadowPixelated");
@@ -310,6 +374,15 @@ public class VoxelRenderSettings : MonoBehaviour
         ApplyGrassBlades();
         Shader.SetGlobalFloat(Ids.SolidLeavesFromLevel, solidLeavesFromLod);
         Shader.SetGlobalFloat(Ids.SolidLeavesDistance, solidLeavesDistance);
+        Shader.SetGlobalFloat(Ids.TerrainBands, terrainLightBands);
+        Shader.SetGlobalVector(Ids.LeafTones, new Vector4(leafFlatTones ? 1f : 0f, leafToneBands, leafToneSparkle, leafFillBrightness));
+        Shader.SetGlobalVector(Ids.LeafCross, new Vector4(leafCrossSize, leafSeeThroughDistance, leafEdgeStart, leafInnerHoles));
+        Shader.SetGlobalVector(Ids.LeafLight, new Vector4(leafLightWrap, leafShadowLift, leafSaturation, leafBrightness));
+        Shader.SetGlobalVector(Ids.LeafSunTint, (Vector4)leafSunTint);
+        Shader.SetGlobalVector(Ids.LeafShadowTint, (Vector4)leafShadowTint);
+        Shader.SetGlobalFloat(Ids.LeafSeeThroughDepth, leafSeeThroughDepth);
+        Shader.SetGlobalVector(Ids.LeafClumps, new Vector4(leafClumpTexels, leafClumpLight, leafClumpDark, leafClumpsOnPlanes ? 1f : 0f));
+        Shader.SetGlobalFloat(Ids.LeafSelfShadow, leafSelfShadow ? 1f : 0f);
         Shader.SetGlobalFloat(Ids.ShadowLeafDepth, shadowLeafDepth);
         Shader.SetGlobalFloat(Ids.AmbientOcclusion, ambientOcclusion);
         Shader.SetGlobalFloat(Ids.ShadowPixelated, pixelatedShadows ? 1f : 0f);

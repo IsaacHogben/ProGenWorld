@@ -991,7 +991,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c60de417748f95a439731c6dead12a75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ChunkManager
-  seed: 12422
+  seed: 263422
   frequency: 1.2
   chunkSize: 64
   minMoveBeforeUpdate: 9
@@ -1002,6 +1002,9 @@ MonoBehaviour:
   player: {fileID: 875950887}
   biomeSystem: {fileID: 1148720672}
   biomeDataManager: {fileID: 1148720671}
+  useRegionGen: 1
+  regionGenSettings: {fileID: 11400000, guid: d4d6d0dc438509b41b7f851dc0934a6d, type: 2}
+  logStreamEnds: 0
   blockDatabase: {fileID: 11400000, guid: f9b2a5fcc2fa09d4caac36b7d550818c, type: 2}
   textureArrayBuilder: {fileID: 11400000, guid: 3f71b64aadbc3bf498224a3efb12f316, type: 2}
   renderSettings: {fileID: 900000003}
@@ -1766,13 +1769,35 @@ MonoBehaviour:
   largeScale: 32
   largeBlend: 0.5
   blendMode: 0
-  smoothness: 0.17
-  ambientOcclusion: 0.8
+  smoothness: 0.15
+  ambientOcclusion: 1
   antiAliasing: 4
   renderScale: 0.75
   targetCamera: {fileID: 0}
   reusePrepass: 1
+  terrainLightBands: 3
+  leafFlatTones: 1
+  leafToneBands: 4
+  leafToneSparkle: 0
+  leafLightWrap: 0.5
+  leafShadowLift: 0.2
+  leafSaturation: 0.75
+  leafBrightness: 0.2
+  leafSunTint: {r: 1.25, g: 1.2, b: 0.55, a: 1}
+  leafShadowTint: {r: 0.6, g: 0.9, b: 1.05, a: 1}
+  leafClumpTexels: 3
+  leafClumpLight: 0.22
+  leafClumpDark: 0.25
+  leafClumpsOnPlanes: 1
+  leafFillBrightness: 1
+  leafCrossSize: 1.9
+  leafSeeThroughDistance: 0
+  leafSeeThroughDepth: 1
+  leafEdgeStart: 0.801
+  leafInnerHoles: 0.163
+  leafSelfShadow: 0
   solidLeavesFromLod: 1
+  solidLeavesDistance: 48
   relief: 0
   reliefDepth: 0.071
   leafThickness: 0.125
@@ -1781,7 +1806,7 @@ MonoBehaviour:
   reliefOcclusion: 0.121
   reliefShadows: 0
   grass: 1
-  grassHeight: 0.481
+  grassHeight: 0.659
   grassBladesPerBlock: 16
   grassCoverage: 0.5
   grassWidth: 2
@@ -1791,14 +1816,30 @@ MonoBehaviour:
   grassRootShade: 0.355
   grassDistance: 64
   grassFade: 8
-  grassFarShade: 0.25
+  grassFarShade: 0
+  pixelArtDistance: 0
+  pixelBands:
+  - distance: 600
+    pixelSize: 2
+    antiAliasing: 0
+    filter: 0
+    supersample: 0
+    snap: 1
+  windStrength: 0.6
+  gustSize: 12
+  gustSpeed: 4
+  windStepRate: 8
+  grassSway: 2
+  leafFlutter: 0
+  leafFlutterDistance: 48
   shadowResolution: 2
   pixelatedShadows: 1
-  sunShadowDistance: 256
-  shadowDetailDistance: 96
-  farShadowDetail: 1
-  shadowMaxDistance: 300
+  sunShadowDistance: 200
+  shadowDetailDistance: 200
+  farShadowDetail: 3
+  shadowMaxDistance: 670
   shadowIgnoreDistance: 0
+  shadowLeafDepth: 3
   surfaceTint: {r: 1, g: 1, b: 1, a: 1}
   surfaceOpacity: 0.692
   deepColor: {r: 0.02, g: 0.18, b: 0.28, a: 1}
@@ -1963,23 +2004,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BiomeDataManager
   terrainTypes:
-  - {fileID: 11400000, guid: a024df3b0c9f85f4692a81593ec923a2, type: 2}
   - {fileID: 11400000, guid: ac30749d934c76b488557c1d909942de, type: 2}
-  - {fileID: 11400000, guid: 1795584bc77b8964b9d93b228d738b9e, type: 2}
+  - {fileID: 11400000, guid: 95d03a1d188f94640acca2a349726c42, type: 2}
+  - {fileID: 11400000, guid: 6559977a4d76d6e408e2c65eafa940a1, type: 2}
+  - {fileID: 11400000, guid: a024df3b0c9f85f4692a81593ec923a2, type: 2}
   biomes:
   - {fileID: 11400000, guid: bdf93638ce508f24c946a8bbd360e96e, type: 2}
-  - {fileID: 11400000, guid: 871c7c24b7ee57a489d4635f25a69a3f, type: 2}
-  - {fileID: 11400000, guid: 865be94ec7d7e6443bd01c8b0f8ae986, type: 2}
-  - {fileID: 11400000, guid: a8d26d0dab5f8a3438cfd5279cd4138b, type: 2}
-  - {fileID: 11400000, guid: 623c72d64be6a154483549333bf13a41, type: 2}
-  - {fileID: 11400000, guid: 21d159ebe445c6940b03b5bbce4f6e65, type: 2}
-  - {fileID: 11400000, guid: 552e3d9646cb9f94f8ad27960569127c, type: 2}
-  - {fileID: 11400000, guid: 7e272d8e0a5387941b093644c8adec45, type: 2}
-  - {fileID: 11400000, guid: 37bddd8f829825245a135b97a00b23f1, type: 2}
-  - {fileID: 11400000, guid: bf607937401a90340a82ceb7d5718ba9, type: 2}
-  - {fileID: 11400000, guid: f684e639a310e7f439c93185c5bdefb8, type: 2}
   climateGrid: {fileID: 11400000, guid: 615cdc73382d8644e9981737a89b5125, type: 2}
-  waterLevel: -63
+  waterLevel: -51
 --- !u!114 &1148720672
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2198,9 +2230,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0eb17b42ea7010f4aae14dcdd0fb46de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TimeOfDayManager
-  timeOfDay: 9
+  timeOfDay: 8
   autoProgress: 1
-  timeSpeed: 0.005
+  timeSpeed: 0.01
   sunLight: {fileID: 0}
   sunAxisRotation: 160
   fadeSunIntensity: 1
@@ -2211,6 +2243,44 @@ MonoBehaviour:
   nightAmbientIntensity: -0.3
   dayAmbientColor: {r: 0.42866677, g: 0.49609125, b: 0.5377358, a: 1}
   nightAmbientColor: {r: 0.124288015, g: 0.124288015, b: 0.1792453, a: 1}
+  gradientAmbient: 1
+  daySkyAmbient: {r: 0.45, g: 0.56, b: 0.76, a: 1}
+  dayEquatorAmbient: {r: 0.47, g: 0.52, b: 0.56, a: 1}
+  dayGroundAmbient: {r: 0.36, g: 0.34, b: 0.27, a: 1}
+  nightSkyAmbient: {r: 0.1, g: 0.12, b: 0.2, a: 1}
+  nightEquatorAmbient: {r: 0.1, g: 0.1, b: 0.14, a: 1}
+  nightGroundAmbient: {r: 0.06, g: 0.06, b: 0.07, a: 1}
+  controlSunColor: 1
+  sunColorByHeight:
+    serializedVersion: 2
+    key0: {r: 1, g: 0.55, b: 0.3, a: 1}
+    key1: {r: 1, g: 0.8, b: 0.6, a: 1}
+    key2: {r: 1, g: 0.95, b: 0.86, a: 0}
+    key3: {r: 0, g: 0, b: 0, a: 0}
+    key4: {r: 0, g: 0, b: 0, a: 0}
+    key5: {r: 0, g: 0, b: 0, a: 0}
+    key6: {r: 0, g: 0, b: 0, a: 0}
+    key7: {r: 0, g: 0, b: 0, a: 0}
+    ctime0: 0
+    ctime1: 16384
+    ctime2: 65535
+    ctime3: 0
+    ctime4: 0
+    ctime5: 0
+    ctime6: 0
+    ctime7: 0
+    atime0: 0
+    atime1: 65535
+    atime2: 0
+    atime3: 0
+    atime4: 0
+    atime5: 0
+    atime6: 0
+    atime7: 0
+    m_Mode: 0
+    m_ColorSpace: -1
+    m_NumColorKeys: 3
+    m_NumAlphaKeys: 2
   controlFogPresets: 1
   fogPresetManager: {fileID: 1746699436}
   dawnStart: 5
@@ -2451,22 +2521,41 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::AtmosphericFogController
   viewDistanceSettings: {fileID: 1746699438}
-  fogStartDistance: 150
-  fogEndDistance: 800
-  maxFogDensity: 0.95
+  fogStartDistance: 25
+  fogEndDistance: 750
+  maxFogDensity: 0.9
   enableHeightFog: 0
   fogBaseHeight: 0
-  fogFalloff: 0.05
+  fogFalloff: 0.02
   heightFogDensity: 1
   enableRayleighScattering: 0
-  rayleighIntensity: 1
+  rayleighIntensity: 1.5
   scatteringCoefficients: {x: 5.8, y: 13.5, z: 33.1}
-  fogColor: {r: 0.6, g: 0.7, b: 0.8, a: 1}
-  skyColor: {r: 0.38412246, g: 0.74492085, b: 0.9811321, a: 1}
-  sunColor: {r: 1, g: 0.9490197, b: 0.85098046, a: 1}
+  fogColor: {r: 0.5647059, g: 0.61960787, b: 0.627451, a: 1}
+  skyColor: {r: 0.13968495, g: 0.41261348, b: 0.6886792, a: 1}
+  sunColor: {r: 1, g: 0.85624623, b: 0.3820755, a: 1}
   horizonHeight: 0
+  enableClouds: 1
+  cloudPixelSize: 0.4
+  cloudCount: 21
+  cloudCoverage: 0.274
+  cloudTowerHeight: 44.2
+  cloudPuffSize: 6.97
+  cloudRoundness: 0.494
+  cloudBaseElevation: -1
+  cloudDrift: 0.06
+  streakCoverage: 0.797
+  streakElevation: 9.2
+  streakThickness: 8.67
+  cloudHorizonHaze: 0.5
+  cloudHazeHeight: 8
+  cloudEdgeDither: 0
+  cloudLit: {r: 1, g: 1, b: 1, a: 1}
+  cloudLight: {r: 0.86, g: 0.92, b: 1, a: 1}
+  cloudMid: {r: 0.68, g: 0.8, b: 0.96, a: 1}
+  cloudShadow: {r: 0.5, g: 0.64, b: 0.88, a: 1}
   sunLight: {fileID: 410087040}
-  useSunLightColor: 1
+  useSunLightColor: 0
 --- !u!114 &1746699438
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2479,20 +2568,20 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: be7e13c94c9c40e8b3d276c64bb3beca, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ViewDistanceSettings
-  viewDistance: 30
+  viewDistance: 26
   unloadPastViewDistance: 1
-  nearRange: 12
+  nearRange: 10
   midRange: 18
-  lowestDetailRange: 26
+  lowestDetailRange: 22
   trimGpuDetail: 1
   lowResHorizon: 1
   horizonUpgradeMargin: 2
-  farHorizon: 0
-  horizonRings: 2
+  farHorizon: 1
+  horizonRings: 1
   horizonVoxelSize: 16
-  horizonRingRadius: 2
+  horizonRingRadius: 1
   horizonMinHeight: -256
-  horizonMaxHeight: 768
+  horizonMaxHeight: 675.1
   fogToHorizon: 1
   midBlockStorage: 1
   farBlockStorage: 1
@@ -2774,6 +2863,14 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 3737739736424997082, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: kneesAvoidTerrain
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3737739736424997082, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: animationFrameRate
+      value: 24
+      objectReference: {fileID: 0}
     - target: {fileID: 4312419842399513857, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: m_Layer
       value: 0
@@ -2851,8 +2948,20 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5385816110663636234, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: slopeResponse
+      value: 5
+      objectReference: {fileID: 0}
+    - target: {fileID: 5385816110663636234, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: sprintBuildUpTime
-      value: 2
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5385816110663636234, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: uphillSpeedMultiplier
+      value: 0.55
+      objectReference: {fileID: 0}
+    - target: {fileID: 5385816110663636234, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: downhillSpeedMultiplier
+      value: 0.65
       objectReference: {fileID: 0}
     - target: {fileID: 5823012142209941519, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: m_Layer
@@ -2878,9 +2987,37 @@ PrefabInstance:
       propertyPath: m_Layer
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 6417300218841736001, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: settings.radius
+      value: 0.45
+      objectReference: {fileID: 0}
+    - target: {fileID: 6417300218841736002, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: runCadence
+      value: 3
+      objectReference: {fileID: 0}
+    - target: {fileID: 6417300218841736002, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: runPushOff
+      value: 38
+      objectReference: {fileID: 0}
     - target: {fileID: 6417300218841736002, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: crouchDepth
       value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 6417300218841736002, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: turnCadence
+      value: 0.25
+      objectReference: {fileID: 0}
+    - target: {fileID: 6417300218841736002, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: walkCadence
+      value: 2.4
+      objectReference: {fileID: 0}
+    - target: {fileID: 6417300218841736002, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: walkPushOff
+      value: 38
+      objectReference: {fileID: 0}
+    - target: {fileID: 6417300218841736002, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: sprintPushOff
+      value: 48
       objectReference: {fileID: 0}
     - target: {fileID: 6417300218841736004, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: runSwing
@@ -2895,6 +3032,14 @@ PrefabInstance:
       value: 6
       objectReference: {fileID: 0}
     - target: {fileID: 6417300218841736004, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: crouchElbow
+      value: 80
+      objectReference: {fileID: 0}
+    - target: {fileID: 6417300218841736004, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: crouchSwing
+      value: 45
+      objectReference: {fileID: 0}
+    - target: {fileID: 6417300218841736004, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: sprintElbow
       value: 65
       objectReference: {fileID: 0}
@@ -2903,8 +3048,16 @@ PrefabInstance:
       value: 125
       objectReference: {fileID: 0}
     - target: {fileID: 6417300218841736004, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: crouchSpread
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 6417300218841736004, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: responsiveness
       value: 8
+      objectReference: {fileID: 0}
+    - target: {fileID: 6417300218841736006, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: foldFriction
+      value: 0.04
       objectReference: {fileID: 0}
     - target: {fileID: 6541238994301584071, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: m_Layer
@@ -2951,8 +3104,16 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 9219920021337772446, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: distance
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 9219920021337772446, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
+      propertyPath: maxDistance
+      value: 13
+      objectReference: {fileID: 0}
+    - target: {fileID: 9219920021337772446, guid: 2efb23448a1c8224aad40eb834fc3a97, type: 3}
       propertyPath: startInThirdPerson
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

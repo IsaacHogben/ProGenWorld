@@ -46,6 +46,48 @@ public class AtmosphericFogController : MonoBehaviour
     [Tooltip("World-space Y height where sky transitions to fog")]
     public float horizonHeight = 0f;
 
+    [Header("Clouds")]
+    [Tooltip("Pixel art clouds on the sky: chunky texels fixed to the sky, in four flat tones.")]
+    public bool enableClouds = true;
+    [Tooltip("Size of one cloud texel (degrees of sky). About 0.25 is 4 to 5 screen pixels at 1080p.")]
+    [Range(0.05f, 1.5f)] public float cloudPixelSize = 0.25f;
+    [Tooltip("How many cloud cells fit around the horizon (more = smaller, more numerous clouds).")]
+    [Range(2, 40)] public int cloudCount = 10;
+    [Tooltip("Share of the horizon with cumulus on it.")]
+    [Range(0f, 1f)] public float cloudCoverage = 0.55f;
+    [Tooltip("Height of the tallest cumulus towers (degrees above their base).")]
+    [Range(1f, 60f)] public float cloudTowerHeight = 28f;
+    [Tooltip("Size of the round puffs the cumulus are built from (degrees of sky). Keep them well above the cloud pixel size so they stay round.")]
+    [Range(1f, 20f)] public float cloudPuffSize = 7f;
+    [Tooltip("Blend from lumpy noise puffs (0) to round, sphere shaded puffs (1).")]
+    [Range(0f, 1f)] public float cloudRoundness = 0.35f;
+    [Tooltip("Size of the lumps (the noise puffs) on the clouds (degrees of sky), whatever the cloud count.")]
+    [Range(2f, 30f)] public float cloudLumpSize = 8f;
+    [Tooltip("Elevation of the cumulus bases (degrees; slightly below the horizon hides the gap behind distant hills).")]
+    [Range(-10f, 30f)] public float cloudBaseElevation = -1f;
+    [Tooltip("Wind drift of the clouds around the sky (degrees per second).")]
+    [Range(-2f, 2f)] public float cloudDrift = 0.08f;
+    [Tooltip("Share of thin, high streak clouds.")]
+    [Range(0f, 1f)] public float streakCoverage = 0.55f;
+    [Tooltip("Elevation of the streak layer (degrees).")]
+    [Range(0f, 80f)] public float streakElevation = 32f;
+    [Tooltip("Thickness of the streak layer (degrees).")]
+    [Range(1f, 40f)] public float streakThickness = 10f;
+    [Tooltip("How much clouds low on the horizon fade into the haze.")]
+    [Range(0f, 1f)] public float cloudHorizonHaze = 0.5f;
+    [Tooltip("Clouds below this elevation (degrees) fade into the haze.")]
+    [Range(0.1f, 40f)] public float cloudHazeHeight = 8f;
+    [Tooltip("Ragged pixel edges: how far (in texels) the cloud outline is dithered.")]
+    [Range(0f, 3f)] public float cloudEdgeDither = 1f;
+    [Tooltip("Cloud tone: sunlit tops.")]
+    public Color cloudLit = new Color(1f, 1f, 1f, 1f);
+    [Tooltip("Cloud tone: light.")]
+    public Color cloudLight = new Color(0.86f, 0.92f, 1f, 1f);
+    [Tooltip("Cloud tone: mid.")]
+    public Color cloudMid = new Color(0.68f, 0.8f, 0.96f, 1f);
+    [Tooltip("Cloud tone: shadowed undersides.")]
+    public Color cloudShadow = new Color(0.5f, 0.64f, 0.88f, 1f);
+
     [Header("Sun Settings")]
     [Tooltip("Main directional light (sun)")]
     public Light sunLight;

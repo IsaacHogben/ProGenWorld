@@ -31,6 +31,11 @@ public static class VoxelGpuFormat
     // individually addressable so the march can stop there. Never a real block id.
     public const byte GrassMarker = 255;
 
+    // Block id written into air voxels next to a leaf (alpha masked) block. Invisible to everything
+    // but the shader's leaf planes (VoxelLeafMask.hlsl), which reach out of the leaf blocks into
+    // them near the camera. Never a real block id; the lowest reserved id.
+    public const byte LeafMarker = 254;
+
     public const uint FlagHasOpaque = 1u;      // contains opaque or alpha masked blocks
     public const uint FlagHasTranslucent = 2u; // contains translucent blocks (water...)
     public const uint FlagHorizon = 4u;        // chunk record flag: far horizon chunk (VoxelWorldRenderer.SetHorizonChunk)
@@ -198,6 +203,7 @@ public struct VoxelPackJob : IJob
         int brickOffset = 0;
 
         PlaceGrass(grid, res, cellSize, cpa);
+        PlaceLeafMarkers(grid, res, cellSize, cpa);
         PackLevel(grid, res, brickOffset, ref mixed, firstLevel == 0, true, cellSize, cpa, ref bmin, ref bmax, ref flags);
         Occlusion(grid, res, cpa, true);
         brickOffset += VoxelGpuFormat.BricksInLevel(res, 0);
@@ -525,7 +531,42 @@ public struct VoxelPackJob : IJob
 
     bool IsOpaque(NativeArray<byte> grid, int3 p, int res) => Visibility(grid[Index(p, res)]) == BlockVisibility.Opaque;
 
-    BlockVisibility Visibility(byte id) => id == VoxelGpuFormat.GrassMarker ? BlockVisibility.Invisible : blockDb[id].visibility;
+    BlockVisibility Visibility(byte id) => id >= VoxelGpuFormat.LeafMarker ? BlockVisibility.Invisible : blockDb[id].visibility;
+
+    // Marks the air next to every leaf block (level 0, face neighbours inside the chunk) and grows
+    // the leaf's draw cell over them, so the leaf planes can reach out of the leaf blocks. Grass markers win.
+    void PlaceLeafMarkers(NativeArray<byte> grid, int res, int cellSize, int cpa)
+    {
+        for (int z = 0; z < res; z++)
+        for (int y = 0; y < res; y++)
+        for (int x = 0; x < res; x++)
+        {
+            byte id = grid[Index(new int3(x, y, z), res)];
+            if (id >= VoxelGpuFormat.LeafMarker || blockDb[id].visibility != BlockVisibility.Stacked)
+                continue;
+
+            int3 cc = new int3(x, y, z) / cellSize;
+            int cb = (cc.x + (cc.y + cc.z * cpa) * cpa) * VoxelGpuFormat.CellInts;
+            for (int f = 0; f < 6; f++)
+            {
+                int3 n = new int3(x, y, z);
+                n[f >> 1] += (f & 1) != 0 ? 1 : -1;
+                if (math.any(n < 0) || math.any(n >= res))
+                    continue;
+                int ni = Index(n, res);
+                byte nid = grid[ni];
+                if (nid != VoxelGpuFormat.LeafMarker && (nid >= VoxelGpuFormat.LeafMarker || blockDb[nid].visibility != BlockVisibility.Invisible))
+                    continue;
+                grid[ni] = VoxelGpuFormat.LeafMarker;
+                cells[cb + 0] = math.min(cells[cb + 0], n.x);
+                cells[cb + 1] = math.min(cells[cb + 1], n.y);
+                cells[cb + 2] = math.min(cells[cb + 2], n.z);
+                cells[cb + 3] = math.max(cells[cb + 3], n.x);
+                cells[cb + 4] = math.max(cells[cb + 4], n.y);
+                cells[cb + 5] = math.max(cells[cb + 5], n.z);
+            }
+        }
+    }
 
     // Marks the air above every exposed grass top (level 0 only) and grows the draw cell of the
     // grass block by one voxel upwards so its box covers the blades. Grass in the top layer has its

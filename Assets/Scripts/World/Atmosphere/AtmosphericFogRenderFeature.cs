@@ -56,6 +56,14 @@ public class AtmosphericFogRenderFeature : ScriptableRendererFeature
         private static readonly int SunColorID = Shader.PropertyToID("_SunColor");
         private static readonly int SunDirectionID = Shader.PropertyToID("_SunDirection");
         private static readonly int HorizonHeightID = Shader.PropertyToID("_HorizonHeight");
+        private static readonly int CloudShapeID = Shader.PropertyToID("_CloudShape");
+        private static readonly int CloudLayerID = Shader.PropertyToID("_CloudLayer");
+        private static readonly int CloudExtraID = Shader.PropertyToID("_CloudExtra");
+        private static readonly int CloudPuffID = Shader.PropertyToID("_CloudPuff");
+        private static readonly int CloudLitID = Shader.PropertyToID("_CloudLit");
+        private static readonly int CloudLightID = Shader.PropertyToID("_CloudLight");
+        private static readonly int CloudMidID = Shader.PropertyToID("_CloudMid");
+        private static readonly int CloudShadowID = Shader.PropertyToID("_CloudShadow");
 
         private class PassData
         {
@@ -146,6 +154,18 @@ public class AtmosphericFogRenderFeature : ScriptableRendererFeature
             material.SetColor(FogColorID, controller.fogColor);
             material.SetColor(SkyColorID, controller.skyColor);
             material.SetFloat(HorizonHeightID, controller.horizonHeight);
+
+            material.SetVector(CloudShapeID, new Vector4(controller.enableClouds ? controller.cloudPixelSize : 0f,
+                controller.cloudCount, controller.cloudCoverage, controller.cloudTowerHeight));
+            material.SetVector(CloudLayerID, new Vector4(controller.cloudBaseElevation, controller.cloudDrift,
+                controller.streakCoverage, controller.streakElevation));
+            material.SetVector(CloudExtraID, new Vector4(controller.streakThickness, controller.cloudHorizonHaze,
+                controller.cloudHazeHeight, controller.cloudEdgeDither));
+            material.SetVector(CloudPuffID, new Vector4(controller.cloudPuffSize, controller.cloudRoundness, controller.cloudLumpSize, 0f));
+            material.SetColor(CloudLitID, controller.cloudLit);
+            material.SetColor(CloudLightID, controller.cloudLight);
+            material.SetColor(CloudMidID, controller.cloudMid);
+            material.SetColor(CloudShadowID, controller.cloudShadow);
 
             if (controller.sunLight != null)
             {

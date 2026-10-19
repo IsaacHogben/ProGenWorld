@@ -87,6 +87,14 @@ public class RegionShape : ISerializationCallbackReceiver
     public SubBiomeLayer[] subBiomes = new SubBiomeLayer[0];
 }
 
+public enum SubBiomeDecorationMode : byte
+{
+    [Tooltip("The layer's decorations spawn on top of the biome's (which Decoration Multiplier still scales).")]
+    Add,
+    [Tooltip("Where the layer is, only its decorations spawn.")]
+    Replace
+}
+
 public enum SubBiomeKind : byte
 {
     [Tooltip("Smooth noise: wandering bands and blobs that cover a share of the biome.")]
@@ -130,6 +138,16 @@ public class SubBiomeLayer : ISerializationCallbackReceiver
 
     [Tooltip("Block for gentle surfaces where this layer dominates (Air = keep the biome's).")]
     public BlockType surfaceBlock = BlockType.Air;
+
+    [Header("Decorations")]
+    [Tooltip("Add: the layer's decorations spawn on top of the biome's. Replace: where the layer is, only its decorations spawn. The edge is dithered by the layer's mask.")]
+    public SubBiomeDecorationMode decorationMode = SubBiomeDecorationMode.Add;
+
+    [Tooltip("This layer's own decorations (not scaled by Decoration Multiplier, which applies to the biome's).")]
+    public DecorationSet decorations = new DecorationSet();
+
+    /// <summary>True when the layer changes which decorations spawn.</summary>
+    public bool HasDecorations => decorationMode == SubBiomeDecorationMode.Replace || (decorations != null && !decorations.IsEmpty);
 
     [Header("3D Shape (optional)")]
     [Tooltip("This layer's own FastNoise tree for 3D shapes; where the layer is, it takes over from the biome's shape by the layer's mask (overlapping layers with their own shapes share it). None = the biome's shape. Must be in BiomeDataManager's terrain types.")]
@@ -238,6 +256,7 @@ public struct SubBiomeData
     public float decorationMultiplier;
     public byte surfaceBlock;
     public byte detailSource;      // the layer's own 3D shape (RegionDetailSources.None = the biome's)
+    public byte hasDecorations;    // 1 = the layer's decorations apply where it is (dithered by its mask)
 }
 
 /// <summary>Job safe copy of a biome's RegionShape, indexed by biome ID.</summary>

@@ -116,7 +116,8 @@ public sealed class RegionSystem : IDisposable
                         detailMultiplier = layer.detailMultiplier,
                         decorationMultiplier = layer.decorationMultiplier,
                         surfaceBlock = (byte)layer.surfaceBlock,
-                        detailSource = RegionDetailSources.LayerSource(defs.Length, layer, n)
+                        detailSource = RegionDetailSources.LayerSource(defs.Length, layer, n),
+                        hasDecorations = (byte)(layer.HasDecorations ? 1 : 0)
                     });
                     byte source = RegionDetailSources.LayerSource(defs.Length, layer, n);
                     if (source != RegionDetailSources.None)

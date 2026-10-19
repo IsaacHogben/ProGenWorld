@@ -22,14 +22,50 @@ MonoBehaviour:
   sedimentBlock: 9
   gradientThreshold1: 0.012
   gradientThreshold2: 0.003
+  regionShape:
+    baseHeight: 0
+    hillHeight: 30
+    hillScale: 600
+    hillOctaves: 5
+    ridged: 0
+    terraceStep: 0
+    terraceSharpness: 0.7
+    detailTerrain: {fileID: 11400000, guid: a024df3b0c9f85f4692a81593ec923a2, type: 2}
+    detailStrength: 1
+    autoCalibrate: 1
+    detailSurfaceOffset: 0
+    detailRangeUp: 64
+    detailRangeDown: 32
+    detailDensityScale: 1
+    rainfall: 1
+    subBiomes: []
+  streams:
+    enabled: 1
+    chancePerChunk: 0.447
+    minHeightAboveWater: 20
+    maxLength: 300
+    searchRadius: 8
+    maxCut: 4
+    cutBelowBanks: 0
+    carveBudget: 12
+    pondRadius: 5
+    windiness: 0.6
+    maxWidth: 3
+    widenEvery: 40
   LSystemDecorations:
   - LSystemData: {fileID: 11400000, guid: 3e76ee4c990272d449c1c6e0219cf594, type: 2}
+    minScale: 1
+    maxScale: 1
     spawnChance: 1
     spawnOnBlocks: 0d
   - LSystemData: {fileID: 11400000, guid: 949de836d8f88fe4783401321066e1c6, type: 2}
+    minScale: 1
+    maxScale: 1
     spawnChance: 0.1
     spawnOnBlocks: 0d
   - LSystemData: {fileID: 11400000, guid: b82d699b3c35482ead4a29e101303b7a, type: 2}
+    minScale: 1
+    maxScale: 1
     spawnChance: 0.1
     spawnOnBlocks: 0d
   trees:

@@ -464,6 +464,25 @@ public struct RegionColumnJob : IJobParallelFor
         BlendGradient(ref col, col.detail2, col.detailW2 * scale, palette);
         BlendGradient(ref col, col.detail3, col.detailW3 * scale, palette);
 
+        // Sub-biome decorations: the strongest of the palette biome's layers with decorations whose
+        // mask beats a per column random number (dithering its edge)
+        int decoLayer = 0;
+        var paletteShape = shapes[col.palette];
+        float best = 0f;
+        for (int i = paletteShape.subStart; i < paletteShape.subStart + paletteShape.subCount; i++)
+        {
+            var l = subs[i];
+            if (l.hasDecorations == 0)
+                continue;
+            float m = RegionMath.SubMask(l, pos.x, pos.y);
+            float u = (RegionMath.Hash((int2)math.floor(pos), l.seed ^ 0x2C1B3C6Du) & 0xFFFF) * (1f / 65536f);
+            if (m > u && m > best)
+            {
+                best = m;
+                decoLayer = i + 1;
+            }
+        }
+
         columns[index] = col;
         if (index < hints.Length)
             hints[index] = new BiomeHint
@@ -476,7 +495,8 @@ public struct RegionColumnJob : IJobParallelFor
                 shapeBandMin = col.HasDetail ? col.bandMin : 1f,
                 shapeBandMax = col.HasDetail ? col.bandMax : 0f,
                 shapeGradient1 = col.gradient1,
-                shapeGradient2 = col.gradient2
+                shapeGradient2 = col.gradient2,
+                decoLayer = (ushort)decoLayer
             };
     }
 

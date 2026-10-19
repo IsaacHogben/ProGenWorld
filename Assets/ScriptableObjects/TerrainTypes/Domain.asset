@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::TerrainTypeDefinitionSO
   terrainTypeName: Base Noise
   noiseNodeTree: EQACAAAAAAAAQBAAexSuPhkAGQATAB+F6z8lAAAAgD/D9eg/AACAPwAAgD8RAAQAAACuRwFAEAAK12NADQADAAAAAAAAQBAAAAAAPwcAAJqZmT4AKVwPPwDXo3A/AM3MzD0AzcyMPwAUrgdAAQAAj8J1PQEEAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOF6FEAAMzMzPwAAAAA/
-  frequencyMultiplier: 1
+  frequencyMultiplier: 1.2
   yOffset: 0
   densityCurve:
     serializedVersion: 2

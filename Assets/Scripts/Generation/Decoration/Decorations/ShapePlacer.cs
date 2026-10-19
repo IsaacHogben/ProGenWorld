@@ -19,6 +19,8 @@ public enum ShapeStyle : byte
     LineDown = 8,
     Cloud = 9,
     CloudFlat = 10,
+    CloudDome = 11,
+    Crown = 12,
 }
 
 // ----------------------------------------------------------------------------
@@ -48,8 +50,10 @@ public static class ShapePlacer
             case ShapeStyle.SquareFlat: PlaceSquareFlat(pos, size, block, ref applyBlock); break;
             case ShapeStyle.CircleFlat: PlaceCircleFlat(pos, size, block, ref applyBlock); break;
             case ShapeStyle.LineDown: PlaceLineDown(pos, size, block, ref applyBlock); break;
-            case ShapeStyle.Cloud: PlaceCloud(pos, size, 0.7f, block, ref rng, ref applyBlock); break;
-            case ShapeStyle.CloudFlat: PlaceCloud(pos, size, 0.4f, block, ref rng, ref applyBlock); break;
+            case ShapeStyle.Cloud: PlaceCloud(pos, size, 0.7f, 0.7f, block, ref rng, ref applyBlock); break;
+            case ShapeStyle.CloudFlat: PlaceCloud(pos, size, 0.4f, 0.4f, block, ref rng, ref applyBlock); break;
+            case ShapeStyle.CloudDome: PlaceCloud(pos, size, 0.85f, 0.35f, block, ref rng, ref applyBlock); break;
+            case ShapeStyle.Crown: PlaceCrown(pos, size, block, ref rng, ref applyBlock); break;
         }
     }
 
@@ -202,10 +206,13 @@ public static class ShapePlacer
     }
 
     // Soft, lumpy blossom/leaf cloud: a flattened union of 3-5 overlapping lobes with a ragged
-    // edge. size = overall diameter, flatten = height / width (CloudFlat makes layered plates).
+    // edge. size = overall diameter; flattenUp / flattenDown = height / width above and below each
+    // lobe's centre (CloudFlat makes layered plates, CloudDome rounded-top, flat-bottomed clumps).
     // Filled in one pass over its bounds, so no block is written twice.
-    private static void PlaceCloud(int3 p, int size, float flatten, BlockType block, ref Unity.Mathematics.Random rng, ref TreeBlockWriter ab)
+    private static void PlaceCloud(int3 p, int size, float flattenUp, float flattenDown, BlockType block, ref Unity.Mathematics.Random rng, ref TreeBlockWriter ab)
     {
+        bool symmetric = flattenUp == flattenDown;
+        float flatten = flattenUp;
         float R = math.max(1f, size * 0.5f);
 
         var lobes = new FixedList128Bytes<float4>(); // xyz = centre offset, w = radius
@@ -220,10 +227,11 @@ public static class ShapePlacer
         }
 
         int ext = (int)math.ceil(R);
-        int extY = (int)math.ceil(R * flatten);
+        int extUp = (int)math.ceil(symmetric ? R * flatten : R * (flattenUp + 0.3f));
+        int extDown = (int)math.ceil(R * flattenDown);
         int seed = (int)rng.NextUInt();
         for (int dx = -ext; dx <= ext; dx++)
-            for (int dy = -extY; dy <= extY; dy++)
+            for (int dy = -extDown; dy <= extUp; dy++)
                 for (int dz = -ext; dz <= ext; dz++)
                 {
                     float3 q = new float3(dx, dy / flatten, dz);
@@ -231,7 +239,16 @@ public static class ShapePlacer
                     for (int l = 0; l < lobes.Length; l++)
                     {
                         float4 lobe = lobes[l];
-                        inside = math.min(inside, math.distance(q, new float3(lobe.x, lobe.y / flatten, lobe.z)) - lobe.w);
+                        if (symmetric)
+                        {
+                            inside = math.min(inside, math.distance(q, new float3(lobe.x, lobe.y / flatten, lobe.z)) - lobe.w);
+                        }
+                        else
+                        {
+                            float ly = dy - lobe.y;
+                            float3 rel = new float3(dx - lobe.x, ly / (ly >= 0f ? flattenUp : flattenDown), dz - lobe.z);
+                            inside = math.min(inside, math.length(rel) - lobe.w);
+                        }
                     }
                     if (inside > 0.5f)
                         continue;
@@ -239,6 +256,51 @@ public static class ShapePlacer
                     if (inside > -0.75f && (math.hash(new int4(dx, dy, dz, seed)) & 0xFF) < 90)
                         continue;
                     ab.ApplyBlock(p.x + dx, p.y + dy, p.z + dz, block);
+                }
+    }
+
+    // A whole small-tree crown in one shape, faking detail it is too small to grow: a rounded body
+    // covered in leaf-cluster bumps (mostly on top), a slightly flattened underside, a ragged outer
+    // edge, and lighting faked by putting the secondary foliage block on the upper surface (its
+    // amount set by FoliageBlock2Chance). The hidden core is left empty. size = diameter.
+    private static void PlaceCrown(int3 p, int size, BlockType block, ref Unity.Mathematics.Random rng, ref TreeBlockWriter ab)
+    {
+        float R = math.max(1.5f, size * 0.5f);
+        float coreR = R * 0.72f;
+
+        var bumps = new FixedList512Bytes<float4>(); // xyz = centre offset, w = radius
+        int count = math.clamp((int)(R * 2.2f), 5, 24);
+        for (int i = 0; i < count; i++)
+        {
+            float angle = rng.NextFloat() * math.PI * 2f;
+            float y = rng.NextFloat() * 1.4f - 0.4f;           // biased upward: clusters crowd the top
+            float ring = math.sqrt(math.max(0f, 1f - y * y));
+            float3 dir = new float3(math.cos(angle) * ring, y, math.sin(angle) * ring);
+            bumps.Add(new float4(dir * coreR, R * (0.32f + rng.NextFloat() * 0.18f)));
+        }
+
+        int ext = (int)math.ceil(R * 1.15f);
+        int seed = (int)rng.NextUInt();
+        for (int dx = -ext; dx <= ext; dx++)
+            for (int dy = -ext; dy <= ext; dy++)
+                for (int dz = -ext; dz <= ext; dz++)
+                {
+                    // Core ellipsoid, a little flatter underneath.
+                    float3 q = new float3(dx, dy >= 0 ? dy : dy / 0.8f, dz);
+                    float inside = math.length(q) - coreR; // distance outside the surface (negative = inside)
+                    for (int b = 0; b < bumps.Length; b++)
+                    {
+                        float4 bump = bumps[b];
+                        inside = math.min(inside, math.distance(new float3(dx, dy, dz), bump.xyz) - bump.w);
+                    }
+                    if (inside > 0.5f || inside < -2.5f)
+                        continue; // outside, or hidden deep inside
+                    // Thin the outer shell for a leafy, broken edge.
+                    if (inside > -0.6f && (math.hash(new int4(dx, dy, dz, seed)) & 0xFF) < 70)
+                        continue;
+
+                    float light = inside > -1.5f ? math.saturate(0.35f + 0.65f * dy / R) : 0f;
+                    ab.ApplyLit(p.x + dx, p.y + dy, p.z + dz, block, light);
                 }
     }
 

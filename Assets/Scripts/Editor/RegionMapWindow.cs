@@ -10,26 +10,41 @@ using UnityEngine;
 /// where 3D shapes apply. Reads the scene's BiomeDataManager and ChunkManager seed / settings.
 /// Batch mode: -executeMethod RegionMapWindow.BatchRender -regionMapOut map.png
 /// [-regionMapExtent blocks] [-regionMapRes pixels] [-regionMapCenterX x] [-regionMapCenterZ z]
+/// [-regionMapOverlay None|Shapes3D|Decoration|SubBiomes] [-regionMapOnlyBiome BiomeType]
 /// </summary>
 public class RegionMapWindow : EditorWindow
 {
-    RegionGenSettingsSO settings;
-    BiomeDataManager biomeDataManager;
-    int seed = 1337;
-    Vector2 center;
-    float extent = 100000f;
-    int resolution = 512;
-    public enum Overlay { None, Shapes3D, Decoration }
-    Overlay overlay = Overlay.Shapes3D;
+    public enum Overlay { None, Shapes3D, Decoration, SubBiomes }
 
-    Texture2D map;
-    string stats = "";
+    readonly RegionMapView view = new RegionMapView();
     Vector2 legendScroll;
+
+    // Kept for batch mode (it reads these off a window instance)
+    RegionGenSettingsSO settings { get => view.settings; set => view.settings = value; }
+    BiomeDataManager biomeDataManager { get => view.biomeDataManager; set => view.biomeDataManager = value; }
+    int seed { get => view.seed; set => view.seed = value; }
 
     [MenuItem("Window/ProGenWorld/Region Map")]
     static void Open() => GetWindow<RegionMapWindow>("Region Map");
 
-    void OnEnable() => FindSceneDefaults();
+    void OnEnable()
+    {
+        FindSceneDefaults();
+        wantsMouseMove = true;
+        EditorApplication.update += Tick;
+    }
+
+    void OnDisable()
+    {
+        EditorApplication.update -= Tick;
+        view.Dispose();
+    }
+
+    void Tick()
+    {
+        if (view.Tick())
+            Repaint();
+    }
 
     void FindSceneDefaults()
     {
@@ -46,64 +61,55 @@ public class RegionMapWindow : EditorWindow
             biomeDataManager = FindFirstObjectByType<BiomeDataManager>();
     }
 
-    void OnDisable()
-    {
-        if (map != null)
-            DestroyImmediate(map);
-    }
-
     void OnGUI()
     {
+        EditorGUI.BeginChangeCheck();
         settings = (RegionGenSettingsSO)EditorGUILayout.ObjectField("Settings", settings, typeof(RegionGenSettingsSO), false);
         biomeDataManager = (BiomeDataManager)EditorGUILayout.ObjectField("Biome Data", biomeDataManager, typeof(BiomeDataManager), true);
         seed = EditorGUILayout.IntField("Seed", seed);
-        center = EditorGUILayout.Vector2Field("Centre (x, z)", center);
-        extent = Mathf.Max(64f, EditorGUILayout.FloatField("Width (blocks)", extent));
-        resolution = Mathf.Clamp(EditorGUILayout.IntField("Pixels", resolution), 32, 2048);
-        overlay = (Overlay)EditorGUILayout.EnumPopup("Overlay", overlay);
+        view.center = EditorGUILayout.Vector2Field("Centre (x, z)", view.center);
+        view.extent = Mathf.Clamp(EditorGUILayout.FloatField("Width (blocks)", view.extent), RegionMapView.MinExtent, RegionMapView.MaxExtent);
+        view.resolution = Mathf.Clamp(EditorGUILayout.IntField("Pixels", view.resolution), 32, 2048);
+        view.overlay = (Overlay)EditorGUILayout.EnumPopup("Overlay", view.overlay);
+        if (EditorGUI.EndChangeCheck())
+            view.Changed();
 
         using (new EditorGUILayout.HorizontalScope())
         {
             if (settings == null && GUILayout.Button("Create Settings Asset"))
                 settings = CreateSettingsAsset();
-            GUI.enabled = settings != null && biomeDataManager != null;
+            GUI.enabled = view.CanRender;
             if (GUILayout.Button("Generate"))
-                Generate();
+                view.Generate();
             GUI.enabled = true;
+            if (GUILayout.Button("Reset View", GUILayout.Width(90)))
+                view.ResetView();
             if (GUILayout.Button("Scene Defaults", GUILayout.Width(110)))
                 FindSceneDefaults();
+            view.autoUpdate = GUILayout.Toggle(view.autoUpdate, "Auto Update", GUILayout.Width(95));
         }
-        if (!string.IsNullOrEmpty(stats))
-            EditorGUILayout.HelpBox(stats, MessageType.None);
-
-        if (map == null)
-            return;
-        float size = Mathf.Min(position.width - 8f, position.height - 260f);
-        var rect = GUILayoutUtility.GetRect(size, size, GUILayout.ExpandWidth(false));
-        GUI.DrawTexture(rect, map, ScaleMode.ScaleToFit, false);
+        if (!string.IsNullOrEmpty(view.Stats))
+            EditorGUILayout.HelpBox(view.Stats, MessageType.None);
 
         if (biomeDataManager != null && biomeDataManager.biomes != null)
         {
-            legendScroll = EditorGUILayout.BeginScrollView(legendScroll, GUILayout.Height(90));
-            foreach (var biome in biomeDataManager.biomes)
-            {
-                if (biome == null) continue;
-                using (new EditorGUILayout.HorizontalScope())
+            legendScroll = EditorGUILayout.BeginScrollView(legendScroll, GUILayout.Height(40));
+            using (new EditorGUILayout.HorizontalScope())
+                foreach (var biome in biomeDataManager.biomes)
                 {
+                    if (biome == null) continue;
                     var swatch = GUILayoutUtility.GetRect(14, 14, GUILayout.Width(14));
                     EditorGUI.DrawRect(swatch, BiomeColour(biome.BiomeID));
-                    EditorGUILayout.LabelField(biome.biomeType.ToString());
+                    GUILayout.Label(biome.biomeType.ToString(), GUILayout.ExpandWidth(false));
+                    GUILayout.Space(6);
                 }
-            }
             EditorGUILayout.EndScrollView();
         }
-    }
 
-    void Generate()
-    {
-        if (map != null)
-            DestroyImmediate(map);
-        map = Render(settings, biomeDataManager, seed, center, extent, resolution, overlay, out stats);
+        EditorGUILayout.LabelField(view.Readout(), EditorStyles.miniLabel);
+        var area = GUILayoutUtility.GetRect(10f, 10f, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
+        float size = Mathf.Max(10f, Mathf.Min(area.width, area.height));
+        view.OnGUI(new Rect(area.x + (area.width - size) * 0.5f, area.y, size, size), this);
     }
 
     static RegionGenSettingsSO CreateSettingsAsset()
@@ -120,10 +126,43 @@ public class RegionMapWindow : EditorWindow
 
     public static Color BiomeColour(int id) => Color.HSVToRGB(id * 0.618034f % 1f, 0.55f, 0.95f);
 
+    /// <summary>Colour of a biome's n-th sub-biome layer in the Sub-biomes overlay.</summary>
+    public static Color LayerColour(int n) => Color.HSVToRGB((0.08f + n * 0.29f) % 1f, 0.8f, 1f);
+
+    /// <summary>A rendered map: its texture and, per pixel (x fastest, +z up), what is there.</summary>
+    public sealed class MapResult : IDisposable
+    {
+        public Texture2D texture;
+        public string stats = "";
+        public int resolution;
+        public byte[] palette;       // palette biome
+        public float[] heights;      // surface height
+        public short[] layer;        // strongest sub-biome layer (index into layerNames), -1 = none
+        public float[] layerMask;
+        public string[] layerNames;  // "Biome / Layer", by RegionDetailSources.Layers index
+
+        public void Dispose()
+        {
+            if (texture != null)
+                DestroyImmediate(texture);
+            texture = null;
+        }
+    }
+
     /// <summary>Renders the map with a temporary copy of the BiomeDataManager (edit mode safe).</summary>
     public static Texture2D Render(RegionGenSettingsSO settings, BiomeDataManager source, int seed,
         Vector2 center, float extent, int resolution, Overlay overlay, out string stats)
     {
+        var r = RenderMap(settings, source, seed, center, extent, resolution, overlay);
+        stats = r.stats;
+        return r.texture;
+    }
+
+    /// <summary>Renders the map (onlyBiome >= 0: every climate cell holds just that biome).</summary>
+    public static MapResult RenderMap(RegionGenSettingsSO settings, BiomeDataManager source, int seed,
+        Vector2 center, float extent, int resolution, Overlay overlay, int onlyBiome = -1)
+    {
+        var result = new MapResult { resolution = resolution };
         var go = new GameObject("Region Map Biome Data") { hideFlags = HideFlags.HideAndDontSave };
         var data = go.AddComponent<BiomeDataManager>();
         EditorUtility.CopySerialized(source, data);
@@ -133,6 +172,12 @@ public class RegionMapWindow : EditorWindow
         try
         {
             data.Initialize();
+            if (onlyBiome >= 0)
+            {
+                var cells = data.GetClimateCellBiomes();
+                for (int i = 0; i < cells.Length; i++)
+                    cells[i] = (byte)onlyBiome;
+            }
             var cm = FindFirstObjectByType<ChunkManager>();
             regions = new RegionSystem(settings, data, seed, 64, cm != null ? cm.frequency : 1f);
 
@@ -146,6 +191,16 @@ public class RegionMapWindow : EditorWindow
             double ms = watch.Elapsed.TotalMilliseconds - riverMs;
 
             var pixels = new Color32[resolution * resolution];
+            var palette = result.palette = new byte[resolution * resolution];
+            var heights = result.heights = new float[resolution * resolution];
+            var layer = result.layer = new short[resolution * resolution];
+            var layerMask = result.layerMask = new float[resolution * resolution];
+            var names = new System.Collections.Generic.List<string>();
+            foreach (var (b, l, _) in RegionDetailSources.Layers(data))
+                names.Add($"{b.biomeType} / {l.name}");
+            result.layerNames = names.ToArray();
+            var shapes = regions.Shapes;
+            var subs = regions.SubBiomes;
             float minH = float.MaxValue, maxH = float.MinValue;
             int detailCount = 0, waterCount = 0;
             var biomeCount = new int[256];
@@ -156,6 +211,8 @@ public class RegionMapWindow : EditorWindow
             {
                 int i = x + z * resolution;
                 var c = columns[i];
+                palette[i] = c.palette;
+                heights[i] = c.height;
                 minH = math.min(minH, c.height);
                 maxH = math.max(maxH, c.height);
                 biomeCount[c.palette]++;
@@ -179,6 +236,21 @@ public class RegionMapWindow : EditorWindow
                     if (overlay == Overlay.Shapes3D)
                         col = Color.Lerp(col, new Color(0.9f, 0.1f, 0.1f), 0.5f * math.min(1f, c.DetailWeight));
                 }
+                // Strongest sub-biome layer of the palette biome here
+                layer[i] = -1;
+                var shape = shapes[c.palette];
+                float wx = origin.x + x * spacing, wz = origin.y + z * spacing;
+                for (int k = shape.subStart; k < shape.subStart + shape.subCount; k++)
+                {
+                    float m = RegionMath.SubMask(subs[k], wx, wz);
+                    if (m > layerMask[i])
+                    {
+                        layerMask[i] = m;
+                        layer[i] = (short)k;
+                    }
+                }
+                if (overlay == Overlay.SubBiomes && layer[i] >= 0)
+                    col = Color.Lerp(col, LayerColour(layer[i] - shape.subStart) * shade, 0.8f * layerMask[i]);
                 if (overlay == Overlay.Decoration)
                 {
                     // Grey = normal, green = thicker, red = sparser
@@ -217,7 +289,7 @@ public class RegionMapWindow : EditorWindow
                 }
             }
 
-            var tex = new Texture2D(resolution, resolution, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point, hideFlags = HideFlags.HideAndDontSave };
+            var tex = result.texture = new Texture2D(resolution, resolution, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point, hideFlags = HideFlags.HideAndDontSave };
             tex.SetPixels32(pixels);
             tex.Apply();
 
@@ -226,8 +298,8 @@ public class RegionMapWindow : EditorWindow
             foreach (var biome in data.biomes)
                 if (biome != null && biomeCount[biome.BiomeID] > 0)
                     sb.Append($"{biome.biomeType} {100f * biomeCount[biome.BiomeID] / pixels.Length:F0}%  ");
-            stats = sb.ToString();
-            return tex;
+            result.stats = sb.ToString();
+            return result;
         }
         finally
         {
@@ -283,7 +355,10 @@ public class RegionMapWindow : EditorWindow
         string stats;
         try
         {
-            tex = Render(w.settings, w.biomeDataManager, w.seed, new Vector2(cx, cz), extent, res, overlay, out stats);
+            int only = Enum.TryParse(Arg("-regionMapOnlyBiome", ""), true, out BiomeType ob) ? (int)ob : -1;
+            var r = RenderMap(w.settings, w.biomeDataManager, w.seed, new Vector2(cx, cz), extent, res, overlay, only);
+            tex = r.texture;
+            stats = r.stats;
         }
         finally
         {

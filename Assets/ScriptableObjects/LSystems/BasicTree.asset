@@ -1,0 +1,64 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e352e1c65329ce548b2d68a9aab0651d, type: 3}
+  m_Name: BasicTree
+  m_EditorClassIdentifier: Assembly-CSharp::LSystemScriptableObject
+  Axiom: F(0.55)~F(0.45)S
+  Rules:
+  - Symbol: 83
+    Replacement: ~F(0.35)T
+    Weight: 1
+  - Symbol: 83
+    Replacement: '[Q+(40)&(25)F(0.45)T(0.85)][Q+(220)&(25)F(0.4)T(0.75)]'
+    Weight: 1
+  - Symbol: 83
+    Replacement: '[Q+(30)&(50)F(0.3)T(0.55)][Q+(170)&(55)F(0.3)T(0.5)]~F(0.35)T'
+    Weight: 1
+  Iterations: 1
+  DetailStartScale: 1
+  IterationsPerDoubling: 0
+  DetailMaxDroopAngle: 90
+  DetailStepScale: 0.5
+  StepLength: 6
+  MinStepLength: 4
+  StepLengthVariance: 1.5
+  PitchAngle: 25
+  YawAngle: 90
+  RollAngle: 0
+  CurveAngle: 5
+  AngleVariance: 10
+  Gravity: 0
+  MaxDroopAngle: 90
+  KeepAboveGround: 0
+  WindStrength: 0
+  WindDirection: 0
+  WindDirectionVariance: 0
+  TaperCurve: 1
+  TaperBy: 2
+  TrunkWidthAtBase: 1.94
+  MinWidth: 1
+  BodyBlock: 15
+  BranchShape: 0
+  Foliage: 12
+  FoliageBlock: 16
+  FoliageSize: 9
+  FoliageSizeVariance: 1.5
+  FoliageBlock2: 26
+  FoliageBlock2Chance: 0
+  GroundScatterBlock: 0
+  GroundScatterAmount: 0
+  RootCount: 0
+  RootLength: 12
+  RootWidth: 3
+  RootHeight: 3
+  RootWander: 20
+  RootBlock: 0

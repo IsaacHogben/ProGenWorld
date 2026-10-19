@@ -63,6 +63,7 @@ public class DecorationSystem
             lsystemTrees = config.biomeDataManager.GetLSystemTreeData(),
             builtinTreeRulesets = TreeRulesets.GetNativeTable(),
             decorations = config.biomeDataManager.GetDecorationData(),
+            subBiomeDecorations = config.biomeDataManager.GetSubBiomeDecorations(),
             spawnBlocks = config.biomeDataManager.GetDecorationSpawnBlocks(),
             waterLevel = config.biomeDataManager.GetWaterLevel()
         };

@@ -209,6 +209,17 @@ public struct BiomeHint
     // band); elsewhere the primary biome's apply. BiomeJob leaves the band empty.
     public float shapeBandMin, shapeBandMax;
     public float shapeGradient1, shapeGradient2;
+
+    // Region generator: sub-biome layer (RegionDetailSources.Layers index + 1) whose decorations
+    // apply in this column; 0 = only the biome's
+    public ushort decoLayer;
+}
+
+/// <summary>A sub-biome layer's decorations in BiomeDataManager's flattened decoration array.</summary>
+public struct SubBiomeDecorations
+{
+    public int start, count;
+    public byte replace;   // 1 = only these spawn where the layer applies, 0 = on top of the biome's
 }
 
 // ============================================================================
@@ -231,6 +242,20 @@ public class LSystemDecoration
     [Tooltip("Blocks this tree can spawn on")]
     public BlockType[] spawnOnBlocks = new BlockType[] { BlockType.Grass, BlockType.Dirt };
 }
+/// <summary>A set of decorations of every kind (a sub-biome layer's own).</summary>
+[System.Serializable]
+public class DecorationSet
+{
+    public LSystemDecoration[] lSystems = new LSystemDecoration[0];
+    public TreeDecoration[] trees = new TreeDecoration[0];
+    public VegetationDecoration[] vegetation = new VegetationDecoration[0];
+    public RockDecoration[] rocks = new RockDecoration[0];
+    public AlienDecoration[] aliens = new AlienDecoration[0];
+
+    public bool IsEmpty => Count == 0;
+    public int Count => (lSystems?.Length ?? 0) + (trees?.Length ?? 0) + (vegetation?.Length ?? 0) + (rocks?.Length ?? 0) + (aliens?.Length ?? 0);
+}
+
 [System.Serializable]
 public class TreeDecoration
 {

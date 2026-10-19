@@ -20,19 +20,205 @@ MonoBehaviour:
   subsurfaceBlock: 5
   deepBlock: 1
   sedimentBlock: 9
-  gradientThreshold1: 0.005
-  gradientThreshold2: 0.002
+  gradientThreshold1: 0.00784
+  gradientThreshold2: 0.00568
+  regionShape:
+    baseHeight: 0
+    hillHeight: 90
+    hillScale: 1500
+    hillOctaves: 2
+    ridged: 0
+    terraceStep: 0
+    terraceSharpness: 1
+    detailTerrain: {fileID: 11400000, guid: ac30749d934c76b488557c1d909942de, type: 2}
+    detailStrength: 0.7579
+    overrideSurfaceOffset: 0
+    detailSurfaceOffset: 0
+    overrideRangeUp: 0
+    detailRangeUp: 64
+    overrideRangeDown: 0
+    detailRangeDown: 32
+    autoCalibrate: 1
+    detailDensityScale: 1
+    rainfall: 1
+    subBiomes:
+    - name: Mountains
+      kind: 1
+      scale: 2600
+      coverage: 0.278
+      softness: 1
+      heightOffset: 50
+      hillMultiplier: 1
+      detailMultiplier: 2
+      decorationMultiplier: 0
+      surfaceBlock: 14
+      decorationMode: 1
+      decorations:
+        lSystems: []
+        trees:
+        - treeType: 0
+          spawnChance: 14
+          spawnOnBlocks: 0b05
+        - treeType: 1
+          spawnChance: 9
+          spawnOnBlocks: 0b
+        - treeType: 2
+          spawnChance: 6
+          spawnOnBlocks: 0b
+        vegetation: []
+        rocks: []
+        aliens: []
+      detailTerrain: {fileID: 11400000, guid: 95d03a1d188f94640acca2a349726c42, type: 2}
+      detailStrength: 1
+      overrideSurfaceOffset: 1
+      detailSurfaceOffset: 70
+      overrideRangeUp: 1
+      detailRangeUp: 320
+      overrideRangeDown: 0
+      detailRangeDown: 0
+      autoCalibrate: 1
+      detailDensityScale: 1
+    - name: Flats
+      kind: 0
+      scale: 600
+      coverage: 0.4224
+      softness: 0.7925
+      heightOffset: -15
+      hillMultiplier: 0.503
+      detailMultiplier: 0.037
+      decorationMultiplier: 0.095
+      surfaceBlock: 35
+      decorationMode: 0
+      decorations:
+        lSystems: []
+        trees: []
+        vegetation: []
+        rocks: []
+        aliens: []
+      detailTerrain: {fileID: 0}
+      detailStrength: 0
+      overrideSurfaceOffset: 0
+      detailSurfaceOffset: 0
+      overrideRangeUp: 0
+      detailRangeUp: 0
+      overrideRangeDown: 0
+      detailRangeDown: 0
+      autoCalibrate: 1
+      detailDensityScale: 0
+    - name: Ravines
+      kind: 1
+      scale: 1282
+      coverage: 0.0759
+      softness: 1
+      heightOffset: 0
+      hillMultiplier: 1.497
+      detailMultiplier: 1
+      decorationMultiplier: 0.791
+      surfaceBlock: 11
+      decorationMode: 0
+      decorations:
+        lSystems: []
+        trees: []
+        vegetation: []
+        rocks: []
+        aliens: []
+      detailTerrain: {fileID: 11400000, guid: 04441542e0157b741ba40421745345c8, type: 2}
+      detailStrength: 1
+      overrideSurfaceOffset: 0
+      detailSurfaceOffset: 0
+      overrideRangeUp: 0
+      detailRangeUp: 0
+      overrideRangeDown: 0
+      detailRangeDown: 0
+      autoCalibrate: 1
+      detailDensityScale: 1
+    - name: Rough Soil
+      kind: 1
+      scale: 80
+      coverage: 0.101
+      softness: 0.01
+      heightOffset: 0
+      hillMultiplier: 1
+      detailMultiplier: 1
+      decorationMultiplier: 0
+      surfaceBlock: 10
+      decorationMode: 0
+      decorations:
+        lSystems: []
+        trees: []
+        vegetation: []
+        rocks: []
+        aliens: []
+      detailTerrain: {fileID: 0}
+      detailStrength: 1
+      overrideSurfaceOffset: 0
+      detailSurfaceOffset: 0
+      overrideRangeUp: 0
+      detailRangeUp: 0
+      overrideRangeDown: 0
+      detailRangeDown: 0
+      autoCalibrate: 1
+      detailDensityScale: 1
+    - name: Red
+      kind: 0
+      scale: 1133
+      coverage: 0.2665
+      softness: 0.32
+      heightOffset: 0
+      hillMultiplier: 1
+      detailMultiplier: 1
+      decorationMultiplier: 0.837
+      surfaceBlock: 11
+      decorationMode: 0
+      decorations:
+        lSystems: []
+        trees: []
+        vegetation: []
+        rocks: []
+        aliens: []
+      detailTerrain: {fileID: 11400000, guid: a024df3b0c9f85f4692a81593ec923a2, type: 2}
+      detailStrength: 1
+      overrideSurfaceOffset: 0
+      detailSurfaceOffset: 0
+      overrideRangeUp: 1
+      detailRangeUp: 300
+      overrideRangeDown: 0
+      detailRangeDown: 0
+      autoCalibrate: 1
+      detailDensityScale: 1
+  streams:
+    enabled: 1
+    chancePerChunk: 0.1
+    minHeightAboveWater: 90
+    maxLength: 2000
+    searchRadius: 16
+    maxCut: 8
+    cutBelowBanks: 0
+    carveBudget: 120
+    pondStyle: 0
+    fillHeight: 5
+    minFillVolume: 60
+    maxFillVolume: 5373
+    pondRadius: 9
+    windiness: 1
+    maxWidth: 7
+    widenEvery: 30
   LSystemDecorations:
   - LSystemData: {fileID: 11400000, guid: b82d699b3c35482ead4a29e101303b7a, type: 2}
-    minScale: 0.5
-    maxScale: 1.1
-    spawnChance: 0.7
-    spawnOnBlocks: 0b
-  - LSystemData: {fileID: 11400000, guid: b82d699b3c35482ead4a29e101303b7a, type: 2}
-    minScale: 1.4
+    minScale: 2
     maxScale: 2
     spawnChance: 0.01
     spawnOnBlocks: 0b
+  - LSystemData: {fileID: 11400000, guid: de6258fb106c4a67be2222b676cb14e2, type: 2}
+    minScale: 0.6
+    maxScale: 1
+    spawnChance: 1.6
+    spawnOnBlocks: 0b23
+  - LSystemData: {fileID: 11400000, guid: 2bbd065dd84f4f14bb3653790ed0d0ce, type: 2}
+    minScale: 0.5
+    maxScale: 1.5
+    spawnChance: 9
+    spawnOnBlocks: 0b23
   trees:
   - treeType: 0
     spawnChance: 0.5

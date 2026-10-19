@@ -91,6 +91,8 @@ public class LSystemScriptableObject : ScriptableObject
     [Min(0.5f)] public float TrunkWidthAtBase = 1f;
     [Min(0f)] public float MinWidth = 1f;
     public BlockType BodyBlock = BlockType.Log;
+    [Tooltip("Branch cross-sections as width changes.\nMixed = every shape, smallest steps (1, 2x2, plus, 3x3, rounded 4x4...)\nWhole Blocks = 1, 2x2, 3x3, rounded 4x4...\nCircles = 1, plus, 3x3, circle... (original look)")]
+    public BranchShapeMode BranchShape = BranchShapeMode.Mixed;
 
     [Header("Foliage")]
     public ShapeStyle Foliage = ShapeStyle.None;
@@ -166,6 +168,7 @@ public class LSystemScriptableObject : ScriptableObject
             TrunkWidthAtBase = TrunkWidthAtBase,
             MinWidth = MinWidth,
             BodyBlock = BodyBlock,
+            BranchShape = BranchShape,
 
             Foliage = Foliage,
             FoliageBlock = FoliageBlock,

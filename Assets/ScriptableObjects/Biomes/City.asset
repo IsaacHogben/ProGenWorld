@@ -22,6 +22,23 @@ MonoBehaviour:
   sedimentBlock: 27
   gradientThreshold1: 0.0129
   gradientThreshold2: 0.0016
+  regionShape:
+    baseHeight: 0
+    hillHeight: 30
+    hillScale: 600
+    hillOctaves: 5
+    ridged: 0
+    terraceStep: 0
+    terraceSharpness: 0.7
+    detailTerrain: {fileID: 11400000, guid: 3a26e87ca6b010043805eb5ae8f82244, type: 2}
+    detailStrength: 1
+    detailSurfaceOffset: 0
+    detailRangeUp: 64
+    detailRangeDown: 32
+    detailDensityScale: 1
+    rainfall: 1
+    subBiomes: []
+  LSystemDecorations: []
   trees:
   - treeType: 6
     spawnChance: 25

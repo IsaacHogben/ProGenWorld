@@ -123,6 +123,7 @@ public struct LSystemTreeData
     public float TrunkWidthAtBase;
     public float MinWidth;
     public BlockType BodyBlock;
+    public BranchShapeMode BranchShape;
 
     // Foliage
     public ShapeStyle Foliage;
@@ -152,6 +153,13 @@ public enum TaperCurveType : byte
     SquareRoot = 2,    // sqrt(t) - fast start, slow finish (tapers early, lingers thin for a while)
     Logarithmic = 3,   // log-shaped - very fast initial taper, flattens out early and stays close to min
     None = 4
+}
+
+public enum BranchShapeMode : byte
+{
+    Mixed = 0,       // every disc shape: 1, 2x2, plus, 3x3, rounded 4x4, circle, 4x4... (smallest steps)
+    WholeBlocks = 1, // whole-block widths: 1, 2x2, 3x3, rounded 4x4, disc...
+    Circles = 2,     // block-centred discs only: 1, plus, 3x3, circle... (the original look)
 }
 
 public enum TaperMode : byte
@@ -558,6 +566,18 @@ public struct TreeBlockWriter
         if (Written.Add(new int3(x, y, z)))
             Writer.ApplyBlock(x, y, z, block, PendingWriteMode.DropToSurface);
     }
+
+    // Foliage with faked lighting: light (0..1) scales the chance of the secondary foliage block,
+    // so shapes can put it on their sunlit side instead of scattering it evenly.
+    public void ApplyLit(int x, int y, int z, BlockType block, float light)
+    {
+        var p = new int3(x, y, z);
+        if (!Written.Add(p))
+            return;
+        if (MixThreshold != 0 && block == MixFrom && math.hash(p) < (uint)(math.saturate(light) * MixThreshold))
+            block = MixTo;
+        Writer.ApplyBlock(x, y, z, block, PendingWriteMode.ReplaceAir);
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -870,7 +890,7 @@ public static class LSystemInterpreter
         }
 
         float3 end = s.Position + heading * length;
-        DrawSegment(s.Position, end, width0, width1, tree.BodyBlock, ref w.Out);
+        DrawSegment(s.Position, end, width0, width1, tree.BranchShape, tree.BodyBlock, ref w.Out);
         s.Position = end;
         s.Path += steps;
 
@@ -1002,19 +1022,22 @@ public static class LSystemInterpreter
         }
     }
 
-    // Voxelises a tapered capsule from a to b. Each block is visited once per segment (walking
-    // the plane slices of the segment's major axis), and the rounded ends join consecutive
-    // segments without gaps at bends.
-    static void DrawSegment(float3 a, float3 b, float widthA, float widthB, BlockType block, ref TreeBlockWriter output)
+    // Voxelises a tapered capsule from a to b, one plane slice at a time along the segment's major
+    // axis, so each block is visited once and the rounded ends join consecutive segments at bends.
+    // Each slice is a disc around the branch axis, centred on a block (odd shapes: 1, plus, 3x3...)
+    // or on a block corner (even shapes: 2x2, rounded 4x4...), as BranchShapeMode decides.
+    // WidthBias keeps width values meaning the same thickness as before: anything under ~2.2 is
+    // a single block.
+    const float WidthBias = 0.7f;
+
+    static void DrawSegment(float3 a, float3 b, float widthA, float widthB, BranchShapeMode shape, BlockType block, ref TreeBlockWriter output)
     {
         float3 d = b - a;
         float lenSq = math.lengthsq(d);
         if (lenSq < 1e-6f)
             return;
 
-        float rA = math.max(0f, widthA * 0.5f - 0.35f);
-        float rB = math.max(0f, widthB * 0.5f - 0.35f);
-        float rMax = math.max(rA, rB);
+        float rMax = math.max(widthA, widthB) * 0.5f + 0.5f;
 
         float3 ad = math.abs(d);
         int m = ad.x >= ad.y && ad.x >= ad.z ? 0 : (ad.y >= ad.z ? 1 : 2);
@@ -1028,25 +1051,34 @@ public static class LSystemInterpreter
         {
             float tPlane = (c - a[m]) / d[m];
             bool onSegment = tPlane >= 0f && tPlane <= 1f;
-            float3 center = a + d * math.saturate(tPlane);
-            int cu = (int)math.round(center[u]), cv = (int)math.round(center[v]);
+            float tc = math.saturate(tPlane);
+            float3 center = a + d * tc;
+            SliceShape(math.lerp(widthA, widthB, tc), shape, out float r, out bool even);
 
-            for (int du = -extent; du <= extent; du++)
+            // Snap the axis in this slice to a block centre (odd) or corner (even) and measure from
+            // there, so every slice of a given width has exactly the same symmetric cross-section.
+            float su = even ? math.floor(center[u]) + 0.5f : math.round(center[u]);
+            float sv = even ? math.floor(center[v]) + 0.5f : math.round(center[v]);
+            float3 shift = default;
+            shift[u] = su - center[u];
+            shift[v] = sv - center[v];
+            int cu = (int)math.floor(su), cv = (int)math.floor(sv);
+
+            for (int du = -extent; du <= extent + 1; du++)
             {
-                for (int dv = -extent; dv <= extent; dv++)
+                for (int dv = -extent; dv <= extent + 1; dv++)
                 {
                     int3 p = default;
                     p[m] = c;
                     p[u] = cu + du;
                     p[v] = cv + dv;
 
-                    // The block nearest the axis is always placed so thin branches stay connected.
-                    bool place = onSegment && du == 0 && dv == 0;
+                    // The block on the axis is always placed so thin branches stay connected.
+                    bool place = onSegment && !even && du == 0 && dv == 0;
                     if (!place)
                     {
-                        float3 pf = p;
+                        float3 pf = (float3)p - shift;
                         float t = math.saturate(math.dot(pf - a, d) / lenSq);
-                        float r = math.lerp(rA, rB, t);
                         place = math.distancesq(pf, a + d * t) <= r * r + 0.01f;
                     }
                     if (place)
@@ -1054,6 +1086,51 @@ public static class LSystemInterpreter
                 }
             }
         }
+    }
+
+    // Cross-section for a branch width: disc radius r around a block centre (even = false) or a
+    // block corner (even = true).
+    static void SliceShape(float width, BranchShapeMode shape, out float r, out bool even)
+    {
+        if (shape == BranchShapeMode.WholeBlocks)
+        {
+            int blocks = math.max(1, (int)math.round(width - WidthBias));
+            even = (blocks & 1) == 0;
+            r = blocks * 0.5f - 0.05f;
+            return;
+        }
+
+        r = math.max(0f, (width - WidthBias) * 0.5f);
+        even = false;
+        if (shape == BranchShapeMode.Mixed)
+        {
+            // Whichever centring gives a block count closer to a true circle of this radius.
+            int corner = CornerDiscCount(r);
+            if (corner >= 4)
+            {
+                float target = math.PI * r * r;
+                even = math.abs(corner - target) < math.abs(CentredDiscCount(r) - target);
+            }
+        }
+    }
+
+    // Blocks within r (same tolerance as DrawSegment) of a block centre / of a block corner.
+    static int CentredDiscCount(float r)
+    {
+        float r2 = r * r + 0.01f;
+        int n = 0;
+        for (int i = (int)math.floor(math.sqrt(r2)); i >= 0; i--)
+            n += (i == 0 ? 1 : 2) * (2 * (int)math.floor(math.sqrt(r2 - i * i)) + 1);
+        return n;
+    }
+
+    static int CornerDiscCount(float r)
+    {
+        float r2 = r * r + 0.01f;
+        int n = 0;
+        for (float x = 0.5f; x * x <= r2; x += 1f)
+            n += 4 * (int)math.floor(math.sqrt(r2 - x * x) + 0.5f);
+        return n;
     }
 
     // ------------------------------------------------------------------

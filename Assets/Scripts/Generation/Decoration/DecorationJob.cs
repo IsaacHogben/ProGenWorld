@@ -24,6 +24,7 @@ public struct DecorationJob : IJob
     [ReadOnly] public int biomeResolution;
     [ReadOnly] public NativeArray<BiomeDefinition> biomes;
     [ReadOnly] public NativeArray<DecorationData> decorations;
+    [ReadOnly] public NativeArray<SubBiomeDecorations> subBiomeDecorations;   // by sub-biome layer
     [ReadOnly] public NativeArray<LSystemTreeData> lsystemTrees;
     [ReadOnly] public NativeArray<LSystemTreeData> builtinTreeRulesets;   // TreeRulesets.GetNativeTable()
     [ReadOnly] public NativeArray<byte> spawnBlocks;
@@ -48,11 +49,19 @@ public struct DecorationJob : IJob
                     // Sample biome at this location
                     BiomeHint hint = SampleBiome(x, z);
 
-                    // Try primary biome decorations
-                    if (hint.primaryBiome < biomes.Length)
+                    // The primary biome's decorations (scaled by its sub-biome layers), and those of the
+                    // sub-biome layer that applies here (on top, or in their place)
+                    bool biomeDecorations = true;
+                    if (hint.decoLayer != 0 && hint.decoLayer <= subBiomeDecorations.Length)
+                    {
+                        var layer = subBiomeDecorations[hint.decoLayer - 1];
+                        biomeDecorations = layer.replace == 0;
+                        TryPlaceDecorations(layer.start, layer.count, 1f, currentBlock, aboveBlock, x, y, z);
+                    }
+                    if (biomeDecorations && hint.primaryBiome < biomes.Length)
                     {
                         BiomeDefinition biome = biomes[hint.primaryBiome];
-                        TryPlaceDecorations(biome, currentBlock, aboveBlock, x, y, z);
+                        TryPlaceDecorations(biome.decorationStartIndex, biome.decorationCount, hint.decoScale, currentBlock, aboveBlock, x, y, z);
                     }
 
                     // Optionally try secondary biome with reduced chance based on blend
@@ -70,11 +79,11 @@ public struct DecorationJob : IJob
         }
     }
 
-    private void TryPlaceDecorations(BiomeDefinition biome, byte currentBlock, byte aboveBlock, int x, int y, int z)
+    private void TryPlaceDecorations(int start, int count, float chanceScale, byte currentBlock, byte aboveBlock, int x, int y, int z)
     {
-        int decorationEnd = biome.decorationStartIndex + biome.decorationCount;
+        int decorationEnd = start + count;
 
-        for (int i = biome.decorationStartIndex; i < decorationEnd; i++)
+        for (int i = start; i < decorationEnd; i++)
         {
             if (i >= decorations.Length)
                 break;
@@ -88,8 +97,8 @@ public struct DecorationJob : IJob
             if (!CanSpawnOn(decoration, currentBlock))
                 continue;
 
-            // Check spawn chance (scaled by the column's sub-biome layers under the region generator)
-            float adjustedChance = decoration.spawnChance * SampleBiome(x, z).decoScale;
+            // Check spawn chance (the biome's are scaled by the column's sub-biome layers under the region generator)
+            float adjustedChance = decoration.spawnChance * chanceScale;
             if (rng.NextFloat() > adjustedChance)
                 continue;
 

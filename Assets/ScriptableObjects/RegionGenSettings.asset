@@ -12,16 +12,33 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 208af0848b9424848a80eda482b4999f, type: 3}
   m_Name: RegionGenSettings
   m_EditorClassIdentifier: Assembly-CSharp::RegionGenSettingsSO
-  regionSize: 1200
+  regionSize: 12000
   regionJitter: 0.85
   borderWarp: 0.3
   borderWarpScale: 0.5
-  borderBlend: 120
-  climateScale: 40000
+  borderBlend: 1200
+  climateScale: 4000
   climateContrast: 1.6
   macroBase: 0
   macroAmplitude: 40
   macroScale: 8000
   paletteEdgeNoise: 0.2
   paletteEdgeScale: 48
+  rivers: 0
+  riverNodeSpacing: 256
+  riverTileNodes: 64
+  riverCatchmentRadius: 24
+  riverThreshold: 14
+  riverWidthScale: 1.6
+  riverMinWidth: 5
+  riverMaxWidth: 45
+  riverDepthPerWidth: 0.12
+  valleyBase: 24
+  valleyPerWidth: 4
+  riverMeander: 0.11
+  riverBankWidth: 3
+  lakeMinRainfall: 6
+  lakeSize: 0.12
+  lakeMaxRadius: 0.9
+  lakeShore: 16
   densityScale: 0.01

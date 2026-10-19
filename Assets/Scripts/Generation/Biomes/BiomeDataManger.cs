@@ -33,6 +33,7 @@ public class BiomeDataManager : MonoBehaviour
     private NativeArray<BiomeData> biomeData;
     private NativeArray<int> biomePriority;
     private NativeArray<DecorationData> decorationData;
+    private NativeArray<SubBiomeDecorations> subBiomeDecorations;
     private NativeArray<LSystemTreeData> lsystemTreeData;
     private NativeArray<byte> decorationSpawnBlocks;
     private NativeArray<byte> terrainAllowedBiomes;
@@ -184,23 +185,13 @@ public class BiomeDataManager : MonoBehaviour
         int totalSpawnBlocks = 0;
 
         foreach (var biome in biomes)
+            CountDecorations(biome.LSystemDecorations, biome.trees, biome.vegetation, biome.rocks, biome.aliens,
+                ref totalDecorations, ref totalSpawnBlocks);
+        foreach (var (_, layer, _) in RegionDetailSources.Layers(this))
         {
-            totalDecorations += biome.trees.Length;
-            totalDecorations += biome.vegetation.Length;
-            totalDecorations += biome.rocks.Length;
-            totalDecorations += biome.aliens.Length;
-            totalDecorations += biome.LSystemDecorations.Length;
-
-            foreach (var tree in biome.trees)
-                totalSpawnBlocks += tree.spawnOnBlocks.Length;
-            foreach (var veg in biome.vegetation)
-                totalSpawnBlocks += veg.spawnOnBlocks.Length;
-            foreach (var rock in biome.rocks)
-                totalSpawnBlocks += rock.spawnOnBlocks.Length;
-            foreach (var alien in biome.aliens)
-                totalSpawnBlocks += alien.spawnOnBlocks.Length;
-            foreach (var lSystem in biome.LSystemDecorations)
-                totalSpawnBlocks += lSystem.spawnOnBlocks.Length;
+            var set = layer.decorations;
+            if (set != null)
+                CountDecorations(set.lSystems, set.trees, set.vegetation, set.rocks, set.aliens, ref totalDecorations, ref totalSpawnBlocks);
         }
 
         // Allocate arrays sized by max enum value (not biomes.Length!)
@@ -262,95 +253,8 @@ public class BiomeDataManager : MonoBehaviour
             biomePriority[biomeIndex] = i;
             int decorationStartIndex = decorationIndex;
 
-            // Trees
-            foreach (var tree in biome.trees)
-            {
-                int spawnBlockStart = spawnBlockIndex;
-                foreach (var block in tree.spawnOnBlocks)
-                    decorationSpawnBlocks[spawnBlockIndex++] = (byte)block;
-
-                decorationData[decorationIndex++] = new DecorationData
-                {
-                    category = (byte)DecorationCategory.Tree,
-                    typeID = (byte)tree.treeType,
-                    spawnChance = tree.spawnChance / 10000f, // Convert to 0-1
-                    spawnBlockStartIndex = spawnBlockStart,
-                    spawnBlockCount = tree.spawnOnBlocks.Length
-                };
-            }
-
-            // Vegetation
-            foreach (var veg in biome.vegetation)
-            {
-                int spawnBlockStart = spawnBlockIndex;
-                foreach (var block in veg.spawnOnBlocks)
-                    decorationSpawnBlocks[spawnBlockIndex++] = (byte)block;
-
-                decorationData[decorationIndex++] = new DecorationData
-                {
-                    category = (byte)DecorationCategory.Vegetation,
-                    typeID = (byte)veg.vegetationType,
-                    spawnChance = veg.spawnChance / 10000f,
-                    spawnBlockStartIndex = spawnBlockStart,
-                    spawnBlockCount = veg.spawnOnBlocks.Length
-                };
-            }
-
-            // Rocks
-            foreach (var rock in biome.rocks)
-            {
-                int spawnBlockStart = spawnBlockIndex;
-                foreach (var block in rock.spawnOnBlocks)
-                    decorationSpawnBlocks[spawnBlockIndex++] = (byte)block;
-
-                decorationData[decorationIndex++] = new DecorationData
-                {
-                    category = (byte)DecorationCategory.Rock,
-                    typeID = (byte)rock.rockType,
-                    spawnChance = rock.spawnChance / 10000f,
-                    spawnBlockStartIndex = spawnBlockStart,
-                    spawnBlockCount = rock.spawnOnBlocks.Length
-                };
-            }
-
-            // Aliens
-            foreach (var alien in biome.aliens)
-            {
-                int spawnBlockStart = spawnBlockIndex;
-                foreach (var block in alien.spawnOnBlocks)
-                    decorationSpawnBlocks[spawnBlockIndex++] = (byte)block;
-
-                decorationData[decorationIndex++] = new DecorationData
-                {
-                    category = (byte)DecorationCategory.Alien,
-                    typeID = (byte)alien.alienType,
-                    spawnChance = alien.spawnChance / 10000f,
-                    spawnBlockStartIndex = spawnBlockStart,
-                    spawnBlockCount = alien.spawnOnBlocks.Length
-                };
-            }
-
-            foreach (var lsysDeco in biome.LSystemDecorations)
-            {
-                int spawnBlockStart = spawnBlockIndex;
-                foreach (var block in lsysDeco.spawnOnBlocks)
-                    decorationSpawnBlocks[spawnBlockIndex++] = (byte)block;
-
-                int treeIndex = lsysDeco.LSystemData != null && indexLookup.TryGetValue(lsysDeco.LSystemData, out var idx)
-                    ? idx
-                    : 0; // fallback — consider logging a warning here if LSystemData is unassigned
-
-                decorationData[decorationIndex++] = new DecorationData
-                {
-                    category = (byte)DecorationCategory.LSystemTree,
-                    typeID = (byte)treeIndex,
-                    spawnChance = lsysDeco.spawnChance / 10000f,
-                    spawnBlockStartIndex = spawnBlockStart,
-                    spawnBlockCount = lsysDeco.spawnOnBlocks.Length,
-                    minScale = Mathf.Min(lsysDeco.minScale, lsysDeco.maxScale),
-                    maxScale = Mathf.Max(lsysDeco.minScale, lsysDeco.maxScale),
-                };
-            }
+            AddDecorations(biome.LSystemDecorations, biome.trees, biome.vegetation, biome.rocks, biome.aliens,
+                indexLookup, ref decorationIndex, ref spawnBlockIndex);
 
             int decorationCount = decorationIndex - decorationStartIndex;
             biomeDefinitions[biomeIndex] = biome.ToBiomeDefinition(decorationStartIndex, decorationCount);
@@ -374,8 +278,140 @@ public class BiomeDataManager : MonoBehaviour
                       $"T[{biome.temperatureRange.x:F2}-{biome.temperatureRange.y:F2}]");
         }
 
+        // Sub-biome layers' own decorations, in RegionDetailSources.Layers order
+        var layerList = new List<SubBiomeLayer>();
+        foreach (var (_, layer, _) in RegionDetailSources.Layers(this))
+            layerList.Add(layer);
+        subBiomeDecorations = new NativeArray<SubBiomeDecorations>(Mathf.Max(1, layerList.Count), Allocator.Persistent);
+        for (int i = 0; i < layerList.Count; i++)
+        {
+            var layer = layerList[i];
+            var set = layer.decorations ?? new DecorationSet();
+            int start = decorationIndex;
+            AddDecorations(set.lSystems, set.trees, set.vegetation, set.rocks, set.aliens, indexLookup, ref decorationIndex, ref spawnBlockIndex);
+            subBiomeDecorations[i] = new SubBiomeDecorations
+            {
+                start = start,
+                count = decorationIndex - start,
+                replace = (byte)(layer.decorationMode == SubBiomeDecorationMode.Replace ? 1 : 0)
+            };
+        }
+
         Debug.Log($"Biome array size: {biomeArraySize} (to fit enum values 0-{maxBiomeID})");
     }
+
+    // Flattens one set of decorations (a biome's or a sub-biome layer's) into the decoration arrays
+    private void AddDecorations(LSystemDecoration[] lSystems, TreeDecoration[] trees, VegetationDecoration[] vegetation,
+        RockDecoration[] rocks, AlienDecoration[] aliens, Dictionary<LSystemScriptableObject, int> indexLookup,
+        ref int decorationIndex, ref int spawnBlockIndex)
+    {
+        lSystems ??= new LSystemDecoration[0];
+        trees ??= new TreeDecoration[0];
+        vegetation ??= new VegetationDecoration[0];
+        rocks ??= new RockDecoration[0];
+        aliens ??= new AlienDecoration[0];
+
+        // Trees
+        foreach (var tree in trees)
+        {
+            int spawnBlockStart = spawnBlockIndex;
+            foreach (var block in tree.spawnOnBlocks)
+                decorationSpawnBlocks[spawnBlockIndex++] = (byte)block;
+
+            decorationData[decorationIndex++] = new DecorationData
+            {
+                category = (byte)DecorationCategory.Tree,
+                typeID = (byte)tree.treeType,
+                spawnChance = tree.spawnChance / 10000f, // Convert to 0-1
+                spawnBlockStartIndex = spawnBlockStart,
+                spawnBlockCount = tree.spawnOnBlocks.Length
+            };
+        }
+
+        // Vegetation
+        foreach (var veg in vegetation)
+        {
+            int spawnBlockStart = spawnBlockIndex;
+            foreach (var block in veg.spawnOnBlocks)
+                decorationSpawnBlocks[spawnBlockIndex++] = (byte)block;
+
+            decorationData[decorationIndex++] = new DecorationData
+            {
+                category = (byte)DecorationCategory.Vegetation,
+                typeID = (byte)veg.vegetationType,
+                spawnChance = veg.spawnChance / 10000f,
+                spawnBlockStartIndex = spawnBlockStart,
+                spawnBlockCount = veg.spawnOnBlocks.Length
+            };
+        }
+
+        // Rocks
+        foreach (var rock in rocks)
+        {
+            int spawnBlockStart = spawnBlockIndex;
+            foreach (var block in rock.spawnOnBlocks)
+                decorationSpawnBlocks[spawnBlockIndex++] = (byte)block;
+
+            decorationData[decorationIndex++] = new DecorationData
+            {
+                category = (byte)DecorationCategory.Rock,
+                typeID = (byte)rock.rockType,
+                spawnChance = rock.spawnChance / 10000f,
+                spawnBlockStartIndex = spawnBlockStart,
+                spawnBlockCount = rock.spawnOnBlocks.Length
+            };
+        }
+
+        // Aliens
+        foreach (var alien in aliens)
+        {
+            int spawnBlockStart = spawnBlockIndex;
+            foreach (var block in alien.spawnOnBlocks)
+                decorationSpawnBlocks[spawnBlockIndex++] = (byte)block;
+
+            decorationData[decorationIndex++] = new DecorationData
+            {
+                category = (byte)DecorationCategory.Alien,
+                typeID = (byte)alien.alienType,
+                spawnChance = alien.spawnChance / 10000f,
+                spawnBlockStartIndex = spawnBlockStart,
+                spawnBlockCount = alien.spawnOnBlocks.Length
+            };
+        }
+
+        foreach (var lsysDeco in lSystems)
+        {
+            int spawnBlockStart = spawnBlockIndex;
+            foreach (var block in lsysDeco.spawnOnBlocks)
+                decorationSpawnBlocks[spawnBlockIndex++] = (byte)block;
+
+            int treeIndex = lsysDeco.LSystemData != null && indexLookup.TryGetValue(lsysDeco.LSystemData, out var idx)
+                ? idx
+                : 0; // fallback — consider logging a warning here if LSystemData is unassigned
+
+            decorationData[decorationIndex++] = new DecorationData
+            {
+                category = (byte)DecorationCategory.LSystemTree,
+                typeID = (byte)treeIndex,
+                spawnChance = lsysDeco.spawnChance / 10000f,
+                spawnBlockStartIndex = spawnBlockStart,
+                spawnBlockCount = lsysDeco.spawnOnBlocks.Length,
+                minScale = Mathf.Min(lsysDeco.minScale, lsysDeco.maxScale),
+                maxScale = Mathf.Max(lsysDeco.minScale, lsysDeco.maxScale),
+            };
+        }
+    }
+
+    private static void CountDecorations(LSystemDecoration[] lSystems, TreeDecoration[] trees, VegetationDecoration[] vegetation,
+        RockDecoration[] rocks, AlienDecoration[] aliens, ref int decorations, ref int spawnBlocks)
+    {
+        if (lSystems != null) foreach (var d in lSystems) { decorations++; spawnBlocks += d.spawnOnBlocks.Length; }
+        if (trees != null) foreach (var d in trees) { decorations++; spawnBlocks += d.spawnOnBlocks.Length; }
+        if (vegetation != null) foreach (var d in vegetation) { decorations++; spawnBlocks += d.spawnOnBlocks.Length; }
+        if (rocks != null) foreach (var d in rocks) { decorations++; spawnBlocks += d.spawnOnBlocks.Length; }
+        if (aliens != null) foreach (var d in aliens) { decorations++; spawnBlocks += d.spawnOnBlocks.Length; }
+    }
+
     private void ConvertClimateGrid()
     {
         int cellCount = climateGrid.humidityDivisions * climateGrid.temperatureDivisions;
@@ -499,17 +535,21 @@ public class BiomeDataManager : MonoBehaviour
     }
     private void BakeLSystemTrees(out Dictionary<LSystemScriptableObject, int> indexLookup)
     {
-        indexLookup = new Dictionary<LSystemScriptableObject, int>();
+        var lookup = new Dictionary<LSystemScriptableObject, int>();
+        indexLookup = lookup;
 
-        foreach (var biome in biomes)
+        void Add(LSystemDecoration[] decos)
         {
-            if (biome?.LSystemDecorations == null) continue;
-            foreach (var deco in biome.LSystemDecorations)
-            {
-                if (deco.LSystemData != null && !indexLookup.ContainsKey(deco.LSystemData))
-                    indexLookup[deco.LSystemData] = indexLookup.Count;
-            }
+            if (decos == null) return;
+            foreach (var deco in decos)
+                if (deco.LSystemData != null && !lookup.ContainsKey(deco.LSystemData))
+                    lookup[deco.LSystemData] = lookup.Count;
         }
+        foreach (var biome in biomes)
+            if (biome != null)
+                Add(biome.LSystemDecorations);
+        foreach (var (_, layer, _) in RegionDetailSources.Layers(this))
+            Add(layer.decorations?.lSystems);
 
         lsystemTreeData = new NativeArray<LSystemTreeData>(indexLookup.Count, Allocator.Persistent);
         foreach (var kv in indexLookup)
@@ -523,6 +563,7 @@ public class BiomeDataManager : MonoBehaviour
     public NativeArray<BiomeData> GetBiomeData() => biomeData;
     public NativeArray<BiomeDefinition> GetBiomeDefinitions() => biomeDefinitions;
     public NativeArray<DecorationData> GetDecorationData() => decorationData;
+    public NativeArray<SubBiomeDecorations> GetSubBiomeDecorations() => subBiomeDecorations;
     public NativeArray<byte> GetDecorationSpawnBlocks() => decorationSpawnBlocks;
     public NativeArray<LSystemTreeData> GetLSystemTreeData() => lsystemTreeData;
     public int GetWaterLevel() => waterLevel;
@@ -606,6 +647,7 @@ public class BiomeDataManager : MonoBehaviour
             if (biomeData.IsCreated) biomeData.Dispose();
             if (biomeDefinitions.IsCreated) biomeDefinitions.Dispose();
             if (decorationData.IsCreated) decorationData.Dispose();
+            if (subBiomeDecorations.IsCreated) subBiomeDecorations.Dispose();
             if (decorationSpawnBlocks.IsCreated) decorationSpawnBlocks.Dispose();
             if (climateGridCells.IsCreated) climateGridCells.Dispose();
             if (climateCellBiomes.IsCreated) climateCellBiomes.Dispose();

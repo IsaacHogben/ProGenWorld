@@ -18,19 +18,40 @@ MonoBehaviour:
     Replacement: '!+[!&[FF]\[FF]\[FF]\[FF]\[FF]\FF]'
     Weight: 1
   Iterations: 1
-  StepLength: 6
+  DetailStartScale: 2
+  IterationsPerDoubling: 0
+  DetailMaxDroopAngle: 90
+  DetailStepScale: 0.5
+  StepLength: 6.89
   MinStepLength: 1
-  StepLengthVariance: 2
+  StepLengthVariance: 2.17
   PitchAngle: 90
   YawAngle: 30
   RollAngle: 60
-  Gravity: 0
+  CurveAngle: 0
   AngleVariance: 0
-  TaperCurve: 0
+  Gravity: -0.45
+  MaxDroopAngle: 90
+  KeepAboveGround: 0
+  WindStrength: 0
+  WindDirection: 0
+  WindDirectionVariance: 0
+  TaperCurve: 1
   TaperBy: 0
-  TrunkWidthAtBase: 2
+  TrunkWidthAtBase: 3
   MinWidth: 1
-  Foliage: 5
   BodyBlock: 15
+  Foliage: 10
   FoliageBlock: 16
-  FoliageSize: 5
+  FoliageSize: 9.02
+  FoliageSizeVariance: 0
+  FoliageBlock2: 0
+  FoliageBlock2Chance: 0
+  GroundScatterBlock: 0
+  GroundScatterAmount: 0
+  RootCount: 6
+  RootLength: 6.85
+  RootWidth: 2.98
+  RootHeight: 5
+  RootWander: 19.44
+  RootBlock: 0

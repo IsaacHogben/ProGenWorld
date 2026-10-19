@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::TerrainTypeDefinitionSO
   terrainTypeName: Pine Mountains
   noiseNodeTree: EAAfhes+HwAUABkAEwCamRk/GwAnAAEAAAAZAA0AAwAAAHsUrj8bAAsAAQAAAAAAAAABAAAAAAAAAAAAAIA/AAAAgL8A7FE4PwAAAAAAAQ0ABgAAAAAAAEAHAACamRk/AClcDz4AAAAAQAEEAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA16NwPwAAAAAAAAAAAAABGQAQAEjhGkATAFK4Hj8nAAEAAAANAAQAAAAAAABABwAAcT0KPwCuR2E+AClcjz4BBAAAAAAAj8IVQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AOxRuD4=
-  frequencyMultiplier: 0.33
+  frequencyMultiplier: 0.43
   yOffset: 0
   densityCurve:
     serializedVersion: 2
@@ -43,4 +43,4 @@ MonoBehaviour:
   curveResolution: 64
   rarityWeight: 1
   allowedBiomes: 01
-  terrainID: 2
+  terrainID: 0
